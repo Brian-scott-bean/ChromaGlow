@@ -1795,66 +1795,111 @@ hc_other_senders=$(grep -rlE '\.send[[:space:]]*\([[:space:]]*channels[[:space:]
 [[ -z "$hc_other_senders" ]] \
     || fail "slice3-flash" $'a production file outside the orchestrator reaches the Entertainment transport:\n'"$hc_other_senders"
 
-# (j) (Slice 3 review round, D-1) THE REST SCHEDULER IS FLASH-CLASS TOO.
+# (j) (Slice 3 safety rounds 1–2) THE REST PATH IS FLASH-CLASS TOO.
 #
 #     `runCompositionScheduler` is the composition's SECOND shipping frame path
 #     — the user-selectable Room transport, the DTLS failover destination, and
 #     what a second room on an already-streaming bridge gets — and it ticked at
-#     120 ms with no ledger: `.pulse` at 240 bpm realized ~4 Hz over REST. Same
-#     rule: reserve on the FIELD frame against the BRIDGE's shared ledger before
-#     any work is enqueued; a refusal skips and rolls back; an admission is
-#     committed on the transport's word when the work terminates, and every
-#     path that retires work without a terminal rolls its reservation back.
+#     120 ms with no ledger: `.pulse` at 240 bpm realized ~4 Hz over REST. The
+#     rule: every REST sweep reserves AT DISPATCH, inside its own closure, on
+#     the field the wire will show (`projectedField` — last delivered per light,
+#     this sweep replaced), against the BRIDGE's shared ledger; a refusal sends
+#     NOTHING and reports `cancelled 0/0`; an admission is committed on the
+#     transport's word at the terminal; the startup PRIME is gated the same
+#     way; nothing is reserved at enqueue (a serial mailbox supersedes pending
+#     work, and rolling those back forgot the wire); and every stop tells the
+#     ledger the wire is unknown, AFTER its session is deactivated, with a
+#     ledger that refuses to restore a wire model a forget predates.
+hc_orch_code=$(grep -vE '^[[:space:]]*//' "$HC_ORCH" | sed -E 's#[[:space:]]*//.*$##; s#/\*.*\*/##g')
 hc_rest=$(hc_ent_loop runCompositionScheduler)
 [[ -n "$hc_rest" ]] \
     || fail "slice3-flash" "runCompositionScheduler not found in $HC_ORCH — the REST flash rule is unenforceable"
-echo "$hc_rest" | grep -q 'flashOnsetLedger(forBridge: runtime.restBridgeIdentity ?? "")' \
-    || fail "slice3-flash" "runCompositionScheduler no longer resolves the per-bridge shared ledger keyed exactly as the loops key it (restBridgeIdentity ?? \"\")"
-echo "$hc_rest" | grep -q 'BeatMath.FlashSafety.fieldFrame(' \
-    || fail "slice3-flash" "runCompositionScheduler no longer reserves on FlashSafety.fieldFrame("
-echo "$hc_rest" | grep -q 'BeatMath.FlashSafety.minOnsetLedgerPeriod' \
-    || fail "slice3-flash" "runCompositionScheduler no longer enforces minOnsetLedgerPeriod"
-echo "$hc_rest" | grep -qE 'guard flashReservation\.verdict\.wasAdmitted else' \
-    || fail "slice3-flash" "runCompositionScheduler no longer skips a refused frame"
-hc_rest_admit=$(echo "$hc_rest" | grep -n 'flashLedger.admit(' | head -1 | cut -d: -f1)
-hc_rest_refuse=$(echo "$hc_rest" | grep -n 'flashLedger.commit(flashReservation, delivered: false' | head -1 | cut -d: -f1)
-hc_rest_first_enqueue=$(echo "$hc_rest" | grep -n 'enqueueComposerWork(' | head -1 | cut -d: -f1)
-[[ -n "$hc_rest_admit" && -n "$hc_rest_refuse" && -n "$hc_rest_first_enqueue" ]] \
-    || fail "slice3-flash" "runCompositionScheduler is missing its admit / refusal-rollback / enqueue"
-[[ "$hc_rest_admit" -lt "$hc_rest_refuse" && "$hc_rest_refuse" -lt "$hc_rest_first_enqueue" ]] \
-    || fail "slice3-flash" "runCompositionScheduler's admit ($hc_rest_admit) / refusal rollback ($hc_rest_refuse) / first enqueue ($hc_rest_first_enqueue) are out of order — work enqueued before the reservation is a frame the ledger never measured"
-hc_rest_enqueues=$(echo "$hc_rest" | grep -c 'enqueueComposerWork(' || true)
-hc_rest_flashed=$(echo "$hc_rest" | grep -c 'flash: flash' || true)
-[[ "$hc_rest_enqueues" -ge 1 && "$hc_rest_enqueues" == "$hc_rest_flashed" ]] \
-    || fail "slice3-flash" "runCompositionScheduler enqueues $hc_rest_enqueues sweep(s) but only $hc_rest_flashed carry the flash reservation — an unreserved sweep is an ungated frame"
+echo "$hc_rest" | grep -qE 'flashLedger\.admit\(|composerFlashReservations\[' \
+    && fail "slice3-flash" "runCompositionScheduler reserves at ENQUEUE again — a superseded reservation's rollback forgets the wire on every busy bridge" || true
+# Every sweep closure admits at dispatch, before any PUT, and sends nothing on refusal.
+for builder in makeComposerGradientWork makeComposerPerLightWork makeComposerGroupedWork; do
+    body=$(hc_ent_loop "$builder")
+    [[ -n "$body" ]] || fail "slice3-flash" "$builder not found in $HC_ORCH"
+    started=$(echo "$body" | grep -n 'composerWorkStarted(token)' | head -1 | cut -d: -f1)
+    admit=$(echo "$body" | grep -n 'admitComposerSweep(' | head -1 | cut -d: -f1)
+    refusal=$(echo "$body" | grep -n 'kind: .cancelled, attemptedOperations: 0, failures: 0' | head -1 | cut -d: -f1)
+    firstput=$(echo "$body" | grep -nE 'api\.(setGroupedLightEffect|setLight|put|setGradient)' | head -1 | cut -d: -f1)
+    [[ -n "$started" && -n "$admit" && -n "$refusal" && -n "$firstput" ]] \
+        || fail "slice3-flash" "$builder is missing its dispatch-time admit / refusal terminal / PUT (started=$started admit=$admit refusal=$refusal put=$firstput)"
+    [[ "$started" -lt "$admit" && "$admit" -lt "$refusal" && "$refusal" -lt "$firstput" ]] \
+        || fail "slice3-flash" "$builder's started/admit/refusal/PUT are out of order (started=$started admit=$admit refusal=$refusal put=$firstput) — a PUT before the admit is a frame the ledger never measured"
+done
+# The admit itself: projected field, the bridge's ledger, the invariant's period, rollback on refusal, registration on admission.
+hc_admit=$(hc_ent_loop admitComposerSweep)
+[[ -n "$hc_admit" ]] || fail "slice3-flash" "admitComposerSweep is gone from $HC_ORCH"
+echo "$hc_admit" | grep -q 'flashOnsetLedger(forBridge: runtime.restBridgeIdentity ?? "")' \
+    || fail "slice3-flash" "admitComposerSweep no longer resolves the per-bridge shared ledger keyed exactly as the loops key it"
+echo "$hc_admit" | grep -q 'BeatMath.FlashSafety.projectedField(' \
+    || fail "slice3-flash" "admitComposerSweep no longer reserves on the PROJECTED field — a stale rotation slice's real rise would reach the wire unmeasured"
+echo "$hc_admit" | grep -q 'lastDelivered: runtime.lastDeliveredFrames' \
+    || fail "slice3-flash" "admitComposerSweep projects over something other than the runtime's last DELIVERED frames"
+echo "$hc_admit" | grep -q 'BeatMath.FlashSafety.fieldFrame(channels: projected)' \
+    || fail "slice3-flash" "admitComposerSweep no longer reduces the projected field through fieldFrame"
+echo "$hc_admit" | grep -q 'BeatMath.FlashSafety.minOnsetLedgerPeriod' \
+    || fail "slice3-flash" "admitComposerSweep no longer enforces minOnsetLedgerPeriod"
+hc_ad_admit=$(echo "$hc_admit" | grep -n 'ledger.admit(' | head -1 | cut -d: -f1)
+hc_ad_refuse=$(echo "$hc_admit" | grep -n 'ledger.commit(reservation, delivered: false' | head -1 | cut -d: -f1)
+hc_ad_reg=$(echo "$hc_admit" | grep -n 'composerFlashReservations\[token\] = (ledger, reservation, sweep)' | head -1 | cut -d: -f1)
+[[ -n "$hc_ad_admit" && -n "$hc_ad_refuse" && -n "$hc_ad_reg" && "$hc_ad_admit" -lt "$hc_ad_refuse" && "$hc_ad_refuse" -lt "$hc_ad_reg" ]] \
+    || fail "slice3-flash" "admitComposerSweep's admit / refusal-rollback / registration are missing or out of order (admit=$hc_ad_admit refuse=$hc_ad_refuse register=$hc_ad_reg)"
+echo "$hc_admit" | grep -q 'runtime.generation == token.generation' \
+    || fail "slice3-flash" "admitComposerSweep no longer refuses a stale-generation token"
+# The settle: commit on the transport's word; delivered frames become the per-light wire state.
+hc_settle=$(hc_ent_loop settleFlashReservation)
+[[ -n "$hc_settle" ]] || fail "slice3-flash" "settleFlashReservation is gone from $HC_ORCH"
+echo "$hc_settle" | grep -q 'composerFlashReservations.removeValue(forKey: token)' \
+    || fail "slice3-flash" "settleFlashReservation no longer consumes the reservation — a second terminal would commit it twice"
+echo "$hc_settle" | grep -q 'flash.ledger.commit(flash.reservation, delivered: delivered' \
+    || fail "slice3-flash" "settleFlashReservation no longer commits on the transport's delivery answer"
+echo "$hc_settle" | grep -q 'runtime.lastDeliveredFrames\[f.index\] = (f.x, f.y, f.brightness)' \
+    || fail "slice3-flash" "settleFlashReservation no longer records the delivered sweep as the per-light wire state — the next projection would be stale"
 hc_rest_term=$(hc_ent_loop composerWorkTerminated)
 echo "$hc_rest_term" | grep -q 'settleFlashReservation(token, delivered: attemptedOperations > failures)' \
     || fail "slice3-flash" "composerWorkTerminated no longer commits the flash reservation on the transport's word (attemptedOperations > failures)"
 hc_rest_enq=$(hc_ent_loop enqueueComposerWork)
-hc_rest_reg=$(echo "$hc_rest_enq" | grep -n 'composerFlashReservations\[token\] = flash' | head -1 | cut -d: -f1)
-hc_rest_snd=$(echo "$hc_rest_enq" | grep -n 'sender.enqueue(' | head -1 | cut -d: -f1)
-[[ -n "$hc_rest_reg" && -n "$hc_rest_snd" && "$hc_rest_reg" -lt "$hc_rest_snd" ]] \
-    || fail "slice3-flash" "enqueueComposerWork does not register the flash reservation BEFORE the mailbox can dispatch the work — a fast completion would find nothing to commit"
-echo "$hc_rest_enq" | grep -q 'settleFlashReservation(previousToken, delivered: false)' \
-    || fail "slice3-flash" "enqueueComposerWork no longer rolls back a superseded sweep's reservation — the ledger would model a frame the wire never saw"
-hc_rest_deact=$(hc_ent_loop deactivateComposerTelemetrySession)
-echo "$hc_rest_deact" | grep -q 'settleFlashReservation(pending, delivered: false)' \
-    || fail "slice3-flash" "deactivateComposerTelemetrySession no longer rolls back the pending sweep's reservation"
+echo "$hc_rest_enq" | grep -qE 'composerFlashReservations|flash:' \
+    && fail "slice3-flash" "enqueueComposerWork touches flash reservations again — pending work must hold none" || true
 echo "$hc_orch_code" | grep -q 'for token in Array(composerFlashReservations.keys)' \
-    || fail "slice3-flash" "stop-all no longer rolls back every registered flash reservation"
-# (D-2) The wire is unknown after every session stop and every composition stop.
-hc_forget=$(echo "$hc_orch_code" | grep -c 'forgetWire()' || true)
-[[ "$hc_forget" -ge 7 ]] \
-    || fail "slice3-flash" "only $hc_forget forgetWire() call(s) in $HC_ORCH — every stopSession() and stopCompositionMode must tell the ledger the bridge reverted"
+    && fail "slice3-flash" "stop-all pre-emptively rolls back EXECUTING sweeps' reservations — un-stamping a realized onset lets the next one come early" || true
+# The prime: gated, reserve before the PUT, commit on the PUT's outcome.
+hc_prime=$(hc_ent_loop performCompositionPrime)
+[[ -n "$hc_prime" ]] || fail "slice3-flash" "performCompositionPrime is gone from $HC_ORCH"
+hc_pr_admit=$(echo "$hc_prime" | grep -n 'flashLedger.admit(' | head -1 | cut -d: -f1)
+hc_pr_refuse=$(echo "$hc_prime" | grep -n 'flashLedger.commit(reservation, delivered: false' | head -1 | cut -d: -f1)
+hc_pr_put=$(echo "$hc_prime" | grep -n 'api.setGroupedLightEffect(' | head -1 | cut -d: -f1)
+hc_pr_commit=$(echo "$hc_prime" | grep -n 'flashLedger.commit(reservation, delivered: delivered' | head -1 | cut -d: -f1)
+[[ -n "$hc_pr_admit" && -n "$hc_pr_refuse" && -n "$hc_pr_put" && -n "$hc_pr_commit" ]] \
+    || fail "slice3-flash" "performCompositionPrime is not gated (admit=$hc_pr_admit refuse=$hc_pr_refuse put=$hc_pr_put commit=$hc_pr_commit) — the restart's first frame on Room transport would be an unmeasured rise"
+[[ "$hc_pr_admit" -lt "$hc_pr_refuse" && "$hc_pr_refuse" -lt "$hc_pr_put" && "$hc_pr_put" -lt "$hc_pr_commit" ]] \
+    || fail "slice3-flash" "performCompositionPrime's admit/refusal/PUT/commit are out of order"
+echo "$hc_prime" | grep -q 'flashOnsetLedger(forBridge: room.bridgeID ?? "")' \
+    || fail "slice3-flash" "performCompositionPrime keys the ledger differently from the loops"
+echo "$hc_prime" | grep -qE 'guard reservation\.verdict\.wasAdmitted else \{' \
+    || fail "slice3-flash" "performCompositionPrime no longer GUARDS on the verdict — a refused prime would still PUT"
+# (D-2) The wire is unknown after EVERY session stop, and after every composition stop — AFTER deactivation.
+hc_stop_sites=$(echo "$hc_orch_code" | grep -cE '\.stopSession\(\)' || true)
+hc_forget_after=$(echo "$hc_orch_code" | grep -A 3 -E '\.stopSession\(\)' | grep -c 'forgetWire()' || true)
+[[ "$hc_stop_sites" -ge 8 && "$hc_forget_after" -ge "$hc_stop_sites" ]] \
+    || fail "slice3-flash" "$hc_forget_after of $hc_stop_sites stopSession() sites are followed by forgetWire() within three lines — every one must be"
 hc_stop_comp=$(awk '/func stopCompositionMode\(/,/^    }$/' "$HC_ORCH" 2>/dev/null | grep -vE '^[[:space:]]*//' | sed -E 's#[[:space:]]*//.*$##' || true)
-echo "$hc_stop_comp" | grep -q 'flashOnsetLedger(forBridge: bridgeID ?? "").forgetWire()' \
-    || fail "slice3-flash" "stopCompositionMode no longer forgets the wire — a restart inside the period would emit an unstamped rise against a bridge that reverted"
-hc_stop_sessions=$(echo "$hc_orch_code" | grep -c 'stopSession()' || true)
-hc_forget_after=$(grep -vE '^[[:space:]]*//' "$HC_ORCH" | grep -A 3 'stopSession()' | grep -c 'forgetWire()' || true)
-[[ "$hc_forget_after" -ge 6 ]] \
-    || fail "slice3-flash" "only $hc_forget_after of $hc_stop_sessions stopSession() sites are followed by forgetWire() within three lines"
+hc_sc_deact=$(echo "$hc_stop_comp" | grep -n 'deactivateComposerTelemetrySession(' | head -1 | cut -d: -f1)
+hc_sc_forget=$(echo "$hc_stop_comp" | grep -n 'flashOnsetLedger(forBridge: bridgeID ?? "").forgetWire()' | tail -1 | cut -d: -f1)
+[[ -n "$hc_sc_deact" && -n "$hc_sc_forget" && "$hc_sc_deact" -lt "$hc_sc_forget" ]] \
+    || fail "slice3-flash" "stopCompositionMode does not forget the wire AFTER deactivating its session (deactivate=$hc_sc_deact forget=$hc_sc_forget) — the pending rollback would restore the bright frame the stop just turned off"
+# The ledger refuses to restore a wire model a forget predates.
+hc_gate=$(awk '/struct OnsetGate \{/,/^        \}$/' "$HC_BEAT" 2>/dev/null | grep -vE '^[[:space:]]*//' || true)
+echo "$hc_gate" | grep -q 'if reservation.sequence > forgetSequence {' \
+    || fail "slice3-flash" "OnsetGate.commit restores lastEmitted unconditionally on rollback again — a late cancelled 0/0 hands the ledger back the frame the stop turned off"
+echo "$hc_gate" | grep -q 'forgetSequence = sequence' \
+    || fail "slice3-flash" "OnsetGate.forgetWire no longer records the forget's sequence"
+
 # The REST model and its regression tests exist in the flash suite.
-for t in emitRESTComposition testPulseAtTwoFortyBpmRealizesAboveThreeHzOverUngatedREST testPulseAtTwoFortyBpmIsGatedToThreeHzOverREST testARestartInsideThePeriodCannotFlashOnceTheWireIsForgotten testAColdRefusalHoldsTheLastKnownChromaticity; do
+for t in emitRESTComposition testPulseAtTwoFortyBpmRealizesAboveThreeHzOverUngatedREST testPulseAtTwoFortyBpmIsGatedToThreeHzOverREST testARestartInsideThePeriodCannotFlashOnceTheWireIsForgotten testAColdRefusalHoldsTheLastKnownChromaticity testALateRollbackCannotRestoreAWireAForgetPredates testAStaleSliceRiseIsMeasuredOnTheProjectedField testTheProjectedFieldIsWhatTheWireShows; do
     grep -q "$t" HueHomeTests/FlashSafetyTests.swift \
         || fail "slice3-flash" "FlashSafetyTests no longer carries $t"
 done

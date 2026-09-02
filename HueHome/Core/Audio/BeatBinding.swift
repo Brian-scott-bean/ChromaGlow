@@ -498,6 +498,22 @@ enum BeatMath {
         /// Total: an empty frame is black at D65 (a room with no channels puts no
         /// light in the field), and every per-channel coordinate is laundered
         /// through `WireFrame`'s own NaN totality before it is weighed.
+        /// The per-channel field a REST rotation sweep WILL leave on the wire
+        /// (safety round 2, #3): every channel as last delivered, this
+        /// sweep's channels replaced by what it is about to send. A channel
+        /// never delivered to reads as the sweep's frame — there is nothing
+        /// truer to read it as. Reserving on the whole-room RENDER instead
+        /// let a stale slice's real rise (a dark light lit by a "non-
+        /// candidate" frame) reach the wire unmeasured.
+        static func projectedField(
+            lastDelivered: [Int: (x: Double, y: Double, brightness: Double)],
+            sweep: [(index: Int, x: Double, y: Double, brightness: Double)]
+        ) -> [(x: Double, y: Double, brightness: Double)] {
+            var projected = lastDelivered
+            for s in sweep { projected[s.index] = (s.x, s.y, s.brightness) }
+            return projected.keys.sorted().map { projected[$0]! }
+        }
+
         static func fieldFrame(
             channels: [(x: Double, y: Double, brightness: Double)]
         ) -> WireFrame {
@@ -656,6 +672,12 @@ enum BeatMath {
             private(set) var lastKnownFrame: WireFrame?
 
             private var sequence: UInt64 = 0
+            /// The `sequence` at the last `forgetWire()` (safety round 2, #2):
+            /// a reservation taken BEFORE a forget may not restore the wire
+            /// model when its late rollback arrives — the forget was a fact
+            /// about the transport (a stop, a group turned off) that the
+            /// reservation predates.
+            private var forgetSequence: UInt64 = 0
 
             init(lastOnset: Double? = nil, lastEmitted: WireFrame? = nil) {
                 self.lastOnset = lastOnset
@@ -838,17 +860,22 @@ enum BeatMath {
             /// against the OLD stamp — two realized onsets 40 ms apart.
             mutating func admit(frame: WireFrame, at t: Double,
                                 minPeriod: Double = FlashSafety.minOnsetLedgerPeriod) -> Reservation {
-                sequence &+= 1
                 let tol = FlashSafety.onsetComparisonTolerance
                 let period = (minPeriod.isFinite && minPeriod > 0) ? minPeriod
                                                                    : FlashSafety.minOnsetLedgerPeriod
                 // A silent wire is an unknown wire. Checked BEFORE the priors are
                 // captured, so a dropped send cannot roll the forget back: the
                 // forget is a fact about the transport, not about this frame.
+                // And BEFORE this admit's sequence is minted (safety round 2):
+                // this forget belongs to the wire this reservation is taken
+                // against, so its priors (already nil) may be restored; only a
+                // forget that arrives AFTER a reservation — a stop — may not
+                // be undone by that reservation's rollback.
                 if lastEmitted != nil, t.isFinite, let delivered = lastDeliveredAt,
                    t - delivered >= period - tol {
                     forgetWire()
                 }
+                sequence &+= 1
                 let prior = (onset: lastOnset, emitted: lastEmitted,
                              trough: luminanceTroughSinceOnset)
 
@@ -990,7 +1017,15 @@ enum BeatMath {
                     if let stamped = reservation.stampedAt, lastOnset == stamped {
                         lastOnset = reservation.priorLastOnset
                     }
-                    lastEmitted = reservation.priorLastEmitted
+                    // A rollback restores the wire model ONLY if nothing has
+                    // declared the wire unknown since the reservation was
+                    // taken: `stopCompositionMode` forgets AFTER deactivating
+                    // its session, and an executing sweep's late `cancelled
+                    // 0/0` must not hand the ledger back the bright frame the
+                    // stop just turned off (safety round 2, #2).
+                    if reservation.sequence > forgetSequence {
+                        lastEmitted = reservation.priorLastEmitted
+                    }
                     luminanceTroughSinceOnset = reservation.priorTrough
                     return
                 }
@@ -1029,6 +1064,7 @@ enum BeatMath {
             ///    `isColdOnsetCandidate`, which reads "unknown" as black.
             mutating func forgetWire() {
                 lastEmitted = nil
+                forgetSequence = sequence
             }
 
             private func reservation(_ verdict: FrameVerdict, stampedAt: Double?,

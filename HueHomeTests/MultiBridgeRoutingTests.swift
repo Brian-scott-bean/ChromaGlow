@@ -2232,6 +2232,17 @@ final class MultiBridgeRoutingTests: XCTestCase {
         restActive: Bool = true, clock: TelemetryTestClock,
         eligibleOperations: Int = 0
     ) {
+        // Slice 3 (safety round 2): a REST sweep reserves its realized-frame
+        // slot at DISPATCH against the runtime its token was minted for, and a
+        // token with no runtime is refused — the production answer for a
+        // stopped or replaced room. In production every token comes from a
+        // runtime, so the fixture installs one exactly as the scheduler would
+        // find it; the explicit session below still wins its clock and
+        // eligible-operation count.
+        orchestrator.testStageRESTComposition(
+            roomID: room, bridgeID: bridge,
+            api: bridge == "bridge-b" ? bridgeB : bridgeA,
+            generation: generation)
         orchestrator.testSetCompositionTelemetryClock(clock.now)
         orchestrator.testBeginComposerTelemetrySession(
             roomID: room, bridgeID: bridge, generation: generation,

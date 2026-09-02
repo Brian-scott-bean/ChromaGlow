@@ -3423,6 +3423,12 @@ final class UnifiedOrchestrator {
         var lastSentY: Double?
         var lastSentBri: Double?
         var lastSentAt: CFAbsoluteTime?
+        /// The last frame DELIVERED to each render channel (safety round 2):
+        /// what the wire is showing per light, so a rotation sweep's flash
+        /// reservation is taken on the field the wire WILL show — this
+        /// sweep's lights replaced, every other light as last delivered —
+        /// rather than on a whole-room render two of whose slices are stale.
+        var lastDeliveredFrames: [Int: (x: Double, y: Double, brightness: Double)] = [:]
     }
 
     // ── Composer telemetry (packet 4) ────────────────────────────
@@ -3492,15 +3498,60 @@ final class UnifiedOrchestrator {
     @ObservationIgnored
     private var composerFlashReservations:
         [CompositionSendLedger.Token: (ledger: BeatMath.FlashSafety.OnsetLedger,
-                                       reservation: BeatMath.FlashSafety.Reservation)] = [:]
+                                       reservation: BeatMath.FlashSafety.Reservation,
+                                       sweep: [(index: Int, x: Double, y: Double, brightness: Double)])] = [:]
+
+    /// DISPATCH-TIME realized-frame reservation for one REST sweep (safety
+    /// round 2). Called on the main actor at the top of every sweep closure,
+    /// AFTER `composerWorkStarted` and BEFORE any PUT. Reserving at enqueue
+    /// against a SERIAL mailbox meant every superseded item rolled its
+    /// reservation back after later admits, which forgets the wire — the
+    /// steady state on any busy bridge, and a blackout for a Strobe sharing
+    /// it. At dispatch there is nothing to supersede.
+    ///
+    /// The frame reserved is the field the wire WILL show: every light as
+    /// last delivered, this sweep's lights replaced (a never-delivered light
+    /// reads as this sweep's frame). Returns false when the frame is refused
+    /// — the closure then sends NOTHING (the lights hold, which is what
+    /// `.hold` means on a transport with state) and reports `cancelled 0/0`.
+    /// A stale-generation token is refused too: its runtime is gone.
+    private func admitComposerSweep(
+        token: CompositionSendLedger.Token,
+        sweep: [(index: Int, x: Double, y: Double, brightness: Double)]
+    ) -> Bool {
+        let runtimeKey = CompositionPlaybackKey(bridgeKey: token.bridgeKey, roomID: token.scope.roomID)
+        guard let runtime = compositionRuntimes[runtimeKey],
+              runtime.generation == token.generation else { return false }
+        let ledger = flashOnsetLedger(forBridge: runtime.restBridgeIdentity ?? "")
+        let projected = BeatMath.FlashSafety.projectedField(
+            lastDelivered: runtime.lastDeliveredFrames,
+            sweep: sweep.map { (index: $0.index, x: $0.x, y: $0.y, brightness: $0.brightness) })
+        let reservation = ledger.admit(
+            frame: BeatMath.FlashSafety.fieldFrame(channels: projected),
+            at: CACurrentMediaTime(),
+            minPeriod: BeatMath.FlashSafety.minOnsetLedgerPeriod)
+        guard reservation.verdict.wasAdmitted else {
+            ledger.commit(reservation, delivered: false, at: CACurrentMediaTime())
+            return false
+        }
+        composerFlashReservations[token] = (ledger, reservation, sweep)
+        return true
+    }
 
     /// Reconcile one token's flash reservation with what the transport did.
     /// `delivered` = at least one operation of the sweep reached a light —
-    /// the field on the wire DID change, so the onset stands; nothing reached
-    /// anything → the reservation is rolled back (stamp, wire state, trough).
+    /// the field on the wire DID change, so the onset stands and the sweep's
+    /// frames become the per-light wire state; nothing reached anything →
+    /// the reservation is rolled back (stamp, wire state, trough).
     private func settleFlashReservation(_ token: CompositionSendLedger.Token, delivered: Bool) {
         guard let flash = composerFlashReservations.removeValue(forKey: token) else { return }
         flash.ledger.commit(flash.reservation, delivered: delivered, at: CACurrentMediaTime())
+        guard delivered else { return }
+        let runtimeKey = CompositionPlaybackKey(bridgeKey: token.bridgeKey, roomID: token.scope.roomID)
+        guard var runtime = compositionRuntimes[runtimeKey],
+              runtime.generation == token.generation else { return }
+        for f in flash.sweep { runtime.lastDeliveredFrames[f.index] = (f.x, f.y, f.brightness) }
+        compositionRuntimes[runtimeKey] = runtime
     }
 
     /// Monotonic token mint. Uniqueness only — ordering claims come from the
@@ -6140,6 +6191,23 @@ final class UnifiedOrchestrator {
         ).first else { return }
         let xy = HueColorUtils.clampXYToGamut(x: firstFrame.x, y: firstFrame.y, gamut: gamut)
         let bri = max(1, firstFrame.brightness * 100.0)
+        // The prime is a frame on the wire like any other (safety round 2,
+        // #1): outside the cadence, but NOT outside the gate. A restart
+        // inside the period whose first bright frame is the prime is the
+        // D-2 flash by another route. Refused → no prime; the scheduler's
+        // first admissible sweep turns the room on instead.
+        let flashLedger = flashOnsetLedger(forBridge: room.bridgeID ?? "")
+        let reservation = flashLedger.admit(
+            frame: BeatMath.FlashSafety.fieldFrame(
+                channels: [(x: xy.x, y: xy.y, brightness: firstFrame.brightness)]),
+            at: CACurrentMediaTime(),
+            minPeriod: BeatMath.FlashSafety.minOnsetLedgerPeriod)
+        guard reservation.verdict.wasAdmitted else {
+            flashLedger.commit(reservation, delivered: false, at: CACurrentMediaTime())
+            debugLog("[Composer][Prime] ⏸ room='\(room.name)' gen=\(nextGeneration) refused by the realized-frame gate — the scheduler primes")
+            return
+        }
+        var delivered = false
         do {
             try await api.setGroupedLightEffect(
                 id: groupedLightID, on: true,
@@ -6148,6 +6216,7 @@ final class UnifiedOrchestrator {
                 mirek: nil,
                 duration: 140
             )
+            delivered = true
             debugLog(
                 "[Composer][Prime] ✅ room='\(room.name)' id=\(roomID) gen=\(nextGeneration) bri=\(String(format: "%.1f", bri)) xy=(\(String(format: "%.4f", xy.x)),\(String(format: "%.4f", xy.y)))"
             )
@@ -6159,11 +6228,16 @@ final class UnifiedOrchestrator {
                 runtime.lastSentBri = bri
                 runtime.sendCount = 1
                 runtime.lastSentAt = CFAbsoluteTimeGetCurrent()
+                // The whole group now shows the prime frame.
+                for idx in 0..<max(1, runtime.lightIDs.count) {
+                    runtime.lastDeliveredFrames[idx] = (xy.x, xy.y, firstFrame.brightness)
+                }
                 compositionRuntimes[primeKey] = runtime
             }
         } catch {
             debugLog("[Composer][Prime] ❌ room='\(room.name)' id=\(roomID) gen=\(nextGeneration) error=\(error)")
         }
+        flashLedger.commit(reservation, delivered: delivered, at: CACurrentMediaTime())
     }
 
     /// Composition render loop via Entertainment API — per-light colors at 25fps.
@@ -6535,9 +6609,6 @@ final class UnifiedOrchestrator {
                 pending, at: compositionTelemetryNow(),
                 attemptedOperations: 0, failures: 0)
         }
-        if let pending = composerPendingTokens[sessionKey] {
-            settleFlashReservation(pending, delivered: false)
-        }
         if let session = composerTelemetrySessions[sessionKey] {
             compositionSendLedger.deactivateSession(
                 bridgeKey: sessionKey.bridgeKey, scope: sessionKey.scope,
@@ -6803,25 +6874,20 @@ final class UnifiedOrchestrator {
         sessionKey: ComposerTelemetrySessionKey,
         generation: Int,
         sender: RestSender,
-        flash: (ledger: BeatMath.FlashSafety.OnsetLedger,
-                reservation: BeatMath.FlashSafety.Reservation)? = nil,
         workBuilder: (CompositionSendLedger.Token) -> RestSender.Work
     ) async -> CompositionSendLedger.Token {
         let token = mintComposerToken(sessionKey: sessionKey, generation: generation)
         let work = workBuilder(token)
         let previousToken = composerPendingTokens[sessionKey]
-        // The flash reservation is registered BEFORE the mailbox can dispatch
-        // the closure, for the same reason the tracker is: a fast completion
-        // reports its terminal during the await below and must find it.
-        if let flash { composerFlashReservations[token] = flash }
+        // No flash reservation here (safety round 2): a pending item can be
+        // superseded before it ever runs, and its reservation would have to
+        // be rolled back after later admits — which forgets the wire. The
+        // sweep reserves at DISPATCH, in its own closure (`admitComposerSweep`).
         compositionSendLedger.enqueued(token, at: compositionTelemetryNow())
         composerPendingTokens[sessionKey] = token
         let result = await sender.enqueue(scope: sessionKey.scope, work)
         if result.replacedPending, let previousToken {
             compositionSendLedger.superseded(previousToken)
-            // Superseded work never reaches the transport: its frame changed
-            // nothing, so its reservation — stamp and wire model — is undone.
-            settleFlashReservation(previousToken, delivered: false)
         }
         refreshComposerCadencePublication(sessionKey: sessionKey)
         return token
@@ -6858,6 +6924,19 @@ final class UnifiedOrchestrator {
     ) -> RestSender.Work {
         return { [weak self] stillCurrent in
             self?.composerWorkStarted(token)
+            // The realized-frame gate, at dispatch (safety round 2): the
+            // frame this sweep will put on each of its lights.
+            let sweep = entries.flatMap { entry in
+                entry.channelRange.compactMap { idx -> (index: Int, x: Double, y: Double, brightness: Double)? in
+                    guard idx < frames.count else { return nil }
+                    return (idx, frames[idx].x, frames[idx].y, frames[idx].brightness)
+                }
+            }
+            guard self?.admitComposerSweep(token: token, sweep: sweep) == true else {
+                self?.composerWorkTerminated(
+                    token: token, kind: .cancelled, attemptedOperations: 0, failures: 0)
+                return
+            }
             var attempted = 0
             var failures = 0
 
@@ -6964,6 +7043,16 @@ final class UnifiedOrchestrator {
     ) -> RestSender.Work {
         return { [weak self] stillCurrent in
             self?.composerWorkStarted(token)
+            // The realized-frame gate, at dispatch (safety round 2).
+            let sweep = targets.compactMap { t -> (index: Int, x: Double, y: Double, brightness: Double)? in
+                guard t.frameIndex < frames.count else { return nil }
+                return (t.frameIndex, frames[t.frameIndex].x, frames[t.frameIndex].y, frames[t.frameIndex].brightness)
+            }
+            guard self?.admitComposerSweep(token: token, sweep: sweep) == true else {
+                self?.composerWorkTerminated(
+                    token: token, kind: .cancelled, attemptedOperations: 0, failures: 0)
+                return
+            }
             var attempted = 0
             var failures = 0
 
@@ -7053,6 +7142,15 @@ final class UnifiedOrchestrator {
         // it from STARTING once the room is stopped.
         return { [weak self] _ in
             self?.composerWorkStarted(token)
+            // The realized-frame gate, at dispatch (safety round 2): one
+            // grouped write is the whole room at one colour — render channel 0.
+            guard self?.admitComposerSweep(
+                token: token, sweep: [(index: 0, x: xy.x, y: xy.y, brightness: brightness / 100.0)]) == true
+            else {
+                self?.composerWorkTerminated(
+                    token: token, kind: .cancelled, attemptedOperations: 0, failures: 0)
+                return
+            }
             do {
                 try await api.setGroupedLightEffect(
                     id: groupedLightID, on: true,
@@ -7193,11 +7291,6 @@ final class UnifiedOrchestrator {
             flashOnsetLedger(forBridge: bid).forgetWire()
         }
         compositionRuntimes.removeValue(forKey: playbackKey)
-        // Whichever transport carried it (D-2): a REST stop turns the group
-        // off from StudioViewModel, a DTLS stop lets the bridge revert — the
-        // lights are no longer showing a frame this ledger put there. Keyed
-        // exactly as the loops key the ledger (`bridgeID ?? ""`).
-        flashOnsetLedger(forBridge: bridgeID ?? "").forgetWire()
         // Packet 4: DEACTIVATION, not merely reset — consume the sender's
         // pending-removal evidence gathered above, record the 0/0 pending
         // cancellation for the exact tracked token if the sender reported one,
@@ -7207,6 +7300,14 @@ final class UnifiedOrchestrator {
         // fresh session with its new runtime generation.
         deactivateComposerTelemetrySession(
             sessionKey: sessionKey, pendingRemovalReported: removedPending)
+        // Whichever transport carried it (D-2): a REST stop turns the group
+        // off from StudioViewModel, a DTLS stop lets the bridge revert — the
+        // lights are no longer showing a frame this ledger put there. Keyed
+        // exactly as the loops key the ledger (`bridgeID ?? ""`). AFTER the
+        // deactivation above, and the ledger is forget-aware besides: a
+        // reservation taken before this forget can no longer restore the
+        // wire model when its late terminal rolls back (safety round 2, #2).
+        flashOnsetLedger(forBridge: bridgeID ?? "").forgetWire()
         compositionOrder.removeAll { $0 == playbackKey }
         if compositionRuntimes.isEmpty {
             compositionSchedulerTask?.cancel()
@@ -7399,35 +7500,17 @@ final class UnifiedOrchestrator {
                 continue
             }
 
-            // ── REALIZED-FRAME FLASH GATE (Slice 3 review round, D-1) ──
+            // ── REALIZED-FRAME FLASH GATE (Slice 3, safety rounds 1–2) ──
             //
             // This scheduler is the composition's SECOND shipping frame path —
             // the user-selectable Room transport, the DTLS failover
             // destination, and what a second room on an already-streaming
             // bridge gets — and it ticked at 120 ms with no ledger: `.pulse`
-            // at 240 bpm realized ~4 Hz over REST, and even an authored 3 Hz
-            // source realized sub-period pairs through tick jitter. Same
-            // structural rule as the DTLS loops: reserve on the FIELD frame
-            // (`fieldFrame` — what a viewer in the room receives) against the
-            // BRIDGE's shared ledger, keyed exactly as the loops key it, before
-            // any work is enqueued. A refusal on REST is a SKIP: nothing is
-            // written, the lights keep showing the last delivered frame — which
-            // is precisely what `.hold` means — and the reservation is rolled
-            // back because the transport took nothing. An admission is
-            // committed when the work terminates, on the transport's own word
-            // (`composerWorkTerminated` / supersession / deactivation).
-            let flashLedger = flashOnsetLedger(forBridge: runtime.restBridgeIdentity ?? "")
-            let flashReservation = flashLedger.admit(
-                frame: BeatMath.FlashSafety.fieldFrame(
-                    channels: frames.map { (x: $0.x, y: $0.y, brightness: $0.brightness) }),
-                at: CACurrentMediaTime(),
-                minPeriod: BeatMath.FlashSafety.minOnsetLedgerPeriod)
-            guard flashReservation.verdict.wasAdmitted else {
-                flashLedger.commit(flashReservation, delivered: false, at: CACurrentMediaTime())
-                try? await Task.sleep(for: tickInterval)
-                continue
-            }
-            let flash = (ledger: flashLedger, reservation: flashReservation)
+            // at 240 bpm realized ~4 Hz over REST. Every sweep built below
+            // reserves AT DISPATCH, inside its own closure, on the field the
+            // wire will show (`admitComposerSweep`), and sends nothing when
+            // refused. Nothing is reserved here: the mailbox is serial and a
+            // pending item may be superseded before it runs.
 
             // Capture values for the closure
             let capturedAPI = runtime.api
@@ -7461,7 +7544,7 @@ final class UnifiedOrchestrator {
                 let subset = Array(map.entries[slice.range])
                 await enqueueComposerWork(
                     sessionKey: sessionKey, generation: runtime.generation,
-                    sender: composerSender, flash: flash
+                    sender: composerSender
                 ) { token in
                     makeComposerGradientWork(
                         token: token, entries: subset, frames: frames,
@@ -7478,7 +7561,7 @@ final class UnifiedOrchestrator {
                 }
                 await enqueueComposerWork(
                     sessionKey: sessionKey, generation: runtime.generation,
-                    sender: composerSender, flash: flash
+                    sender: composerSender
                 ) { token in
                     makeComposerPerLightWork(
                         token: token, targets: subset, frames: frames,
@@ -7490,7 +7573,7 @@ final class UnifiedOrchestrator {
                 // No individual light IDs resolved — use grouped_light
                 await enqueueComposerWork(
                     sessionKey: sessionKey, generation: runtime.generation,
-                    sender: composerSender, flash: flash
+                    sender: composerSender
                 ) { token in
                     makeComposerGroupedWork(
                         token: token, groupedLightID: runtime.groupedLightID,
@@ -7754,9 +7837,9 @@ final class UnifiedOrchestrator {
             deactivateComposerTelemetrySession(
                 sessionKey: sessionKey, pendingRemovalReported: false)
         }
-        for token in Array(composerFlashReservations.keys) {
-            settleFlashReservation(token, delivered: false)
-        }
+        // Executing sweeps settle their own reservations at their terminal
+        // (a partially delivered sweep DID move the wire; un-stamping it here
+        // would let the next onset come early). Pending ones hold none.
         composerPendingTokens.removeAll()
         activeRESTCadenceByBridgeRoom.removeAll()
         studioRestScopesByBridge.removeAll()
@@ -7998,6 +8081,7 @@ final class UnifiedOrchestrator {
             guard await entClient.hasStartedSession() else {
                 debugLog("[Studio] Entertainment session never reached a usable state — refusing to claim it")
                 await entClient.stopSession()
+                flashOnsetLedger(forBridge: bridgeID).forgetWire()   // D-2
                 noteTakeoverEvent(.chromaGlowSessionNotUsable, bridgeID: bridgeID, configID: config.id)
                 noteTakeoverEvent(.nowPlayingWithheld, bridgeID: bridgeID, configID: nil)
                 return .unavailable(reason: .streamingFailed)
@@ -8097,6 +8181,7 @@ final class UnifiedOrchestrator {
                         bridgeID: bridgeID, roomID: roomID,
                         clientID: Self.stopAuditToken(entClient))
         let stopRequest = await entClient.stopSession()
+        flashOnsetLedger(forBridge: bridgeID).forgetWire()   // D-2: another controller's content is on the wire
         recordStopAudit(auditContext,
                         operation: stopRequest == .notSent
                             ? .actionStopSuppressed : .actionStopSent,
@@ -11193,6 +11278,7 @@ extension UnifiedOrchestrator {
             debugLog("[Handoff] Final activity read on \(bridgeID) unavailable — releasing rather than committing unverified")
             outstandingEntertainmentCandidates.removeValue(forKey: prepared.id)
             await prepared.client.stopSession()
+            flashOnsetLedger(forBridge: bridgeID).forgetWire()   // D-2
             noteTakeoverEvent(.nowPlayingWithheld, bridgeID: bridgeID, configID: nil)
             return .verificationUnavailable
         }
@@ -11211,6 +11297,7 @@ extension UnifiedOrchestrator {
             debugLog("[Handoff] A controller claimed \(bridgeID) at the commit boundary — releasing rather than claiming ownership")
             outstandingEntertainmentCandidates.removeValue(forKey: prepared.id)
             await prepared.client.stopSession()
+            flashOnsetLedger(forBridge: bridgeID).forgetWire()   // D-2
             noteTakeoverEvent(.nowPlayingWithheld, bridgeID: bridgeID, configID: nil)
             return .contested(snapshot: fresh, targetConfigID: targetID)
         }
@@ -11233,6 +11320,7 @@ extension UnifiedOrchestrator {
         // cleanly ours). Request our release, then observe.
         outstandingEntertainmentCandidates.removeValue(forKey: prepared.id)
         let stopRequest = await prepared.client.stopSession()
+        flashOnsetLedger(forBridge: bridgeID).forgetWire()   // D-2
         if stopRequest == .requestFailed {
             debugLog("[Handoff] Our own action=stop on \(targetID) failed — release can only be less certain")
         }
@@ -11340,6 +11428,7 @@ extension UnifiedOrchestrator {
         debugLog("[Handoff] Rolling back an uncommitted Entertainment candidate on \(candidate.plan.bridgeID)")
         entertainmentRollbackTasks[candidateID] = Task { [weak self] in
             await candidate.client.stopSession()
+            self?.flashOnsetLedger(forBridge: candidate.plan.bridgeID).forgetWire()   // D-2
             self?.entertainmentRollbackTasks.removeValue(forKey: candidateID)
         }
     }

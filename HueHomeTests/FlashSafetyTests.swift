@@ -3223,6 +3223,91 @@ final class FlashSafetyTests: XCTestCase {
         assertOnsetsRespectTheFloor(fixed, label: "restart 0.25 s after the previous onset", atLeast: 2)
     }
 
+    // ── A forget outlives a late rollback (safety round 2, #2) ──
+
+    /// `stopCompositionMode` forgets the wire; an executing sweep's late
+    /// `cancelled 0/0` then rolls its reservation back. Before this round the
+    /// rollback restored `lastEmitted` — the bright frame the stop had just
+    /// turned off — and the restart's first bright frame went out unstamped.
+    /// The ledger now refuses to restore a wire model a forget predates.
+    func testALateRollbackCannotRestoreAWireAForgetPredates() {
+        var gate = ProductionOnsetGate()
+        let bright = BeatMath.FlashSafety.WireFrame(x: 0.3127, y: 0.3290, brightness: 1.0)
+        let dark = BeatMath.FlashSafety.WireFrame(x: 0.3127, y: 0.3290, brightness: 0.0)
+        _ = gate.reserve(dark, at: 0.00); gate.settle(delivered: true, at: 0.00)
+        _ = gate.reserve(bright, at: 0.05); gate.settle(delivered: true, at: 0.05)   // onset
+        // The sweep's reservation is taken (bright, not a candidate against
+        // a bright wire — emitted), the stop forgets, and only THEN does the
+        // sweep's terminal roll it back.
+        let pending = gate.reserve(bright, at: 0.10)
+        XCTAssertTrue(pending.admitted)
+        gate.forgetWire()
+        gate.settle(delivered: false, at: 0.20)
+        // The restart's first bright frame, 0.20 s after the onset: against a
+        // FORGOTTEN wire it is a cold candidate inside the period → held.
+        let restart = gate.reserve(bright, at: 0.25)
+        XCTAssertFalse(restart.admitted, "the rollback restored the pre-stop wire model — the restart's rise went out unstamped")
+        XCTAssertEqual(restart.onWire.brightness, 0, accuracy: 1e-9, "…and the hold is black")
+    }
+
+    // ── The projected field (safety round 2, #3) ──
+
+    /// A rotation sweep dispatches a SLICE of the room; the wire's field is
+    /// every light as last delivered with the slice replaced. The reservation
+    /// must be taken on that — reserving on the whole-room render let a stale
+    /// slice's real rise (a dark light lit by a frame the render called a
+    /// non-candidate) reach the wire unmeasured.
+    func testTheProjectedFieldIsWhatTheWireShows() {
+        // Three slices: A (0…1) bright, B (2…3) dark, C (4) bright — what a
+        // gated pulse leaves behind. The next sweep sends 0.6 to slice B.
+        let last: [Int: (x: Double, y: Double, brightness: Double)] = [
+            0: (0.3127, 0.3290, 1.0), 1: (0.3127, 0.3290, 1.0),
+            2: (0.3127, 0.3290, 0.0), 3: (0.3127, 0.3290, 0.0),
+            4: (0.3127, 0.3290, 1.0),
+        ]
+        let sweep = [(index: 2, x: 0.3127, y: 0.3290, brightness: 0.6),
+                     (index: 3, x: 0.3127, y: 0.3290, brightness: 0.6)]
+        let projected = BeatMath.FlashSafety.projectedField(lastDelivered: last, sweep: sweep)
+        // The wire after the sweep, reduced INDEPENDENTLY:
+        var wireAfter = last
+        for s in sweep { wireAfter[s.index] = (s.x, s.y, s.brightness) }
+        let viewer = viewerFieldFrame(wireAfter.keys.sorted().map { wireAfter[$0]! })
+        let reserved = BeatMath.FlashSafety.fieldFrame(channels: projected)
+        XCTAssertEqual(reserved.relativeLuminance, viewer.relativeLuminance, accuracy: 1e-6,
+                       "the reserved field must be the field the wire will show")
+        // A never-delivered light reads as the sweep's own frame.
+        let fresh = BeatMath.FlashSafety.projectedField(lastDelivered: [:], sweep: sweep)
+        XCTAssertEqual(fresh.count, 2)
+        XCTAssertEqual(fresh[0].brightness, 0.6, accuracy: 1e-12)
+    }
+
+    /// The reviewer's scenario: with the reservation on the whole-room render
+    /// the 0.6 frame is a fall from the render's own bright trough and passes
+    /// unstamped while the wire RISES on the dark slice; on the projected
+    /// field it is the rise it really is, and inside the period it is held.
+    func testAStaleSliceRiseIsMeasuredOnTheProjectedField() {
+        let white = (x: 0.3127, y: 0.3290)
+        let last: [Int: (x: Double, y: Double, brightness: Double)] = [
+            0: (white.x, white.y, 1.0), 1: (white.x, white.y, 1.0),
+            2: (white.x, white.y, 0.0), 3: (white.x, white.y, 0.0),
+            4: (white.x, white.y, 1.0),
+        ]
+        // The ledger has just stamped an onset for slice A at t = 0.
+        var gate = ProductionOnsetGate()
+        _ = gate.reserve(BeatMath.FlashSafety.fieldFrame(channels: [(white.x, white.y, 0.0)]), at: -0.5)
+        gate.settle(delivered: true, at: -0.5)
+        _ = gate.reserve(BeatMath.FlashSafety.fieldFrame(
+            channels: BeatMath.FlashSafety.projectedField(lastDelivered: last, sweep: [])), at: 0.0)
+        gate.settle(delivered: true, at: 0.0)
+        // t = 0.12: the sweep lights slice B (dark → 0.6).
+        let sweepB = [(index: 2, x: white.x, y: white.y, brightness: 0.6),
+                      (index: 3, x: white.x, y: white.y, brightness: 0.6)]
+        let projected = BeatMath.FlashSafety.projectedField(lastDelivered: last, sweep: sweepB)
+        let decided = gate.reserve(BeatMath.FlashSafety.fieldFrame(channels: projected), at: 0.12)
+        XCTAssertFalse(decided.admitted,
+            "lighting two dark lights of five is a field rise inside the period — it must be refused")
+    }
+
     // ── Cold refusal chroma (review round, D-3) ──
 
     /// A cold refusal — no delivered per-channel frame to repeat — sends the
