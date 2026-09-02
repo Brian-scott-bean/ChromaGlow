@@ -3387,6 +3387,117 @@ final class FlashSafetyTests: XCTestCase {
         ledger.commit(r, delivered: false, at: 0.20)
     }
 
+    // ── A batched REST sweep and the clock (safety round 4) ──
+
+    /// The reviewer's scenario, on the production ledger: a 15-light REST
+    /// room is admitted at t = 0 and its three batches of PUTs land at 0.08,
+    /// 0.24 and 0.40. Before round 4 the stamp stayed at the ADMIT time, so
+    /// a Strobe on the same bridge was admitted at 0.34 — 0.26 s after the
+    /// first lamps rose and 0.06 s before the last ones. The clock now moves
+    /// with each realized batch: the Strobe waits for 0.40 + 0.34.
+    func testARESTSweepsClockMovesToWhenItsLampsRose() {
+        let white = (x: 0.3127, y: 0.3290)
+        let ledger = BeatMath.FlashSafety.OnsetLedger()
+        let ent = BeatMath.FlashSafety.entertainmentSource
+        let rest = BeatMath.FlashSafety.restSource(roomID: "room-r")
+        let dark = BeatMath.FlashSafety.WireFrame(x: white.x, y: white.y, brightness: 0)
+        let bright = BeatMath.FlashSafety.WireFrame(x: white.x, y: white.y, brightness: 1)
+        // Both sources dark and known.
+        var r = ledger.admit(frame: dark, source: ent, at: -0.5); ledger.commit(r, delivered: true, at: -0.5)
+        r = ledger.admit(frame: dark, source: rest, at: -0.4); ledger.commit(r, delivered: true, at: -0.34)
+        // The room's rise is admitted (stamped) at 0.00 …
+        let sweep = ledger.admit(frame: bright, source: rest, at: 0.00)
+        XCTAssertTrue(sweep.wasAdmitted)
+        // … and its lamps rise batch by batch.
+        XCTAssertTrue(ledger.noteRealized(sweep, at: 0.08))
+        XCTAssertTrue(ledger.noteRealized(sweep, at: 0.24))
+        XCTAssertEqual(ledger.lastOnset ?? -1, 0.24, accuracy: 1e-9, "the clock is where the lamps last rose")
+        // The Strobe's ON frame at 0.34: 0.34 s after the ADMIT, 0.10 s after
+        // the second batch rose — refused.
+        r = ledger.admit(frame: bright, source: ent, at: 0.34)
+        XCTAssertFalse(r.wasAdmitted, "the Strobe was admitted against the sweep's admit time, not its lamps")
+        ledger.commit(r, delivered: true, at: 0.34)   // the hold frame goes out
+        XCTAssertTrue(ledger.noteRealized(sweep, at: 0.40), "a refused frame does not take the clock")
+        ledger.commit(sweep, delivered: true, at: 0.40)
+        XCTAssertEqual(ledger.lastOnset ?? -1, 0.40, accuracy: 1e-9)
+        r = ledger.admit(frame: bright, source: ent, at: 0.60)
+        XCTAssertFalse(r.wasAdmitted, "0.20 s after the last batch rose")
+        ledger.commit(r, delivered: true, at: 0.60)
+        r = ledger.admit(frame: bright, source: ent, at: 0.74)
+        XCTAssertTrue(r.wasAdmitted, "0.34 s after the last lamps rose, the Strobe's onset is admitted")
+        ledger.commit(r, delivered: true, at: 0.74)
+    }
+
+    /// If another source stamps the clock between two of a sweep's batches
+    /// (a slow bridge stretched the batches past the period), the sweep's
+    /// remaining lamps would rise inside THAT onset's period: `noteRealized`
+    /// says so and the builder sends no further batch.
+    func testASweepThatLostTheClockSendsNoFurtherBatch() {
+        let white = (x: 0.3127, y: 0.3290)
+        let ledger = BeatMath.FlashSafety.OnsetLedger()
+        let ent = BeatMath.FlashSafety.entertainmentSource
+        let rest = BeatMath.FlashSafety.restSource(roomID: "room-r")
+        let dark = BeatMath.FlashSafety.WireFrame(x: white.x, y: white.y, brightness: 0)
+        let bright = BeatMath.FlashSafety.WireFrame(x: white.x, y: white.y, brightness: 1)
+        var r = ledger.admit(frame: dark, source: ent, at: -0.5); ledger.commit(r, delivered: true, at: -0.5)
+        r = ledger.admit(frame: dark, source: rest, at: -0.4); ledger.commit(r, delivered: true, at: -0.34)
+        let sweep = ledger.admit(frame: bright, source: rest, at: 0.00)
+        XCTAssertTrue(sweep.wasAdmitted)
+        XCTAssertTrue(ledger.noteRealized(sweep, at: 0.08))
+        // A stalled second batch; the Strobe's onset at 0.42 is legitimately
+        // 0.34 s after the lamps that HAVE risen — admitted, the clock is its.
+        r = ledger.admit(frame: bright, source: ent, at: 0.42)
+        XCTAssertTrue(r.wasAdmitted)
+        ledger.commit(r, delivered: true, at: 0.42)
+        // The sweep's second batch would land at 0.45: 0.03 s after the
+        // Strobe's onset. The sweep no longer owns the clock — it must stop.
+        XCTAssertFalse(ledger.noteRealized(sweep, at: 0.45),
+            "a sweep that lost the clock between batches went on lighting lamps inside the other onset's period")
+        XCTAssertEqual(ledger.lastOnset ?? -1, 0.42, accuracy: 1e-9, "…and it did not move the Strobe's stamp")
+        // An UNSTAMPED sweep (no rise) is never held back by ownership.
+        ledger.commit(sweep, delivered: true, at: 0.45)
+        let steady = ledger.admit(frame: bright, source: rest, at: 0.60)
+        XCTAssertTrue(steady.wasAdmitted)
+        XCTAssertTrue(ledger.noteRealized(steady, at: 0.66), "a frame that is not a rise has no clock to lose")
+        ledger.commit(steady, delivered: true, at: 0.66)
+    }
+
+    /// A rising sweep that half-landed: two of four lamps refused the PUT.
+    /// The admission recorded the whole rise; the wire shows half of it. The
+    /// source's wire is corrected to what landed, so the retry that lights
+    /// the other two is a rise on the wire — refused inside the period, not
+    /// sent unstamped as "no change".
+    func testAPartialDeliveryCorrectsTheSourceWire() {
+        let white = (x: 0.3127, y: 0.3290)
+        func field(_ bris: [Double]) -> BeatMath.FlashSafety.WireFrame {
+            BeatMath.FlashSafety.fieldFrame(channels: bris.map { (white.x, white.y, $0) })
+        }
+        let ledger = BeatMath.FlashSafety.OnsetLedger()
+        let rest = BeatMath.FlashSafety.restSource(roomID: "room-r")
+        var r = ledger.admit(frame: field([0, 0, 0, 0]), source: rest, at: -0.5)
+        ledger.commit(r, delivered: true, at: -0.44)
+        // The sweep: all four to full. Admitted, stamped at 0.00.
+        r = ledger.admit(frame: field([1, 1, 1, 1]), source: rest, at: 0.00)
+        XCTAssertTrue(r.wasAdmitted)
+        ledger.commit(r, delivered: true, at: 0.06)
+        // Lamps 2 and 3 failed: the wire shows [1, 1, 0, 0].
+        ledger.correctWire(source: rest, frame: field([1, 1, 0, 0]))
+        // The next tick projects the whole room bright again — a rise of half
+        // the field 0.12 s after the stamp. Refused.
+        r = ledger.admit(frame: field([1, 1, 1, 1]), source: rest, at: 0.12)
+        XCTAssertFalse(r.wasAdmitted,
+            "the retry read as 'no change' against a wire that claimed the whole rise — lamps 2 and 3 lit unmeasured")
+        ledger.commit(r, delivered: false, at: 0.12)
+        // …and admitted once the period has passed.
+        r = ledger.admit(frame: field([1, 1, 1, 1]), source: rest, at: 0.40)
+        XCTAssertTrue(r.wasAdmitted)
+        ledger.commit(r, delivered: true, at: 0.46)
+        // A wire forgotten since the admission stays unknown: no correction.
+        ledger.forgetWire()
+        ledger.correctWire(source: rest, frame: field([1, 1, 1, 1]))
+        XCTAssertNil(ledger.lastEmitted, "a correction must not resurrect a forgotten wire")
+    }
+
     // ── Cold refusal chroma (review round, D-3) ──
 
     /// A cold refusal — no delivered per-channel frame to repeat — sends the

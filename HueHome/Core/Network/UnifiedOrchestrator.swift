@@ -3566,6 +3566,30 @@ final class UnifiedOrchestrator {
             runtime.lastDeliveredFrames[f.index] = (f.x, f.y, f.brightness)
         }
         compositionRuntimes[runtimeKey] = runtime
+        // A PARTIAL delivery (safety round 4): the ledger recorded the whole
+        // sweep's field at admit; the lamps that failed still show their
+        // last frame. Hand the source's wire what actually landed, or the
+        // retry lights the rest of a rise unmeasured.
+        if let landed, landed.count < Set(flash.sweep.map(\.index)).count {
+            let realized = BeatMath.FlashSafety.fieldFrame(
+                channels: BeatMath.FlashSafety.projectedField(
+                    lastDelivered: runtime.lastDeliveredFrames, sweep: []))
+            flash.ledger.correctWire(
+                source: BeatMath.FlashSafety.restSource(roomID: token.scope.roomID),
+                frame: realized)
+        }
+    }
+
+    /// One batch of a token's sweep reached its lamps (safety round 4, HIGH):
+    /// the bridge's realized-onset clock moves to NOW, so a co-active source
+    /// (the Entertainment loop, another REST room) is judged against when
+    /// these lamps rose, not against the sweep's admit time. False when the
+    /// clock is no longer this sweep's — another source stamped between two
+    /// batches — and the caller sends no further batch. A token with no
+    /// reservation is unknown, and unknown is the safe answer: stop.
+    private func composerBatchRealized(token: CompositionSendLedger.Token) -> Bool {
+        guard let flash = composerFlashReservations[token] else { return false }
+        return flash.ledger.noteRealized(flash.reservation, at: CACurrentMediaTime())
     }
 
     /// Monotonic token mint. Uniqueness only — ordering claims come from the
@@ -7043,6 +7067,18 @@ final class UnifiedOrchestrator {
                     token: token,
                     attemptedOperations: attemptedThisBatch,
                     failures: failuresThisBatch)
+                // These lamps ROSE now (safety round 4): move the bridge's
+                // clock to this delivery, and stop if the clock has passed to
+                // another source since the admit — the rest of this rise
+                // would land inside that onset's period.
+                if failuresThisBatch < attemptedThisBatch,
+                   self?.composerBatchRealized(token: token) != true {
+                    self?.composerWorkTerminated(
+                        token: token, kind: .cancelled,
+                        attemptedOperations: attempted, failures: failures,
+                        deliveredIndices: deliveredIndices)
+                    return
+                }
                 if batchEnd < entries.count {
                     try? await Task.sleep(for: .milliseconds(80))
                 }
@@ -7149,6 +7185,16 @@ final class UnifiedOrchestrator {
                     token: token,
                     attemptedOperations: attemptedThisBatch,
                     failures: failuresThisBatch)
+                // These lamps ROSE now (safety round 4): clock to this
+                // delivery; stop if another source owns the clock.
+                if failuresThisBatch < attemptedThisBatch,
+                   self?.composerBatchRealized(token: token) != true {
+                    self?.composerWorkTerminated(
+                        token: token, kind: .cancelled,
+                        attemptedOperations: attempted, failures: failures,
+                        deliveredIndices: deliveredIndices)
+                    return
+                }
                 // Small gap between batches if more remain
                 if batchEnd < targets.count {
                     try? await Task.sleep(for: .milliseconds(80))

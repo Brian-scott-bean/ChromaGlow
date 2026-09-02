@@ -714,6 +714,10 @@ enum BeatMath {
             /// about the transport (a stop, a group turned off) that the
             /// reservation predates.
             private var forgetSequence: UInt64 = 0
+            /// The reservation whose stamp is the clock's current word — the
+            /// only one allowed to move it forward as its lamps rise
+            /// (safety round 4).
+            private var lastOnsetOwner: UInt64?
 
             init(lastOnset: Double? = nil, lastEmitted: WireFrame? = nil) {
                 self.lastOnset = lastOnset
@@ -1107,10 +1111,49 @@ enum BeatMath {
                 forgetSequence = sequence
             }
 
-            private func reservation(_ verdict: FrameVerdict, stampedAt: Double?,
-                                     prior: (onset: Double?, emitted: WireFrame?,
-                                             trough: Double)) -> Reservation {
-                Reservation(verdict: verdict, source: currentSource, stampedAt: stampedAt,
+            /// A stamped reservation's frame reached the wire in PART — one
+            /// batch of a multi-PUT REST sweep landed (safety round 4, HIGH).
+            /// The clock a co-active source on this bridge is judged against
+            /// must be when the lamps ROSE, not when the sweep was admitted:
+            /// a 15-light room's admit precedes its last batch by ~0.4 s, and
+            /// a DTLS onset admitted 0.34 s after the admit lands 0.28 s after
+            /// the first lamps rose. Moves the realized-onset clock forward to
+            /// the delivery time — forward only, and only while this
+            /// reservation's stamp is still the clock's word.
+            ///
+            /// Returns whether it is. Once another source has stamped between
+            /// two batches, the sweep's remaining lamps would be a further
+            /// rise inside THAT onset's period: the caller sends no further
+            /// batch (the un-lit lamps hold; the next tick projects the rest
+            /// of the rise and is judged on its own). An unstamped
+            /// reservation is not a rise and is never held back here.
+            mutating func noteRealized(_ reservation: Reservation, at t: Double) -> Bool {
+                guard reservation.stampedAt != nil else { return true }
+                guard lastOnsetOwner == reservation.sequence else { return false }
+                if t.isFinite, let last = lastOnset, t > last { lastOnset = t }
+                return true
+            }
+
+            /// What the wire shows after a PARTIAL delivery (safety round 4,
+            /// MEDIUM): the admission recorded the whole sweep's field, but
+            /// the lamps whose PUT failed still show their last frame. The
+            /// source's wire becomes the realized field and its trough may
+            /// only FALL to it — a rising sweep that half-landed must not
+            /// leave the model claiming the whole rise, or the retry lights
+            /// the rest of the room unmeasured. A wire forgotten since the
+            /// admission stays unknown.
+            mutating func correctWire(source: String, frame: WireFrame) {
+                guard var wire = wires[source], wire.lastEmitted != nil else { return }
+                wire.lastEmitted = frame
+                wire.trough = min(wire.trough, frame.relativeLuminance)
+                wires[source] = wire
+            }
+
+            private mutating func reservation(_ verdict: FrameVerdict, stampedAt: Double?,
+                                              prior: (onset: Double?, emitted: WireFrame?,
+                                                      trough: Double)) -> Reservation {
+                if stampedAt != nil { lastOnsetOwner = sequence }
+                return Reservation(verdict: verdict, source: currentSource, stampedAt: stampedAt,
                             priorLastOnset: prior.onset,
                             priorLastEmitted: prior.emitted,
                             priorTrough: prior.trough,
@@ -1207,6 +1250,21 @@ enum BeatMath {
             func forgetWire() {
                 lock.lock(); defer { lock.unlock() }
                 gate.forgetWire()
+            }
+
+            /// One batch of a stamped sweep reached its lamps: the realized-
+            /// onset clock moves to now. False once another source owns the
+            /// clock — the caller sends no further batch (safety round 4).
+            func noteRealized(_ reservation: Reservation, at t: Double) -> Bool {
+                lock.lock(); defer { lock.unlock() }
+                return gate.noteRealized(reservation, at: t)
+            }
+
+            /// A partial delivery: the source's wire becomes the field that
+            /// actually landed (safety round 4).
+            func correctWire(source: String, frame: WireFrame) {
+                lock.lock(); defer { lock.unlock() }
+                gate.correctWire(source: source, frame: frame)
             }
         }
 
