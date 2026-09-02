@@ -67,7 +67,23 @@ Read directly from the shipping source this session. Everything not listed here 
 
 These match §6 and §8's expected inventories exactly. The generated matrix is
 `docs/ios/unified-customization-capability-matrix-2026-09-01.md`
-(regenerate/verify with `Scripts/generate_capability_matrix.py [--check]`).
+(regenerate/verify with `Scripts/generate_capability_matrix.py [--check]`; re-find the cited
+consumer line numbers with `--refresh-citations`, and `--check` fails loudly when a citation has
+rotted). **68 is the catalog size, not a proof count.** The matrix splits its totals into
+four separate figures, not one score:
+
+| Figure | Controls |
+| --- | ---: |
+| Code-proven send path | 57 / 68 |
+| No code-proven send path (hardware-pending evidence) | 11 / 68 |
+| Pending / unknown | 0 / 68 |
+| Code-proven rows still owing a hardware **behaviour** check | 23 / 68 — `base_color` ×9, `speed` ×11, `warmth` ×3 |
+
+Code-proven means the write provably leaves the app, nothing more. The 23-row figure is a SUBSET of
+the 57, not a fourth bucket. `--check` now strips comments before matching, fails on any uncited or
+drifting loop read, cross-checks each row's evidence class and the pending-hardware list against
+`EffectParameterProfiles.swift`, and scopes each loop span to the next declaration. Nothing here is
+"68/68 proven".
 
 ### The central state defect
 
@@ -152,7 +168,7 @@ Registered-suite baseline is now **1723** (older DEVLOG entries record 1573).
 | Reset isolates to one instance | `testResettingOneInstanceDoesNotDisturbTheOther` |
 | Unknown ≠ unsupported | `testUnreadableCapabilityIsDistinctFromUnsupported` |
 | CT claimed without a readable range is unknown | `testCTCapableButRangelessTargetIsUnknownNotActive` |
-| `entOnly` inventory is exactly the audited three | `testEntOnlyInventoryMatchesTheAuditedThree` |
+| `entOnly` inventory is exactly the audited set | `testEntOnlyInventoryMatchesTheAuditedSeven` — three at Slice 1; the engine reverse-audit took it to seven at Slice 2 (§2C, §8, §17) |
 | No Live card declares a Beat param | `testNoLiveCardDeclaresABeatParamYet` |
 | `ambient.color` ≠ `thunderstorm.ambient_color` | `testDeadAmbientColorSentinelIsNotTheLiveThunderstormAmbientColor` |
 | `thunderstorm.ambient_color` still ships | `testThunderstormAmbientColorIsStillAShippingControl` |
@@ -174,7 +190,9 @@ Registered-suite baseline is now **1723** (older DEVLOG entries record 1573).
 
 ### The §2A central state defect is FIXED in production
 
-Verified by executing tests against the shipping paths (`StudioProductionWiringTests`, 14 tests):
+Verified by executing tests against the shipping paths (`StudioProductionWiringTests` — 17 at Slice 2
+delivery, 24 after the first remediation round, 31 after the second, 41 after the third, 46 after the
+fourth, **47** after the fifth):
 
 | §2A defect | Fix | Proof |
 | --- | --- | --- |
@@ -206,6 +224,18 @@ live v2 speed. Prism / Color Loop tint/warmth (§6): investigated, no evidence, 
 (resolves unknown, never a fake 153…500 clamp). A failed capability read produces an all-
 `.unreadable` snapshot instead of leaving stale coverage standing.
 
+**Scope of that claim (corrected 2026-09-01).** What is snapshot-honest is *availability*: whether
+a Warmth control resolves active / partial / unknown / unavailable. The knob's **authoring range is
+not** — it is still the catalog's `153...500` for all four Warmth params in the `StudioCard`
+catalog (`StudioViewModel.swift`, the four `StudioParam(id: "warmth", … kind: .slider(min: 153,
+max: 500))` declarations; grep the literal rather than trusting a line number), and the board's
+slider control derives its range from `param.kind` in its own `range` computed property
+(`StudioBoardView.swift`), never from the snapshot's `MirekRange`. On a fixture whose `mirek_schema` is narrower than
+153…500 the knob still travels the full catalog range. Separately, `ambient.warmth` is an
+app-driven slider with `entOnly == false`, so `StudioBoardAvailability.requirement(for:)` gives it
+`.none` — it resolves active with no CT gate at all. Both are Slice 3 debt (execution plan, Slice 2
+status → "Accepted debt carried into Slice 3"; §V-B checklist row 58). Do not describe Warmth as "range-honest through the snapshot".
+
 ### §20 Beat — per-engine consumption PROVEN (read from the loops, 2026-09-01)
 
 All four engines materially derive output from `BeatBinding` via `BeatMath.liveLock`; the Beat
@@ -214,10 +244,87 @@ Auto / Resync act on the shared `BeatClock` transport.
 
 | Engine | Exact consumer | What Beat materially changes | Transport difference | Safety |
 | --- | --- | --- | --- | --- |
-| Strobe | ENT `runStrobeEntertainment` (phase-derived ON/OFF per 20 ms frame); REST cycle flips | Flash cadence locks to the division; phase shifts alignment; duty cycle shapes the ON window inside each cycle | REST floors the lock at ~1.1 Hz cadence | `wcagSafeBeatsPerCycle` walks the division up until ≤3 Hz |
-| Party | ENT `runPartyEntertainment` (`cycleIndex` picks the palette slot, `cyclePhase` drives hold/fade); REST index-stepped colors + `sleepUntilNextCycle` | Palette steps exactly on cycle boundaries; smoothness fades track the cycle | REST floors at 1 Hz | ≤3 Hz via liveLock default |
-| Thunderstorm | ENT strike gating (streams ambient until the cycle boundary — DTLS never pauses); REST holds the strike to the next boundary | Strikes land on the beat grid; division sets strike-opportunity spacing | REST floors at 2 Hz | flash-class ≤3 Hz preserved |
+| Strobe | ENT `runStrobeEntertainment` (phase-derived ON/OFF per 20 ms frame); REST cycle flips | Flash cadence locks to the division; phase shifts alignment; duty cycle shapes the ON window inside each cycle | REST floors the lock at ~1.1 Hz cadence | `FlashSafety.StrobePlan` sizes the safe TOTAL cycle first (≥ 17 frames), then splits ON/OFF without shortening it |
+| Party | ENT `runPartyEntertainment` (`cycleIndex` picks the palette slot, `cyclePhase` drives hold/fade); REST index-stepped colors + `sleepUntilNextCycle` | Palette steps exactly on cycle boundaries; smoothness fades track the cycle | REST floors at 1 Hz | `FlashSafety.PartyPlan` — same ≥ 17-frame total; each palette step is an onset and is admitted through the ledger |
+| Thunderstorm | ENT strike gating (streams ambient until the cycle boundary — DTLS never pauses); REST holds the strike to the next boundary | Strikes land on the beat grid; division sets strike-opportunity spacing | REST floors at 2 Hz | `FlashSafety.ThunderstormPlan.Budget` carries frames-since-onset across skipped strikes and beat waits, so no strike lands inside 17 frames |
 | Ambient | REST breathing phase from `cyclePhase` (trough on the boundary) | Breath length = the division; phase shifts the trough | REST-only engine, floors at 1 Hz | n/a (no flash) |
+
+**Safety correction (2026-09-01 remediation).** The Safety column above previously read
+"flash-class ≤3 Hz preserved" for Thunderstorm and named the requested-float clamps for
+Strobe/Party. That was false on the frame grid: the requested Hz was capped, the REALIZED
+cadence was not. Thunderstorm had no rate clamp at all and ran a strike every 10 frames
+(**5.0 Hz**) at frequency 100; Strobe/Party floored the ON and OFF frame counts independently and
+realized 15–16 frames per cycle (3.13–3.33 Hz); the storm's beat branch gated on the raw
+`binding.beatsPerCycle` rather than the capped lock; and beat locks at exactly 3 Hz quantized onto
+20 ms frames as 16-frame (0.32 s) intervals.
+
+The invariant is now stated in realized frames, not in a requested float: **every Entertainment
+onset — first bright frame, first strike frame, palette step — is at least 17 frames (0.34 s)
+after the previous one**, enforced by the pure `BeatMath.FlashSafety` plans and backstopped by a
+per-bridge `OnsetLedger` whose wall-clock gate outlives loop restarts. Entertainment beat locks
+therefore cap at `entertainmentMaxLockHz` = 1/(17 × 0.02) = **2.94 Hz**. That ceiling is an
+implementation consequence of the realized-onset invariant on this grid, not a new product
+preference: exactly three narrow tempo bands step up a division — ×1 over (176.47, 180] BPM
+(**3.53 BPM** wide), ×½ over (88.24, 90] BPM (**1.76 BPM** wide), ×¼ over (44.12, 45] BPM
+(**0.88 BPM** wide) — the same bands where the old lock realized 16-frame intervals. REST loops are
+unchanged (cadence ≥ 0.7 s). Landed in `910c861`; Guard 14 added in `10c2301`; the adversarial
+review's flash blockers closed in `2200e98`. Proof: `FlashSafetyTests` (**39** pure, seeded,
+wait-free tests, 54 after the third round, 69 after the fourth, **75** after the fifth) and
+`hardening_guards.sh` Guard 14 (`slice2-r1`),
+every sub-check mutation-tested against a scratch copy.
+
+**Second-round correction (`2200e98`).** The realized-frame plans were necessary but not sufficient.
+Party's beat-locked branch gated *cycle-index changes*, not *luminance rises*, so a backwards phase
+correction (music-service drive, a nudge) or a smoothness drag restored peak brightness mid-cycle
+with **no gate call at all** — a realized 0.02–0.06 s rise. Every rendered rise above the previous
+frame's brightness (`flashRiseEpsilon`) now passes the ledger: in Party, in Strobe's `min_brightness`
+raise while dark, and in the storm's ambient. `OnsetGate` refused only when `t >= last` and re-based
+itself backwards on an out-of-order stamp; it now refuses any backwards time outright. The ledger
+period is `minOnsetLedgerPeriod` = 17 × 20 ms = **0.34 s** — the same value the frame plans realize —
+so the cross-run path (card switch, loop restart) carries the same jitter slack as a run; the
+remaining 1e-9 is IEEE rounding tolerance, measured across 4000 grid points. The storm's beat wait
+now re-reads the binding every frame, so Beat-off exits within one frame (this closes the Low debt
+recorded in the first round). `FlashSafety.clampedInt` and a guard in `BeatBinding.init` stop
+`Int(Double)` trapping on NaN/inf before the ranges clamp (`cycleIndex` did `Int(floor(nan))`).
+
+**Third-round correction (`119aa4b`) — the gate moved to the wire.** Round two still measured *the
+transitions the loop computed*, not *the frames it emitted*, and four escapes survived: a hold frame
+streamed while the ledger refused could itself be a rise (`min_brightness` 0 → 50 across a card switch
+realized a **50 % step 0.05 s** after the last onset); the storm's afterglow-to-ambient step was an
+ungated **+10 %** two frames after a strike; an inverted Strobe (`brightness <= min_brightness`)
+stamped the *falling* edge and realized the rise **0.08 s** later; and a sub-epsilon ramp accumulated
+unmeasured. One mechanism now replaces every per-branch gate: the per-bridge `OnsetLedger` tracks the
+**last frame put on the wire** and the **trough since the last admitted onset**, and every frame the
+three Entertainment loops send passes through `emitGatedFrame` (`WireFrame` / `FrameVerdict` /
+`OnsetGate.admit`). A frame that rises **≥ 10 % of full scale** above that trough — or steps the
+palette at or above the admitted level — is an onset candidate and is **held at the last emitted
+frame** until the 0.34 s period admits it; falls and sub-threshold rises pass. The storm's afterglow is
+**floored at the ambient level** so the decay is monotone, **no direct `sendUniform` remains in the
+loops**, and `BeatClock`'s audio-ingest BPM is clamped to **20–300**. `FlashSafetyTests` 39 → **54**,
+each scenario measured on the emitted frame list with the pre-fix model still failing. Accepted and
+documented: the first frame of a bridge's ledger life is emitted unconditionally and stamped only if
+bright (worst case one delay of ≤ 0.34 s), and a refused onset now **holds the last emitted frame**
+rather than blacking the light out.
+
+**Fourth-round correction (`14a0cac`) — wire truth.** `emitGatedFrame` recorded and stamped a frame
+*before* a send the DTLS client silently drops during a reconnect, so the ledger ran ahead of the wire.
+`send`/`sendUniform` now answer whether the frame was handed to the transport; the gate is **reserve →
+send → commit** (the stamp moves to delivery time; a dropped frame rolls it back), and the 10 % rule is
+measured in **relative luminance** (L\*-cube dimming × sRGB-primaries chromaticity factor) above the
+trough since the last admitted onset, with a saturated-red chroma rule. `FlashSafetyTests` 54 → **69**.
+
+**Fifth-round correction (`b06df67`) — a dropped send changes nothing on the wire.** Round four also
+*forgot* the wire on a dropped send, and that opened three escapes the suite's own viewer measured: a
+refused bright frame held black at the *requested* chromaticity is, against the frame still on the
+wire, a red-rule onset (**1 frame**); the cold path re-based the trough upward across a single dropped
+frame (**3 frames**); and the cold path never applied the red rule at all (in-catalog Thunderstorm with
+a red ambient: **1 frame**). A dropped send now **restores** the pre-drop wire state and trough; a wire
+silent for a whole ledger period is unknown and goes cold; the cold path applies the red rule against
+the last known frame and holds black at the last *known* chromaticity; the trough survives a forget as
+a running minimum. Every scenario is asserted against a replica of the round-four gate (seeded ramps ×
+drop 115/1380 violating → 0; in-catalog storm 36/60 → 0). `FlashSafetyTests` 69 → **75**. The
+assumption this rests on — the bridge keeps showing the last delivered frame across a short DTLS drop and
+may have reverted after a longer silence — is hardware-checkable and recorded as checklist row 65.
 
 ---
 
@@ -438,15 +545,28 @@ Audit current transport behavior and resolve each control as:
 - unavailable with reason;
 - partial where applicable.
 
-> **Verified 2026-09-01.** All five non-Beat controls present (card id `strobe`). Three carry
-> `entOnly: true` today — `speed`, `flash_color`, `duty_cycle` — which is the current encoding of the
-> historical “Streaming-only” claim. See §17 and spec §2.3 on why this binary flag is insufficient.
+> **Verified 2026-09-01 (count corrected in the remediation).** All five non-Beat controls present
+> (card id `strobe`). Strobe carries three `entOnly: true` params — `speed`, `flash_color`,
+> `duty_cycle` — and the Slice 2 engine reverse-audit took the catalog-wide inventory from three to
+> **seven** (adding `party.speed`, `party.min_brightness`, `thunderstorm.flash_length`,
+> `thunderstorm.afterglow`). The flag is no longer read by a view: the `entOnly` →
+> `.transport(.entertainment)` migration is complete through
+> `HueHome/Core/StudioBoardAvailability.swift` (`f2f7a19`), which translates the bit into a
+> `CapabilityRequirement` once and lets the resolver decide — pinned by Guard 15 (`slice2-r2`) and
+> `StudioBoardAvailabilityTests` (42 after the third review round, 48 after the fourth, **53** after
+> the fifth). See §17 and spec §2.3.
 
 Safety:
 
 - free-running and beat-locked output must remain ≤3 Hz;
 - exact typed values may not bypass clamp;
 - UI range/formatter should reflect the real safe range.
+
+> **Met on 2026-09-01 (remediation).** As a realized-frame invariant, not a requested-float clamp:
+> every Entertainment onset is ≥ 17 frames (0.34 s) apart via `BeatMath.FlashSafety` plans plus the
+> per-bridge `OnsetLedger`; Entertainment beat locks cap at `entertainmentMaxLockHz` = 2.94 Hz as an
+> implementation consequence of that invariant. Landed in `910c861`, hardened in `2200e98`. Proof:
+> `FlashSafetyTests` (54 after the third round; 75 at `b06df67`) and Guard 14. See the safety correction note in §2C.
 
 ### Thunderstorm
 
@@ -467,9 +587,21 @@ Only expose Beat Sync if the engine truly consumes it.
 
 Audit flash-class combinations for safety.
 
+> **Met on 2026-09-01 (remediation).** The storm was the worst offender — no rate clamp at all,
+> 5.0 Hz at frequency 100 / flash_length 1 / afterglow 0. `FlashSafety.ThunderstormPlan.Budget` now
+> carries frames-since-onset across skipped strikes and beat waits so gap + frames-since-onset ≥ 17
+> at every frequency × flash_length × afterglow, and the beat branch gates on the capped lock
+> (≤ `entertainmentMaxLockHz` = 2.94 Hz) instead of the raw `beatsPerCycle`. Landed in `910c861`,
+> hardened in `2200e98` (the beat wait re-reads the binding every frame; the dead pre-strike
+> `noteAmbient` is gone) and again in `119aa4b` (the afterglow is floored at the ambient level, and
+> every emitted frame passes the wire-level gate). Proof: `FlashSafetyTests` (54 after the third round; 75 at `b06df67`) and Guard 14. See the
+> safety correction note in §2C.
+
 > **Verified 2026-09-01.** All eight controls are present in the current catalog (card id
 > `thunderstorm`). `ambient_color` has a confirmed live production consumer at
-> `HueHome/Core/Network/UnifiedOrchestrator.swift:8219` and `:8239`
+> `HueHome/Core/Network/UnifiedOrchestrator.swift` (the `paramBox.colors["ambient_color"]` reads
+> inside `runThunderstormEntertainment` and the REST storm loop — the capability matrix carries the
+> exact machine-verified line numbers and `--refresh-citations` re-finds them)
 > (`paramBox.colors["ambient_color"]` → `entClient.sendUniform`). The remaining seven consumers still
 > require the proof this section demands.
 
@@ -768,10 +900,72 @@ Examples:
 
 Do not permanently encode “Streaming-only” as a UI fact if the semantic capability might gain another valid implementation later; encode current implementation truth in the resolver/profile.
 
-> **Current encoding (verified 2026-09-01).** Today this is a single boolean, `StudioParam.entOnly`
-> (declared `HueHome/UI/Studio/StudioViewModel.swift:86`, consumed
-> `HueHome/UI/Studio/StudioParamControls.swift:119`), set on `strobe.speed`, `strobe.flash_color`, and
-> `strobe.duty_cycle`. This is exactly the binary requirement the execution plan §8 replaces.
+> **Current encoding (verified 2026-09-01, corrected in the remediation).** The catalog still
+> declares a single boolean, `StudioParam.entOnly` (`HueHome/UI/Studio/StudioViewModel.swift:86`),
+> now set on **seven** params — `party.speed`, `party.min_brightness`, `strobe.speed`,
+> `strobe.flash_color`, `strobe.duty_cycle`, `thunderstorm.flash_length`,
+> `thunderstorm.afterglow`. The binary flag is no longer the decision: it is translated once into
+> `.transport(.entertainment)` by `HueHome/Core/StudioBoardAvailability.swift`
+> (`descriptor(card:param:)`), which is the single funnel every board control passes through —
+> colour pickers and Live-card controls included, resolved exactly the way bridge-native params
+> already were. Spec §17's staged semantics are applied at the control: active/partial/staged stay
+> editable, staged renders at reduced opacity with a "STREAMING ONLY — INACTIVE IN ROOM MODE"
+> note, and unavailable/hidden are disabled with a local reason. What remains of execution plan §8
+> is deleting the catalog bit itself, not the branching it used to drive.
+>
+> **Second-round correction (`2200e98`).** The funnel was the right shape but discarded evidence and
+> was not the only gate:
+>
+> - **Profile evidence was thrown away**, so hardware-pending params rendered as fully live.
+>   `StudioBoardResolution` now carries `isHardwareUnverified`; those controls stay editable at
+>   staged opacity with **"UNVERIFIED ON THESE LIGHTS"** (`brightness` everywhere;
+>   `base_color`/`warmth` on the legacy transport). This is the UI half of the matrix's 23-row
+>   figure above.
+> - **CHECKING was a dead end.** `warmEntertainmentCaches` dropped its own light fetch from the
+>   guard; the light cache was not observable; `refreshCoverage` and `roomHueLights` fetched
+>   inventories and discarded them — so a board could say CHECKING WHAT THESE LIGHTS SUPPORT
+>   forever. The guard now includes `needsLights`, `capabilityInventoryGeneration` is bumped on
+>   every inventory seed and read by `targetSnapshot`, both fetches seed the cache, and the note
+>   tells the user the board refreshes when the bridge answers. A target with genuinely no lights
+>   says so instead of checking forever.
+> - **`.disabled` was the only gate for raw gestures.** Knobs, faders, chips, toggles, the colour
+>   editor and the hue pad now short-circuit their own callbacks when not interactive, and a
+>   non-interactive editor never renders the pad and refuses expansion.
+> - **App-driven warmth now requires `colorTemperature`** (it previously resolved `.none` with no CT
+>   gate at all — see the Warmth scope note in §2C, of which this fixes the availability half but
+>   not the authoring range). `.hidden` renders nothing, a bridge-native param with no profile fails
+>   closed, the reason note keeps its own alpha, and the colour section reuses the one snapshot.
+> - **The look browser's hero sliders** in `LookDetailsPanel` now resolve through the same funnel
+>   when the card is running on the selected room, and otherwise say they set the next start.
+>
+> `StudioBoardAvailabilityTests` 11 → **22**; Guard 15 gains sub-checks (f)–(j).
+>
+> **Third-round correction (`119aa4b`) — unknown must never refuse.** An UNKNOWN `effects_v2`
+> capability was mapped to the *refusal* reason, so a cold snapshot's Speed knob asserted "THESE
+> LIGHTS CAN'T CHANGE THIS WHILE RUNNING" **beside neighbours saying CHECKING**. Unknown coverage now
+> resolves `capabilityUnknown` with a retry remediation, and `.effectsV2Unavailable` is reachable
+> **only from an unsupported answer**. In a mixed v2/v1 room `base_color` / `warmth` / `speed` reach
+> only the v2 lights, so the funnel **narrows them to the `effects_v2` partial coverage**. The
+> unverified caveat now derives from `EffectParameterProfiles.pendingHardwareCheckParamIDs` — **`speed`
+> is labelled too** — and **coexists with** the coverage count rather than replacing it. Descriptors
+> claim their own card so `.hidden` is reachable, the CHECKING copy fits its tag, **NO LIGHTS HERE
+> outranks every state**, and the look-browser setup slider uses the same fail-closed funnel form as
+> the board. `StudioBoardAvailabilityTests` 22 → **42**. Accepted and documented: `.capabilityUnreadable`
+> as a distinct reason is **reserved** — unknown and unreadable render identically today, so the
+> distinction lives in the type, not on screen.
+>
+> **Fourth-round correction (`14a0cac`) — effect-specific reach.** The narrowing keyed on generic
+> `effects_v2` support while sends reach only the lights whose `effect_values` list *this* effect.
+> `targetSnapshot` now measures effect-specific reach and the colour / CT intersections; the funnel
+> narrows to the intersection, and zero reach resolves unavailable with "NO LIGHT HERE RESPONDS TO
+> THIS" rather than a live 0-of-n knob. Unverified-but-active controls keep their caption at full
+> opacity. `StudioBoardAvailabilityTests` 42 → **48**.
+>
+> **Fifth-round correction (`b06df67`) — the badge shows the funnel's reach.** The colour editor
+> suppresses the coverage note because it badges its own count, but that badge read the *un-narrowed*
+> snapshot colour coverage: a mixed room (3 colour lights, one listing the effect) rendered a fully
+> live Tint editor with no badge and no caption. `StudioBoardAvailability.editorCoverage` now feeds the
+> editor the resolution's partial counts. `StudioBoardAvailabilityTests` 48 → **53**.
 
 ---
 

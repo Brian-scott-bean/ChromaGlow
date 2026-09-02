@@ -923,7 +923,19 @@ timing, gesture feel, haptics, or VoiceOver. The render probes MIRROR
 
 Rows 37–39 are the capability-matrix hardware-pending rows (audit §2C): until
 they run, `brightness` and the legacy color/warmth fallbacks stay classified
-as approximations, never full live mutation.
+as approximations, never full live mutation. The generated matrix reports four
+separate figures, never one score: **57 / 68** with a code-proven send path,
+**11 / 68** with no code-proven send path (hardware-pending evidence),
+**0 / 68** pending, and **23 / 68** code-proven rows that still owe a hardware
+BEHAVIOUR check (`base_color` ×9, `speed` ×11, `warmth` ×3 — a subset of the 57,
+not a fourth bucket). Code-proven means the write provably leaves the app, not
+that a light was watched obeying it. `speed` in particular ships a proven send
+whose visible firmware response nobody has yet watched.
+
+Rows 58–64 were added in the 2026-09-01 remediation: row 58 is the Warmth
+authoring-range debt deferred to Slice 3, and rows 59–64 are the reconnect,
+background/foreground, room-deletion and transport-loss cases audit §27 and
+execution plan §29 require but this block did not previously list.
 
 | # | Test | Expected | Result |
 | --- | --- | --- | --- |
@@ -948,8 +960,22 @@ as approximations, never full live mutation.
 | 55 | Exact entry on a knob with the keyboard up; scroll; switch rooms mid-entry | Host never collapses; the wheel never jumps; the typed value lands on the room the edit began on or drops | **UNPROVEN** |
 | 56 | Reduce Motion + largest Dynamic Type + VoiceOver over the board | No springs/decorative motion; labels/values/adjustable actions on every knob and fader; "Reset to default" action present; strobe refusal intact | **UNPROVEN** |
 | 57 | Party/Thunderstorm in Room mode (no streaming) | Speed, Fade Floor, Flash Length, Afterglow show STREAMING ONLY and genuinely change nothing until streaming starts | **UNPROVEN** |
+| 58 | Warmth knob on a fixture whose `mirek_schema` is NARROWER than 153–500 (open a Candle/Fire/Opal board on that room, sweep Warmth end to end) | The knob's range must match the DEVICE range, and the ends must be reachable colours — not catalog travel past what the light can do. Availability is snapshot-honest today; the authoring range is not (see the execution plan's Slice 3 debt list) | **UNPROVEN / deferred to Slice 3** |
+| 59 | Reboot the bridge (or pull its power) while a **Room-mode (REST)** look is running and a board is open | Reconnect restores the same running instance — values, identity and board state unchanged, no rekey, no orphan row, no silent value reset. This is the transport for which "resume the same instance" is the expected behaviour | **UNPROVEN** |
+| 59b | Reboot the bridge while an **Entertainment (streaming)** look is running | The streaming session is lost, so the row ENDS — this is row 63's behaviour, not row 59's. A reconnect must NOT be expected to resume an Entertainment instance; verify it ends honestly rather than leaving a row claiming `isEntertainment` with no engine | **UNPROVEN** |
+| 60 | Background the app mid-edit (home gesture / another app / lock), return after ≥ 30 s | The board comes back on the same target with the same values; no pending write from before the background lands on the wrong target after it | **UNPROVEN** |
+| 61 | Start PREVIEW LIVE, then force a bridge reconnect (bridge reboot or Wi-Fi drop) before cancelling | Cancel is honest either way: it restores the previous look exactly, or it drops and SAYS it dropped — never a partial or cross-target restore | **UNPROVEN** |
+| 62 | Delete the selected room/zone in the Hue app while its ChromaGlow board is open | The host closes or reselects honestly — no board editing a target that no longer exists, no write attempted against the deleted id | **UNPROVEN** |
+| 63 | Entertainment session lost mid-look (another app or the Hue app takes the Entertainment Area) | The PLAYING NOW row ends, Now Playing clears, and the board closes honestly — no row claiming `isEntertainment` with no engine behind it | **UNPROVEN** |
+| 64 | Composition ENT→REST failover mid-look (kill streaming while a composition runs) | The transport badge flips to Room mode and the controls KEEP their values; streaming-only controls re-render as STREAMING ONLY rather than staying live | **UNPROVEN** |
+| 65 | Run Strobe or Party (Entertainment) at speed 100 with a red palette, then induce a short DTLS drop (brief Wi-Fi interruption < 0.3 s) and a longer one (> 1 s) | Short drop: the lights keep showing the last delivered frame and resume with no black flicker and no double flash; long drop: the lights may fall back to the bridge's own state, the first frame back is a single gated onset, and no two onsets land closer than 0.34 s (film at 60 fps if in doubt). This is the assumption the fifth-round gate change rests on | **UNPROVEN** |
 
-**Slice 2 is NOT hardware-complete until rows 37–57 are physically executed.**
+Rows 59/59b and 63 are also what would settle the no-rekey argument recorded in
+`CustomizationIdentity.swift`: that argument is an ownership argument about code,
+deliberately not wired and **not proven by any test**, so those rows carry the whole
+burden of proof.
+
+**Slice 2 is NOT hardware-complete until rows 37–65 (including 59b) are physically executed.**
 Row 36 above is SUPERSEDED by rows 45–47: the Advanced bucket, its disclosure,
 and the `StudioParamSheet` reveal it tested no longer exist as a product path —
 every control now lives on the one board (spec §2.3).

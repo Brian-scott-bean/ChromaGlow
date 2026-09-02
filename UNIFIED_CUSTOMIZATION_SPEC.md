@@ -625,6 +625,16 @@ If Preview Live is activated:
 - audition on the exact selected room;
 - preserve the previous running look and its exact live settings;
 - canceling Preview Live restores the previous running look exactly;
+  - **Recorded deviation (2026-09-01).** A *fenced* cancel restores **nothing**. If the audition's
+    target changed, was stopped, or was replaced between begin and cancel, `cancelVerdict` returns
+    `.drop` and the machine touches nothing — the world it would restore into has moved on, and a
+    cross-target restore would be worse than no restore. The user is told rather than left guessing
+    (`PreviewLiveCopy.restoreDropped`), which is the honest reading of "exactly". Navigating away
+    from the browser does not cancel: the audition keeps playing and is cancelled or committed
+    explicitly.
+  - **Preview Live is refused outright over a composition with live edits, and over a recovered
+    row** — there is no exact previous state to snapshot in either case, so an audition would be a
+    restore promise the machine could not keep.
 - accepting/applying commits the new look;
 - preview state must be exact-target and race-safe.
 
@@ -784,6 +794,9 @@ Do not treat CT as arbitrary tint.
 ## 24. Safety invariants
 
 The ≤3 Hz flash safety ceiling remains non-negotiable.
+
+- The ceiling is measured in **realized frames, not in the requested value**: on the 20 ms Entertainment grid every onset — first bright frame, first strike frame, palette step — must be at least 17 frames (0.34 s) after the previous one, on every legal path (free-run, beat-locked, parameter churn, lock toggles, loop restarts). A consequence on this grid: Entertainment beat locks cap at `entertainmentMaxLockHz` = 1/(17 × 0.02) = 2.94 Hz, which steps exactly three narrow tempo bands up a division: ×1 over (176.47, 180] BPM (3.53 BPM wide), ×½ over (88.24, 90] BPM (1.76 BPM wide), and ×¼ over (44.12, 45] BPM (0.88 BPM wide). That is an implementation consequence of the invariant, not a product preference — a requested-float clamp alone does not satisfy this section.
+- The gate is measured **on the wire**, not on what the loop computed: every Entertainment frame passes a per-bridge onset ledger that tracks the last frame actually delivered and the luminance trough since the last admitted onset (10 % of maximum relative luminance, plus the WCAG saturated-red rule). A send the transport refuses changes nothing on the wire and is treated as such; a wire silent for a whole ledger period is unknown and the first frame back is gated as a first frame. The bridge-side assumption behind that (a short DTLS drop keeps the last delivered frame showing; a longer silence may not) is a hardware check (master checklist §V-B row 65).
 
 No exact typed value, adaptive drag, beat lock, “expert” interaction, or transport change may bypass runtime safety.
 
