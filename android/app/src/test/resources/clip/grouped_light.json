@@ -1,0 +1,1 @@
+{"id": "gl-1", "type": "grouped_light", "owner": {"rid": "room-1", "rtype": "room"}, "on": {"on": true}, "dimming": {"brightness": 40}, "alert": {"action_values": ["breathe"]}, "signaling": {"signal_values": ["no_signal", "on_off"]}}

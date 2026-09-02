@@ -139,6 +139,48 @@ class LivePairingWorkflow(
     }
 
     /**
+     * Startup classification of EVERY persisted record (multi-bridge; additive to [restore]).
+     * Classify-only: a record with a readable token is `paired`; one whose token is missing or
+     * unreadable is `needsRepair`; corrupt/unreadable metadata sets `metadataUnavailable`. This
+     * method never deletes a credential or a record and never touches the network.
+     */
+    suspend fun restoreAll(): RestoredHome {
+        val records = when (val bridges = bridgeRegistry.bridges()) {
+            is BridgeRegistryResult.Success -> bridges.value
+            BridgeRegistryResult.Corrupt -> return RestoredHome(emptyList(), emptyList(), metadataUnavailable = true)
+            is BridgeRegistryResult.Failure -> return RestoredHome(emptyList(), emptyList(), metadataUnavailable = true)
+        }
+        val paired = mutableListOf<PairedBridgeRecord>()
+        val needsRepair = mutableListOf<PairedBridgeRecord>()
+        for (record in records) {
+            val token = withContext(ioDispatcher) {
+                try {
+                    credentialStore.loadApiToken(record.bridgeId)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: RuntimeException) {
+                    BridgeSecretResult.Failure(failure)
+                }
+            }
+            when (token) {
+                is BridgeSecretResult.Present -> paired += record
+                BridgeSecretResult.Absent -> needsRepair += record
+                is BridgeSecretResult.Failure -> needsRepair += record
+            }
+        }
+        return RestoredHome(paired = paired, needsRepair = needsRepair, metadataUnavailable = false)
+    }
+
+    /** Result of [restoreAll]. Secret-free: records only. */
+    data class RestoredHome(
+        val paired: List<PairedBridgeRecord>,
+        val needsRepair: List<PairedBridgeRecord>,
+        val metadataUnavailable: Boolean,
+    ) {
+        val isEmpty: Boolean get() = paired.isEmpty() && needsRepair.isEmpty() && !metadataUnavailable
+    }
+
+    /**
      * Local-only forget: delete the Keystore token, then remove the metadata record. Idempotent and
      * retryable; a failed step yields [ForgetResult.CleanupFailed]. This does NOT revoke the
      * application key on the bridge — remote revocation is a later authenticated-REST concern.
