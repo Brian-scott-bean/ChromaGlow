@@ -847,10 +847,15 @@ final class StudioViewModel {
         }
 
         let previewPrevious = runningEffect(for: request.room)?.identity
-        await applyCore(request.card,
-                        roomOverride: request.room,
-                        preferEntertainmentOverride: request.preferEntertainmentOverride,
-                        selectedConfigID: choice.configID)
+        // M1 (Preview Live): a deferred audition's replay is still the
+        // AUDITION's apply — its replacement teardown must not consume the
+        // snapshot it is chaining onto. See `withDeferredAuditionInFlight`.
+        await withDeferredAuditionInFlight {
+            await applyCore(request.card,
+                            roomOverride: request.room,
+                            preferEntertainmentOverride: request.preferEntertainmentOverride,
+                            selectedConfigID: choice.configID)
+        }
         // M5 (Preview Live): a deferred audition arms only if it started.
         notePreviewAuditionOutcome(card: request.card, room: request.room,
                                    previousIdentity: previewPrevious)
@@ -980,8 +985,16 @@ final class StudioViewModel {
                 // land on whatever takes this room next. (Spelled out here
                 // rather than funnelled through `removeRunningRow` because
                 // Guard 12(m) pins this literal removal to the fence above it.)
-                notePreviewRowRemoved(rowKey: key)
-                runningEffects.removeValue(forKey: key)
+                //
+                // M3: only when a row is actually THERE. `removeRunningRow`
+                // carries that guard; these hand-written copies did not, so a
+                // no-op removal on a key holding nothing still announced
+                // "we couldn't put it back" over a perfectly live audition on
+                // another row.
+                if runningEffects[key] != nil {
+                    notePreviewRowRemoved(rowKey: key)
+                    runningEffects.removeValue(forKey: key)
+                }
                 activeCompositionBoxes.removeValue(forKey: key)
             }
             let headline: String
@@ -1031,9 +1044,12 @@ final class StudioViewModel {
                 let key = StudioSelectionKey(bridgeID: failedBridgeID, groupID: room.id, kind: room.kind)
                 stopRunningScopes(forRowAt: key)
                 // Same as the arm above: the removal is also the withdrawal of
-                // any Preview Live restore fenced on this row.
-                notePreviewRowRemoved(rowKey: key)
-                runningEffects.removeValue(forKey: key)
+                // any Preview Live restore fenced on this row — and only when
+                // there is a row to withdraw (M3).
+                if runningEffects[key] != nil {
+                    notePreviewRowRemoved(rowKey: key)
+                    runningEffects.removeValue(forKey: key)
+                }
                 activeCompositionBoxes.removeValue(forKey: key)
             }
             studioNotice = StudioNotice(message: fenceValid
@@ -1107,9 +1123,12 @@ final class StudioViewModel {
                 if let key = runningKey(bridgeID: bridgeID, groupID: roomID) {
                     stopRunningScopes(forRowAt: key)
                     // The removal is also the withdrawal of any Preview Live
-                    // restore fenced on this row.
-                    notePreviewRowRemoved(rowKey: key)
-                    runningEffects.removeValue(forKey: key)
+                    // restore fenced on this row — and only when there is a
+                    // row to withdraw (M3).
+                    if runningEffects[key] != nil {
+                        notePreviewRowRemoved(rowKey: key)
+                        runningEffects.removeValue(forKey: key)
+                    }
                     activeCompositionBoxes.removeValue(forKey: key)
                 } else if let boxKey = activeCompositionBoxKey(bridgeID: bridgeID, groupID: roomID) {
                     activeCompositionBoxes.removeValue(forKey: boxKey)
@@ -1177,7 +1196,9 @@ final class StudioViewModel {
         areaChoiceRequest = nil
         // M5 (Preview Live): an audition waiting behind this prompt never
         // started — consume its snapshot rather than leave a dangling fence.
-        discardArmedPreviewIfNotStarted()
+        // L2: the SAME single exit rule the confirmation bodies use, so a
+        // dismissal also settles a restore deferred behind this prompt (M2).
+        releaseDeferredPreviewIfUnresolved()
     }
 
     /// The running effect on the CURRENTLY SELECTED room.
@@ -1357,6 +1378,24 @@ final class StudioViewModel {
     /// which must not consume the snapshot the audition is chaining onto.
     private(set) var isAuditionInFlight = false
     func setAuditionInFlight(_ value: Bool) { isAuditionInFlight = value }
+
+    /// A "Put It Back" whose restore apply raised a lifecycle prompt (M2).
+    ///
+    /// The cancel deliberately LEAVES the snapshot's values in the card's
+    /// persisted defaults when a question is standing — the confirmation's
+    /// apply has to start from them — and returns. Its own rollback is
+    /// therefore unreachable, and the preview machine has already been
+    /// consumed, so nothing else was left to notice a confirmation that then
+    /// refused: the previous look's values stayed persisted under a card that
+    /// was never put back, with no sentence saying so.
+    ///
+    /// Carried here until `releaseDeferredPreviewIfUnresolved` settles it —
+    /// discarded when the restore actually lands, rolled back and SAID when it
+    /// does not. Session state; never persisted.
+    @ObservationIgnored
+    var pendingRestoreRollback: (rowKey: StudioSelectionKey,
+                                cardID: String,
+                                before: CustomizationValueSet<Color>)?
 
     // ── Engine reference (set in configure()) ─────────────────
     // Getter internal so the customization-wiring extension (separate file)
@@ -3351,7 +3390,9 @@ final class StudioViewModel {
         entertainmentHandoffPrompt = nil
         // M5 (Preview Live): an audition waiting behind this prompt never
         // started — consume its snapshot rather than leave a dangling fence.
-        discardArmedPreviewIfNotStarted()
+        // L2: the SAME single exit rule the confirmation bodies use, so a
+        // dismissal also settles a restore deferred behind this prompt (M2).
+        releaseDeferredPreviewIfUnresolved()
     }
 
     /// Switch. Stop the composition through its official path — the same one the
@@ -3408,10 +3449,13 @@ final class StudioViewModel {
         // replay, so the audition arms "Put It Back" exactly when it really
         // starts.
         let previewPrevious = runningEffect(for: prompt.room)?.identity
-        await applyCore(prompt.card,
-                        roomOverride: prompt.room,
-                        preferEntertainmentOverride: prompt.preferEntertainmentOverride,
-                        skipHandoffConfirmation: true)
+        // M1: the replay carries the audition's flag — see the area-choice arm.
+        await withDeferredAuditionInFlight {
+            await applyCore(prompt.card,
+                            roomOverride: prompt.room,
+                            preferEntertainmentOverride: prompt.preferEntertainmentOverride,
+                            skipHandoffConfirmation: true)
+        }
         notePreviewAuditionOutcome(card: prompt.card, room: prompt.room,
                                    previousIdentity: previewPrevious)
     }
@@ -3427,7 +3471,9 @@ final class StudioViewModel {
         studioHandoffRequest = nil
         // M5 (Preview Live): an audition waiting behind this prompt never
         // started — consume its snapshot rather than leave a dangling fence.
-        discardArmedPreviewIfNotStarted()
+        // L2: the SAME single exit rule the confirmation bodies use, so a
+        // dismissal also settles a restore deferred behind this prompt (M2).
+        releaseDeferredPreviewIfUnresolved()
     }
 
     /// Switch. Stop exactly the ChromaGlow look the user named, prove it
@@ -3517,11 +3563,14 @@ final class StudioViewModel {
         // replay, so the audition arms "Put It Back" exactly when it really
         // starts.
         let previewPrevious = runningEffect(for: request.room)?.identity
-        await applyCore(request.card,
-                        roomOverride: request.room,
-                        preferEntertainmentOverride: request.preferEntertainmentOverride,
-                        skipHandoffConfirmation: true,
-                        consentedPlan: request.plan)
+        // M1: the replay carries the audition's flag — see the area-choice arm.
+        await withDeferredAuditionInFlight {
+            await applyCore(request.card,
+                            roomOverride: request.room,
+                            preferEntertainmentOverride: request.preferEntertainmentOverride,
+                            skipHandoffConfirmation: true,
+                            consentedPlan: request.plan)
+        }
         notePreviewAuditionOutcome(card: request.card, room: request.room,
                                    previousIdentity: previewPrevious)
     }
@@ -3611,7 +3660,9 @@ final class StudioViewModel {
         foreignTakeoverRequest = nil
         // M5 (Preview Live): an audition waiting behind this prompt never
         // started — consume its snapshot rather than leave a dangling fence.
-        discardArmedPreviewIfNotStarted()
+        // L2: the SAME single exit rule the confirmation bodies use, so a
+        // dismissal also settles a restore deferred behind this prompt (M2).
+        releaseDeferredPreviewIfUnresolved()
     }
 
     /// Take Over. Re-check the bridge, stop exactly the session the user
@@ -3670,12 +3721,15 @@ final class StudioViewModel {
             // cannot prompt again and cannot start twice. The choke point
             // spends the token when it accepts it.
             let previewPrevious = runningEffect(for: request.room)?.identity
-            await applyCore(request.card,
-                            roomOverride: request.room,
-                            preferEntertainmentOverride: request.preferEntertainmentOverride,
-                            skipHandoffConfirmation: true,
-                            foreignConsent: consent,
-                            consentedPlan: request.plan)
+            // M1: the replay carries the audition's flag — see the area-choice arm.
+            await withDeferredAuditionInFlight {
+                await applyCore(request.card,
+                                roomOverride: request.room,
+                                preferEntertainmentOverride: request.preferEntertainmentOverride,
+                                skipHandoffConfirmation: true,
+                                foreignConsent: consent,
+                                consentedPlan: request.plan)
+            }
             // M5 (Preview Live): a deferred audition arms only if it started.
             notePreviewAuditionOutcome(card: request.card, room: request.room,
                                        previousIdentity: previewPrevious)

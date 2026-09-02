@@ -622,14 +622,27 @@ actor HueEntertainmentClient {
     /// - Parameter channels: Array of (channelID, x, y, brightness) tuples.
     ///   x, y: CIE 1931 color coordinates (0.0–1.0)
     ///   brightness: 0.0–1.0
-    func send(channels: [(id: UInt8, x: Double, y: Double, brightness: Double)]) {
+    ///
+    /// - Returns: **whether the frame was handed to the transport at all.**
+    ///   This is fire-and-forget, so `true` is not delivery to the bridge — it is
+    ///   "there was a streaming connection to write to". `false` is the case that
+    ///   matters: while the DTLS connection is re-establishing (`handleSendError`
+    ///   → `.error` → a 300 ms × attempt reconnect, with `isTerminallyFailed`
+    ///   still false for the whole retry budget) the guard below silently drops
+    ///   every frame. A flash gate that assumes its frames land runs AHEAD of the
+    ///   wire across that window — it records a 0.90 nobody saw, and the first
+    ///   frame delivered after the reconnect is a full-scale rise the gate's model
+    ///   says is not a candidate (blocker B-1). Callers that gate light output
+    ///   must feed this answer back to their ledger.
+    @discardableResult
+    func send(channels: [(id: UInt8, x: Double, y: Double, brightness: Double)]) -> Bool {
         #if DEBUG
         // Diagnostics only: count the attempt BEFORE the guard, so a live
         // render loop is observable even when the stub transport (or a dead
         // connection) drops the frame below.
         testSendAttempts += 1
         #endif
-        guard case .streaming = state, let conn = connection else { return }
+        guard case .streaming = state, let conn = connection else { return false }
 
         let packet = buildPacket(channels: channels)
         conn.send(content: packet, completion: .contentProcessed { [weak self] error in
@@ -637,12 +650,16 @@ actor HueEntertainmentClient {
                 Task { await self?.handleSendError(error) }
             }
         })
+        return true
     }
 
     /// Convenience: send uniform color + brightness to all channels.
-    func sendUniform(channelIDs: [UInt8], x: Double, y: Double, brightness: Double) {
+    /// Returns what `send(channels:)` returns — see its note on why the answer
+    /// is load-bearing for anything that gates flashes.
+    @discardableResult
+    func sendUniform(channelIDs: [UInt8], x: Double, y: Double, brightness: Double) -> Bool {
         let channels = channelIDs.map { (id: $0, x: x, y: y, brightness: brightness) }
-        send(channels: channels)
+        return send(channels: channels)
     }
 
     // MARK: - DTLS Connection

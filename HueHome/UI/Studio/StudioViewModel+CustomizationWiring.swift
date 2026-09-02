@@ -181,7 +181,15 @@ extension StudioViewModel {
     @discardableResult
     func seedApplyCurrentLook() -> StudioCard? {
         guard let source = applyCurrentLookSource else { return nil }
+        // LAYERED, not replaced (H1). `live(for:)` is SPARSE own-values over a
+        // base frozen when THIS instance started, so it is silent about any
+        // default written after that instant — the look browser's setup
+        // sliders on an idle room write exactly those. `setDefaults` replaces
+        // the whole dictionary, so copying the live set in raw DELETED them.
+        // Layering keeps copy-once intact (everything the instance holds still
+        // wins) while destroying nothing it never had an opinion about.
         let live = valueScopes.live(for: source.identity)
+            .layered(over: valueScopes.defaults(forCard: source.cardID))
         valueScopes.setDefaults(live, forCard: source.cardID)
         persistDefaults(immediately: false)
         bumpLiveValuesTick()
@@ -411,6 +419,57 @@ extension StudioViewModel {
     func releaseDeferredPreviewIfUnresolved() {
         guard !hasPendingLifecyclePrompt else { return }
         discardArmedPreviewIfNotStarted()
+        resolveDeferredRestoreRollback()
+    }
+
+    /// Settle a RESTORE that was deferred behind a lifecycle prompt (M2).
+    ///
+    /// `cancelPreviewLiveCore` leaves the snapshot's values sitting in the
+    /// card's persisted defaults when a prompt stands, because the
+    /// confirmation's apply has to start from them. Its own rollback is
+    /// therefore unreachable, and the preview machine is already consumed —
+    /// so `discardArmedPreviewIfNotStarted` cannot stand in for it. This does:
+    /// the restore either LANDED (the deferred row now runs the card the
+    /// snapshot named — keep the values, they are the ones the user is
+    /// looking at) or it did not, in which case the pre-restore defaults come
+    /// back and the drop is SAID, exactly as an immediately refused restore
+    /// says it.
+    ///
+    /// Called only with no question standing: a prompt still open means the
+    /// restore is still deferred, not resolved.
+    func resolveDeferredRestoreRollback() {
+        guard !hasPendingLifecyclePrompt, let pending = pendingRestoreRollback else { return }
+        pendingRestoreRollback = nil
+        // The same test `cancelPreviewLiveCore` runs immediately after its own
+        // apply: the restore landed iff the deferred row is running that card.
+        guard runningEffects[pending.rowKey]?.cardID != pending.cardID else { return }
+        valueScopes.setDefaults(pending.before, forCard: pending.cardID)
+        persistDefaults(immediately: false)
+        bumpLiveValuesTick()
+        studioNotice = StudioNotice(message: PreviewLiveCopy.restoreDropped)
+        statusMessage = "⚠ \(PreviewLiveCopy.restoreDropped)"
+    }
+
+    /// Run a confirmation's replayed `applyCore` with the audition flag raised
+    /// when an audition is still pending behind the prompt (M1).
+    ///
+    /// THE CHAIN THIS FIXES. `beginPreviewLiveCore` brackets its own apply in
+    /// `setAuditionInFlight(true/false)` precisely so the replacement teardown
+    /// that apply performs — `stopEffect` → `removeRunningRow` →
+    /// `notePreviewRowRemoved` — does not consume the snapshot the audition is
+    /// chaining onto. A confirmation replays that same apply with the flag
+    /// DOWN, so a chained audition deferred behind a prompt had its own
+    /// replacement stop eat the machine, post "we couldn't put it back", and
+    /// leave `notePreviewAuditionOutcome` failing its `isPreviewing` guard:
+    /// the second look ran with no undo at all.
+    ///
+    /// The previous value is restored rather than forced to false, so this can
+    /// never lower a flag some outer bracket raised.
+    func withDeferredAuditionInFlight(_ body: () async -> Void) async {
+        let previous = isAuditionInFlight
+        if previewLive.isPreviewing { setAuditionInFlight(true) }
+        await body()
+        setAuditionInFlight(previous)
     }
 
     /// The ONE way a running row leaves `runningEffects`.
@@ -509,8 +568,14 @@ extension StudioViewModel {
             // for a look that was never put back is a silent corruption of
             // state they will meet again next time they tap the card, so the
             // pre-restore defaults are captured and rolled back on refusal.
+            //
+            // LAYERED, not replaced (H1). The snapshot's value set is the
+            // instance's SPARSE own-values over the base frozen when it
+            // started, so it says nothing about a default written after that
+            // instant (a setup slider moved in the look browser while this
+            // room ran). Replacing the dictionary wholesale deleted those.
             let before = valueScopes.defaults(forCard: previous.cardID)
-            valueScopes.setDefaults(values, forCard: previous.cardID)
+            valueScopes.setDefaults(values.layered(over: before), forCard: previous.cardID)
             persistDefaults(immediately: false)
             bumpLiveValuesTick()
             // M5: the observed transport, both ways. `true : nil` let a
@@ -530,7 +595,26 @@ extension StudioViewModel {
             // in place for the confirmation to start from, say nothing, and
             // keep the machine consumed (this cancel has spent the audition
             // either way).
-            if hasPendingLifecyclePrompt { return }
+            //
+            // M2. But the rollback cannot simply be forgotten either. The
+            // machine IS consumed, so if the confirmation then refuses,
+            // `discardArmedPreviewIfNotStarted` short-circuits and NOTHING
+            // rolls these defaults back — the user is left with the previous
+            // look's values persisted under a card that was never put back,
+            // and no sentence saying so. Hand the rollback to whichever path
+            // resolves the prompt: `releaseDeferredPreviewIfUnresolved` runs
+            // it on every confirmation and every dismissal.
+            if hasPendingLifecyclePrompt {
+                let rowKey = StudioSelectionKey(room: room)
+                // An existing entry for the SAME card holds the truer `before`
+                // — it was captured before any restore touched the defaults.
+                if pendingRestoreRollback?.cardID != previous.cardID {
+                    pendingRestoreRollback = (rowKey: rowKey,
+                                              cardID: previous.cardID,
+                                              before: before)
+                }
+                return
+            }
 
             valueScopes.setDefaults(before, forCard: previous.cardID)
             persistDefaults(immediately: false)
@@ -607,12 +691,21 @@ extension StudioViewModel {
                 transport: transport, running: true)
         }
         var declared: [String: [String]] = [:]
+        // The RUNNING bridge-native effect, so the snapshot's `effectsV2`
+        // coverage measures what this look's per-light send can actually
+        // reach rather than generic v2 support. A room of one cosmos-capable
+        // light and two candle/fire-only lights is 3/3 generically and 1/3
+        // for Cosmos — and 1/3 is the number the user's colour, warmth and
+        // speed controls actually move.
+        var runningEffectV2Name: String? = nil
         if case .bridgeNative(let name) = effect.card.strategy {
             declared[name] = effect.card.params.map(\.id)
+            runningEffectV2Name = name
         }
         return CustomizationSnapshotBuilder.snapshot(
             identity: effect.identity, lights: scoped,
             declaredEffectParams: declared,
+            runningEffectV2Name: runningEffectV2Name,
             entertainmentAvailable: .unknown,
             transport: transport, running: true)
     }
@@ -950,12 +1043,46 @@ extension StudioViewModel {
             groupedMirek = nil
         }
         let needsGrouped = groupedBrightness != nil || groupedXY != nil || groupedMirek != nil
+        // MUTUALLY EXCLUSIVE ON THE V2 PATH TOO (H2). `EffectsV2Body`'s
+        // dictionary emits `parameters.color` and `parameters.color_temperature`
+        // out of ONE body, and the bridge rejects a body that carries both.
+        // The grouped path splits them into two PUTs; this one cannot — it has
+        // a single body per light, sent through `gate.send(retry: false)`,
+        // which SWALLOWS the rejection. So a window that changed colour AND
+        // warmth on any v2-capable room (the PREFERRED path for every
+        // bridge-native look) silently lost the colour, the warmth, and the
+        // speed riding with them: the values were in the scopes, in the
+        // defaults and on the screen, and the lights never moved.
+        //
+        // Only the LATER-committed member travels — the same answer the
+        // grouped path gives by putting it in the second PUT, which is the one
+        // that wins on the wall. `lastColourLikeCommit` is always set when
+        // either field is present; the `?? .xy` is a shape default, never
+        // reached with both fields non-nil.
+        //
+        // ACCEPTED DEBT: the APPLY-time `applyStudioEffectV2Parameters`
+        // (StudioViewModel) still builds one body from a seeded colour AND a
+        // seeded mirek together. That is pre-existing shipping behaviour on a
+        // different path (start, not live edit) with a different failure mode
+        // (the firmware default look, not a lost user gesture), and it is
+        // deliberately left alone here rather than changed under a live-edit
+        // fix. Recorded so the asymmetry is a decision, not an oversight.
+        var v2ExclusiveXY = v2ColorXY
+        var v2ExclusiveMirek = v2Mirek
+        if v2ColorXY != nil, v2Mirek != nil {
+            if (window.lastColourLikeCommit ?? .xy) == .xy {
+                v2ExclusiveMirek = nil
+            } else {
+                v2ExclusiveXY = nil
+            }
+        }
         let v2Body: EffectsV2Body? = {
-            guard let effectName, v2Speed != nil || v2ColorXY != nil || v2Mirek != nil else {
+            guard let effectName,
+                  v2Speed != nil || v2ExclusiveXY != nil || v2ExclusiveMirek != nil else {
                 return nil
             }
             return EffectsV2Body(effect: effectName, speed: v2Speed,
-                                 colorXY: v2ColorXY, mirek: v2Mirek)
+                                 colorXY: v2ExclusiveXY, mirek: v2ExclusiveMirek)
         }()
         guard needsGrouped || v2Body != nil else { return }
 

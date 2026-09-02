@@ -227,14 +227,58 @@ enum StudioBoardAvailability {
     private static let perLightEffectsV2ParamIDs: Set<String> =
         ["base_color", "warmth", "speed"]
 
-    /// Narrow a satisfied bridge-native answer to the `effects_v2` subset.
+    /// How many lights this param's live send can actually MOVE.
+    ///
+    /// The reach is an INTERSECTION, not a minimum. `base_color` needs a light
+    /// that takes this effect's `effects_v2` body AND renders colour; the two
+    /// sets are not nested, so `min(effectsV2, color)` is only an upper bound
+    /// on the overlap. One white-ambiance light that runs the effect plus two
+    /// colour lights that do not gives `min(1, 2) = 1` — a control claiming one
+    /// responding light when the true answer is none. `CustomizationSnapshotBuilder`
+    /// counts the real intersections; the `min` survives only as the fallback
+    /// for a snapshot that never computed them (nothing bridge-native running,
+    /// or an unreadable read), where it is exactly the old behaviour.
+    ///
+    /// `speed` intersects with nothing — it is not a per-light capability, so
+    /// the effect-specific v2 subset is the whole story.
+    private static func effectsV2Reach(param: StudioParam,
+                                       snapshot: CustomizationTargetSnapshot) -> Int {
+        let v2 = snapshot.effectsV2.supported
+        switch param.id {
+        case "base_color":
+            return snapshot.effectV2ColorLights ?? min(v2, snapshot.color.supported)
+        case "warmth":
+            return snapshot.effectV2CTLights ?? min(v2, snapshot.colorTemperature.supported)
+        default:
+            return v2
+        }
+    }
+
+    /// Zero reach is not a coverage story — it is a refusal.
+    ///
+    /// `.partial(supported: 0, …)` renders as an EDITABLE control captioned
+    /// "0 OF 3 LIGHTS RESPOND", which is the funnel's founding defect wearing
+    /// a count: a live knob that moves and changes nothing. Availability has a
+    /// state for "the concept applies, hardware cannot honour it now", and this
+    /// is it.
+    ///
+    /// The reason is `.partialHardwareCoverage`, NOT `.noColorCapableLights`.
+    /// The room in the worked example HAS colour lights — two of them — they
+    /// simply are not the lights this effect's `effects_v2` body reaches, so
+    /// "NO COLOR LIGHTS HERE" would be a false statement about the inventory.
+    /// `.addCapableLights` is nonetheless the real remediation: what is missing
+    /// is a light that can do both at once.
+    private static let zeroReachRefusal = CustomizationAvailability.unavailable(
+        reason: .partialHardwareCoverage, remediation: .addCapableLights)
+
+    /// Narrow a satisfied bridge-native answer to the reach of its send.
     ///
     /// Only ever narrows: an already-`.partial` answer keeps whichever
     /// coverage is smaller, and staged/unavailable/hidden are left alone —
     /// they are being honest about a bigger problem already. `speed` already
-    /// requires `.effectsV2`, so it passes through unchanged; it is listed
-    /// because the rule is about the SEND PATH, not about which requirement
-    /// happens to imply it today.
+    /// requires `.effectsV2`, so it only ever narrows to the effect-specific
+    /// subset; it is listed because the rule is about the SEND PATH, not about
+    /// which requirement happens to imply it today.
     private static func narrowedToEffectsV2Coverage(
         _ resolution: CustomizationResolution,
         card: StudioCard,
@@ -245,15 +289,20 @@ enum StudioBoardAvailability {
               perLightEffectsV2ParamIDs.contains(param.id),
               snapshot.effectsV2.isPartial else { return resolution }
 
-        let v2 = snapshot.effectsV2
+        let reach = effectsV2Reach(param: param, snapshot: snapshot)
+        let total = snapshot.effectsV2.total
         let narrowed: CustomizationAvailability
         switch resolution.availability {
         case .active:
-            narrowed = .partial(supported: v2.supported, total: v2.total,
-                                reason: .partialHardwareCoverage)
+            narrowed = reach > 0
+                ? .partial(supported: reach, total: total,
+                           reason: .partialHardwareCoverage)
+                : zeroReachRefusal
         case .partial(let supported, _, let reason):
-            guard v2.supported < supported else { return resolution }
-            narrowed = .partial(supported: v2.supported, total: v2.total, reason: reason)
+            guard reach < supported else { return resolution }
+            narrowed = reach > 0
+                ? .partial(supported: reach, total: total, reason: reason)
+                : zeroReachRefusal
         case .staged, .unavailable, .hidden:
             return resolution
         }
@@ -355,15 +404,25 @@ enum StudioBoardAvailability {
         }
     }
 
-    /// Presentation opacity through the funnel, including the nil case and the
-    /// hardware-unverified quieting: an active-but-unproven control is still
-    /// fully editable, but it must not LOOK like a control we can vouch for.
+    /// Presentation opacity through the funnel, including the nil case.
+    ///
+    /// OPACITY IS RESERVED FOR "YOU CANNOT USE THIS RIGHT NOW". Staged and
+    /// unavailable earn it; hardware-unverified does NOT. The first cut dimmed
+    /// every `isHardwareUnverified` control to `stagedOpacity`, and because
+    /// `brightness` and `speed` owe a check on every transport, that quieted
+    /// the hero knob and its neighbour on EVERY bridge-native board — the
+    /// whole instrument read as half-disabled while every one of those
+    /// controls was fully live and fully working. Dimming a control that works
+    /// is its own dishonesty, and it is the louder one.
+    ///
+    /// The caveat still gets said — `note(for:)` prints it — but it is said in
+    /// words, beside the control, where it can be read. The control itself
+    /// stays at full strength because it is at full strength.
     static func opacity(resolution: StudioBoardResolution?,
                         strategy: StudioStrategy) -> Double {
         guard let resolution else {
             return unresolvedIsInteractive(strategy) ? 1 : disabledOpacity
         }
-        if resolution.isHardwareUnverified { return stagedOpacity }
         return opacity(resolution.availability)
     }
 
@@ -386,6 +445,19 @@ enum StudioBoardAvailability {
     /// Coverage and the evidence caveat, when a control owes both.
     static let noteSeparator = " · "
 
+    /// The evidence caveat, standing alone: it has the whole caption line, so
+    /// it says which lights it is talking about.
+    static let unverifiedCopy = "UNVERIFIED ON THESE LIGHTS"
+    /// The evidence caveat when a coverage count is already on the line.
+    ///
+    /// Joined, the long form made a 50-character caption
+    /// ("1 OF 3 LIGHTS RESPOND · UNVERIFIED ON THESE LIGHTS") that has to fit
+    /// under a 60 pt knob in a three-column grid — it wrapped past the
+    /// caption's own line budget and the tail was clipped, so the sentence the
+    /// caveat exists to say was the half the user could not read. The coverage
+    /// clause already named the lights; the caveat only has to say WHETHER.
+    static let unverifiedJoinedCopy = "UNVERIFIED HERE"
+
     static func note(for resolution: StudioBoardResolution,
                      isColor: Bool) -> String? {
         // Nothing to render, nothing to say.
@@ -402,20 +474,30 @@ enum StudioBoardAvailability {
         // Swallowing the count made a mixed room's `base_color` say only
         // "UNVERIFIED ON THESE LIGHTS" and drop the far more actionable "1 OF
         // 3 LIGHTS RESPOND". Coverage is about WHICH lights, evidence is about
-        // WHETHER; both are true, so both are said.
-        let unverified = resolution.isHardwareUnverified ? "UNVERIFIED ON THESE LIGHTS" : nil
+        // WHETHER; both are true, so both are said — the caveat just says it
+        // in fewer words once the count is carrying the "which".
+        let unverified = resolution.isHardwareUnverified
 
         switch resolution.availability {
-        case .active, .hidden:
-            return unverified
+        case .active:
+            return unverified ? unverifiedCopy : nil
+
+        case .hidden:
+            // Unreachable — `rendersControl` above already returned for the
+            // one availability that renders nothing. Spelled out rather than
+            // folded in with `.active`, which is what let a Hidden control
+            // claim a caveat it would never be on screen to say.
+            return nil
 
         case .partial(let supported, let total, _):
             // The colour editor already badges "n OF m LIGHTS" beside its own
             // chip; saying it twice reads as two problems. The caveat is not
             // badged anywhere, so it survives.
             let coverage = isColor ? nil : "\(supported) OF \(total) LIGHTS RESPOND"
-            let parts = [coverage, unverified].compactMap { $0 }
-            return parts.isEmpty ? nil : parts.joined(separator: noteSeparator)
+            guard let coverage else { return unverified ? unverifiedCopy : nil }
+            guard unverified else { return coverage }
+            // Short form: the count already said which lights.
+            return coverage + noteSeparator + unverifiedJoinedCopy
 
         case .staged(let reason, _):
             // The transport-shaped stage is the one the user can act on, so
@@ -434,6 +516,12 @@ enum StudioBoardAvailability {
                 // snapshot's Speed knob asserted a hardware refusal beside
                 // three siblings that correctly said we were still checking.
                 return "THESE LIGHTS CAN'T CHANGE THIS WHILE RUNNING"
+            case .partialHardwareCoverage:
+                // The zero-reach refusal. NOT "NO COLOR LIGHTS HERE" — the
+                // room may be full of colour lights that simply are not the
+                // ones this effect's per-light write reaches. What is true is
+                // that none of them responds to THIS control right now.
+                return "NO LIGHT HERE RESPONDS TO THIS"
             case .noCTCapableLights:
                 return "NO WHITE-TONE LIGHTS HERE"
             case .noColorCapableLights:

@@ -779,6 +779,225 @@ final class StudioPreviewLiveProductionTests: XCTestCase {
         XCTAssertTrue(vm.isPreviewingLive)
     }
 
+    // ── M1: a CHAINED audition deferred behind a prompt ─────────
+
+    /// Audition A starts, audition B is chained onto it and its apply raises a
+    /// prompt. The confirmation replays that apply — and the replay performs
+    /// B's REPLACEMENT teardown of A's row.
+    ///
+    /// `beginPreviewLiveCore` brackets its own apply in `isAuditionInFlight`
+    /// for exactly this reason: without it the teardown runs
+    /// `removeRunningRow` → `notePreviewRowRemoved`, which consumes the
+    /// machine and posts "we couldn't put it back", and
+    /// `notePreviewAuditionOutcome` then fails its `isPreviewing` guard. B ran
+    /// with no undo at all, and the original look was unrecoverable.
+    func testAChainedAuditionDeferredBehindAPromptKeepsTheOriginalSnapshot() async throws {
+        let target = room()
+        vm.selectedRoom = target
+        // The ORIGINAL look — the one "Put It Back" must still reach at the end.
+        let candle = try card("candle")
+        await vm.apply(candle, roomOverride: target, preferEntertainmentOverride: nil)
+        XCTAssertEqual(vm.runningEffect(for: target)?.cardID, "candle")
+
+        // Audition A: another bridge-native look, which starts immediately.
+        let fire = try card("fire")
+        await vm.beginPreviewLive(card: fire)
+        XCTAssertEqual(vm.runningEffect(for: target)?.cardID, "fire")
+        XCTAssertTrue(vm.isPreviewingLive)
+        XCTAssertEqual(vm.previewLive.snapshot?.previous?.cardID, "candle",
+                       "the snapshot names the ORIGINAL look")
+
+        // Audition B chains onto that same snapshot — and its app-driven apply
+        // has to ask, because a Composer session owns the bridge.
+        orchestrator.testStageEntertainmentOwner(roomID: "room-composer", bridgeID: "bridge-a")
+        let ambient = try card("ambient")
+        vm.studioNotice = nil
+        await vm.beginPreviewLive(card: ambient)
+        XCTAssertNotNil(vm.entertainmentHandoffPrompt, "B is waiting on the user")
+        XCTAssertEqual(vm.previewLive.snapshot?.previous?.cardID, "candle",
+                       "…still chained onto the original snapshot")
+        XCTAssertEqual(vm.previewLive.previewIdentity?.cardID, "fire",
+                       "…while the armed audition is still A, which is what is playing")
+
+        await vm.confirmEntertainmentHandoff()
+
+        XCTAssertEqual(vm.runningEffect(for: target)?.cardID, "ambient",
+                       "the confirmation started B")
+        XCTAssertNotEqual(vm.studioNotice?.message, PreviewLiveCopy.restoreDropped, """
+            B's own replacement teardown of A's row is part of STARTING B, not \
+            the world moving on — announcing a dropped restore there is how the \
+            undo disappeared mid-audition
+            """)
+        XCTAssertTrue(vm.isPreviewingLive, "…and Put It Back is still real")
+        XCTAssertEqual(vm.previewAuditionCardID, "ambient",
+                       "the armed audition is B, under B's own identity")
+        XCTAssertFalse(vm.isAuditionInFlight, "the flag is lowered again after the replay")
+
+        await vm.cancelPreviewLive()
+        XCTAssertEqual(vm.runningEffect(for: target)?.cardID, "candle", """
+            …and Put It Back still reaches the ORIGINAL look, which is the whole \
+            promise a chained audition makes
+            """)
+    }
+
+    // ── M2: a RESTORE deferred behind a prompt is settled either way ──
+
+    /// The confirmation REFUSES. `cancelPreviewLiveCore` left the snapshot's
+    /// values in the card's persisted defaults deliberately (H3) and consumed
+    /// the machine, so nothing was left to roll them back: the user kept a
+    /// silently overwritten set of defaults for a look that was never put
+    /// back, with no sentence saying so.
+    func testARestoreDeferredBehindAPromptRollsBackWhenTheConfirmationRefuses() async throws {
+        let target = room()
+        try await startAmbient(on: target, speed: 33)
+        let idle = room("room-idle")
+        vm.selectedRoom = idle
+        vm.commitParam(cardID: "ambient", paramID: "speed", value: 91)
+        vm.selectedRoom = target
+
+        let candle = try card("candle")
+        await vm.beginPreviewLive(card: candle)
+        XCTAssertTrue(vm.isPreviewingLive)
+
+        // The restore's apply has to ask, so it is DEFERRED.
+        orchestrator.testStageEntertainmentOwner(roomID: "room-composer", bridgeID: "bridge-a")
+        vm.studioNotice = nil
+        await vm.cancelPreviewLive()
+        XCTAssertNotNil(vm.entertainmentHandoffPrompt)
+        XCTAssertEqual(vm.valueScopes.defaults(forCard: "ambient").numbers["speed"], 33,
+                       "the confirmation must start from the snapshot's values")
+
+        // …and the confirmation's replay refuses: the bridge cannot be read.
+        orchestrator.injectForTesting(clients: [:])
+        await vm.confirmEntertainmentHandoff()
+
+        XCTAssertNotEqual(vm.runningEffect(for: target)?.cardID, "ambient",
+                          "the restore did not land")
+        XCTAssertEqual(vm.valueScopes.defaults(forCard: "ambient").numbers["speed"], 91, """
+            …so the pre-restore defaults come back: a look that was never put \
+            back must not leave the user's persisted values overwritten
+            """)
+        XCTAssertEqual(vm.studioNotice?.message, PreviewLiveCopy.restoreDropped,
+                       "…and the drop is SAID, exactly as an immediate refusal says it")
+    }
+
+    /// The confirmation SUCCEEDS: the restore landed, so the snapshot's values
+    /// are the ones the user is now looking at. Nothing rolls back, and
+    /// nothing claims a dropped restore.
+    func testARestoreDeferredBehindAPromptKeepsItsValuesWhenTheConfirmationStartsIt() async throws {
+        let target = room()
+        try await startAmbient(on: target, speed: 33)
+        let idle = room("room-idle")
+        vm.selectedRoom = idle
+        vm.commitParam(cardID: "ambient", paramID: "speed", value: 91)
+        vm.selectedRoom = target
+
+        let candle = try card("candle")
+        await vm.beginPreviewLive(card: candle)
+        orchestrator.testStageEntertainmentOwner(roomID: "room-composer", bridgeID: "bridge-a")
+        vm.studioNotice = nil
+        await vm.cancelPreviewLive()
+        XCTAssertNotNil(vm.entertainmentHandoffPrompt)
+
+        await vm.confirmEntertainmentHandoff()
+
+        XCTAssertEqual(vm.runningEffect(for: target)?.cardID, "ambient",
+                       "the confirmation put the previous look back")
+        XCTAssertEqual(vm.valueScopes.defaults(forCard: "ambient").numbers["speed"], 33, """
+            …with the snapshot's values, which are now the ones on screen — \
+            rolling them back here would contradict the restore that just ran
+            """)
+        XCTAssertNotEqual(vm.studioNotice?.message, PreviewLiveCopy.restoreDropped,
+                          "nothing was dropped")
+        XCTAssertNil(vm.pendingRestoreRollback?.cardID, "the deferral is settled")
+    }
+
+    // ── The other two prompts defer and release the same way ────
+
+    /// `confirmAreaChoice` on a stale choice starts nothing. Its `defer` is
+    /// the only thing that releases the audition waiting behind it — without
+    /// it, every other room's Preview Live is refused for the rest of the
+    /// session.
+    func testAStaleAreaChoiceReleasesTheDeferredAudition() async throws {
+        let target = room()
+        vm.selectedRoom = target
+        let candle = try card("candle")
+        await vm.apply(candle, roomOverride: target, preferEntertainmentOverride: nil)
+
+        orchestrator.testStageEntertainmentOwner(roomID: "room-composer", bridgeID: "bridge-a")
+        let ambient = try card("ambient")
+        await vm.beginPreviewLive(card: ambient)
+        XCTAssertTrue(vm.previewLive.isPreviewing, "the audition is deferred, with its snapshot")
+
+        // The area chooser is the question standing now, and the choice it is
+        // answered with can no longer be revalidated.
+        vm.entertainmentHandoffPrompt = nil
+        let plan = EntertainmentTakeoverPlan(
+            bridgeID: "bridge-a", roomID: target.id,
+            config: EntertainmentConfig(id: "area-a", name: "Living", channels: []),
+            channelIDs: [0])
+        let choice = UnifiedOrchestrator.EntertainmentAreaChoice(
+            configID: "area-a", areaName: "Living", bridgeID: "bridge-a",
+            bridgeLabel: "Bridge A", roomNames: [target.name], lightCount: 2,
+            extraLightCount: 0, plan: plan)
+        vm.areaChoiceRequest = StudioViewModel.EntertainmentAreaChoiceRequest(
+            choices: [choice], card: ambient, room: target,
+            preferEntertainmentOverride: nil)
+        orchestrator.injectForTesting(clients: [:])
+        vm.studioNotice = nil
+
+        await vm.confirmAreaChoice(choice)
+
+        XCTAssertNil(vm.areaChoiceRequest, "the request was consumed")
+        XCTAssertNotNil(vm.studioNotice, "the refusal is SAID")
+        XCTAssertFalse(vm.previewLive.isPreviewing,
+                       "nothing started, so the deferred audition is released")
+        XCTAssertNil(vm.previewLiveRoom)
+        XCTAssertFalse(vm.isPreviewingLive)
+        XCTAssertEqual(vm.runningEffect(for: target)?.cardID, "candle",
+                       "…and the look that was there is untouched")
+    }
+
+    /// The same for `confirmStudioHandoff`: a `.failed` resolution starts
+    /// nothing, and the audition behind it must not stay armed.
+    func testAFailedStudioHandoffReleasesTheDeferredAudition() async throws {
+        let target = room()
+        vm.selectedRoom = target
+        let candle = try card("candle")
+        await vm.apply(candle, roomOverride: target, preferEntertainmentOverride: nil)
+
+        orchestrator.testStageEntertainmentOwner(roomID: "room-composer", bridgeID: "bridge-a")
+        let ambient = try card("ambient")
+        await vm.beginPreviewLive(card: ambient)
+        XCTAssertTrue(vm.previewLive.isPreviewing, "the audition is deferred, with its snapshot")
+
+        vm.entertainmentHandoffPrompt = nil
+        let plan = EntertainmentTakeoverPlan(
+            bridgeID: "bridge-a", roomID: target.id,
+            config: EntertainmentConfig(id: "area-a", name: "Living", channels: []),
+            channelIDs: [0])
+        vm.studioHandoffRequest = StudioViewModel.StudioHandoffRequest(
+            plan: plan,
+            owner: UnifiedOrchestrator.StudioEntertainmentOwner(
+                bridgeID: "bridge-a", roomID: "room-other",
+                engineKey: "party", configID: "area-a"),
+            runningLookName: "Party", requestedLookName: "Ambient",
+            card: ambient, room: target, preferEntertainmentOverride: nil)
+        orchestrator.injectForTesting(clients: [:])
+        vm.studioNotice = nil
+
+        await vm.confirmStudioHandoff()
+
+        XCTAssertNil(vm.studioHandoffRequest, "the request was consumed")
+        XCTAssertNotNil(vm.studioNotice, "the failure is SAID")
+        XCTAssertFalse(vm.previewLive.isPreviewing,
+                       "nothing started, so the deferred audition is released")
+        XCTAssertNil(vm.previewLiveRoom)
+        XCTAssertFalse(vm.isPreviewingLive)
+        XCTAssertEqual(vm.runningEffect(for: target)?.cardID, "candle",
+                       "…and the look that was there is untouched")
+    }
+
     // ── The restore copies values, it does not invent them ──────
 
     /// "Put It Back" seeds the card's persisted defaults from the snapshot —
@@ -823,6 +1042,48 @@ final class StudioPreviewLiveProductionTests: XCTestCase {
             """)
         XCTAssertNil(vm.valueScopes.defaults(forCard: "candle").numbers["brightness"],
                      "…nor any other control they never touched")
+    }
+
+    /// …and it must not DELETE the defaults it is SILENT about (H1).
+    ///
+    /// The snapshot's value set is the previous instance's sparse own-values
+    /// over the base frozen when it started, so a default written AFTER that
+    /// instant — a setup slider moved in the look browser on an idle room —
+    /// is invisible to it. Seeding it through `setDefaults` raw replaced the
+    /// whole dictionary and erased exactly those.
+    func testARestoreDoesNotDeleteDefaultsWrittenAfterTheInstanceStarted() async throws {
+        let target = room()
+        vm.selectedRoom = target
+        vm.valueScopes.clearDefaults(forCard: "candle")
+        let candle = try card("candle")
+        await vm.apply(candle, roomOverride: target, preferEntertainmentOverride: nil)
+
+        let session = try XCTUnwrap(vm.beginParamEdit(cardID: "candle", paramID: "speed"))
+        vm.updateParamEdit(session, value: 80)
+        vm.endParamEdit(session)
+
+        // A defaults-only write from an IDLE room, landing after the running
+        // instance froze its base — the running set has no opinion about it.
+        let idle = room("room-idle")
+        vm.selectedRoom = idle
+        vm.commitParam(cardID: "candle", paramID: "brightness", value: 42)
+        vm.selectedRoom = target
+
+        let fire = try card("fire")
+        await vm.beginPreviewLive(card: fire)
+        XCTAssertEqual(vm.runningEffect(for: target)?.cardID, "fire", "the audition started")
+
+        await vm.cancelPreviewLive()
+
+        XCTAssertEqual(vm.runningEffect(for: target)?.cardID, "candle", "the previous look is back")
+        let defaults = vm.valueScopes.defaults(forCard: "candle")
+        XCTAssertEqual(defaults.numbers["speed"], 80,
+                       "the snapshot still wins for what the instance actually held")
+        XCTAssertEqual(defaults.numbers["brightness"], 42, """
+            …and a default the restored instance never had an opinion about \
+            survives the restore instead of being erased by it
+            """)
+        XCTAssertNil(defaults.numbers["warmth"], "…while nothing is invented")
     }
 
     // ── M5: the restore reproduces the OBSERVED transport ───────

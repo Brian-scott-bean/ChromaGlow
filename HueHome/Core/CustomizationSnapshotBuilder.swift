@@ -32,9 +32,19 @@ enum CustomizationSnapshotBuilder {
     /// room/zone membership); `declaredEffectParams` maps a bridge-native
     /// effect name to the paramIDs its card declares, so the verified table
     /// can be filtered to what the UI could actually show.
+    /// `runningEffectV2Name` is the bridge-native effect currently RUNNING on
+    /// the target, when one is. It makes `effectsV2` effect-specific: the live
+    /// per-light write reaches exactly the lights whose
+    /// `effects_v2.action.effect_values` contain that name — the same rule
+    /// `applyStudioEffectV2Parameters` uses to build `v2CapableLightIDs` — and
+    /// generic support is a strictly larger set. A room of one cosmos-capable
+    /// light and two candle/fire-only lights reported 3 of 3 while Cosmos ran,
+    /// so colour, warmth and speed claimed the whole room and two thirds of it
+    /// never moved.
     static func snapshot(identity: RunningLookIdentity,
                          lights: [HueLight],
                          declaredEffectParams: [String: [String]] = [:],
+                         runningEffectV2Name: String? = nil,
                          entertainmentAvailable: CapabilityEvidence,
                          transport: CustomizationTransport,
                          running: Bool) -> CustomizationTargetSnapshot {
@@ -48,7 +58,30 @@ enum CustomizationSnapshotBuilder {
         let dimmingCount = lights.filter { $0.dimming != nil }.count
         let colorCount = lights.filter { $0.color != nil }.count
         let gradientCount = EffectCapabilityResolver.gradientLights(lights).count
-        let v2Count = lights.filter { EffectCapabilityResolver.supportsEffectsV2($0) }.count
+        // GENERIC v2 support — the fallback answer when nothing bridge-native
+        // is running and there is no effect to be specific about.
+        let genericV2 = lights.filter { EffectCapabilityResolver.supportsEffectsV2($0) }
+
+        // EFFECT-SPECIFIC reach. Deliberately NOT
+        // `EffectCapabilityResolver.effectValues(for:)`, which falls back to
+        // the legacy v1 list: a light that can run this effect only through
+        // the v1 enum takes no `effects_v2` body, so counting it would put the
+        // overstatement straight back.
+        let effectSpecificV2: [HueLight]? = runningEffectV2Name.map { name in
+            lights.filter { ($0.effects_v2?.action?.effect_values ?? []).contains(name) }
+        }
+        let v2Lights = effectSpecificV2 ?? genericV2
+        let v2Count = v2Lights.count
+
+        // The TRUE intersections, so a caller narrowing a colour or warmth
+        // control does not have to take `min(v2, colour)` — the two sets only
+        // partly overlap, and the min overstates every partial overlap.
+        var effectV2ColorLights: Int? = nil
+        var effectV2CTLights: Int? = nil
+        if let effectSpecificV2 {
+            effectV2ColorLights = effectSpecificV2.filter { $0.color != nil }.count
+            effectV2CTLights = effectSpecificV2.filter { $0.color_temperature != nil }.count
+        }
 
         // CT: capable lights, and the intersected range across the ones whose
         // schema is readable. Capable-but-schemaless downgrades the evidence.
@@ -84,6 +117,8 @@ enum CustomizationSnapshotBuilder {
             mirekRange: ctSchemaless ? nil : ctRange,
             gradient: coverage(gradientCount),
             effectsV2: coverage(v2Count),
+            effectV2ColorLights: effectV2ColorLights,
+            effectV2CTLights: effectV2CTLights,
             verifiedEffectParameters: verified,
             entertainmentAvailable: entertainmentAvailable,
             transport: transport,
@@ -104,6 +139,9 @@ enum CustomizationSnapshotBuilder {
             totalLights: totalLights,
             dimming: unread, color: unread, colorTemperature: unread,
             mirekRange: nil, gradient: unread, effectsV2: unread,
+            // Unreadable stays unreadable: an intersection of two sets we
+            // could not read is not zero, it is unknown.
+            effectV2ColorLights: nil, effectV2CTLights: nil,
             verifiedEffectParameters: [:],
             entertainmentAvailable: .unreadable,
             transport: transport,

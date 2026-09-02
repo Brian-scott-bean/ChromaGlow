@@ -68,11 +68,18 @@ final class StudioBoardAvailabilityTests: XCTestCase {
     }
 
     /// A running target with per-axis coverage the caller dictates.
+    ///
+    /// `effectV2ColorLights`/`effectV2CTLights` default to nil — the snapshot
+    /// shape a target with nothing bridge-native running (or an unreadable
+    /// read) really has, where the funnel falls back to the `min`. Tests that
+    /// are ABOUT the intersection pass them explicitly.
     private func target(card: StudioCard,
                         lights: Int = 3,
                         color: CapabilityCoverage? = nil,
                         colorTemperature: CapabilityCoverage? = nil,
                         effectsV2: CapabilityCoverage? = nil,
+                        effectV2ColorLights: Int? = nil,
+                        effectV2CTLights: Int? = nil,
                         transport: CustomizationTransport = .entertainment,
                         running: Bool = true) -> CustomizationTargetSnapshot {
         CustomizationTargetSnapshot(
@@ -85,6 +92,8 @@ final class StudioBoardAvailabilityTests: XCTestCase {
             mirekRange: MirekRange(minMirek: 153, maxMirek: 500),
             gradient: .all(total: lights),
             effectsV2: effectsV2 ?? .all(total: lights),
+            effectV2ColorLights: effectV2ColorLights,
+            effectV2CTLights: effectV2CTLights,
             verifiedEffectParameters: [:],
             entertainmentAvailable: .known,
             transport: transport,
@@ -156,6 +165,45 @@ final class StudioBoardAvailabilityTests: XCTestCase {
                        "STREAMING ONLY — INACTIVE IN ROOM MODE")
         XCTAssertEqual(StudioBoardAvailability.opacity(resolution!.availability),
                        StudioBoardAvailability.stagedOpacity)
+        // Through the funnel too: staged is one of the two states that still
+        // earns the dimming, so relaxing it for the hardware-unverified case
+        // must not relax it here.
+        XCTAssertEqual(StudioBoardAvailability.opacity(resolution: resolution,
+                                                       strategy: card.strategy),
+                       StudioBoardAvailability.stagedOpacity)
+    }
+
+    /// Dimming means "you cannot use this right now", and ONLY that. The
+    /// funnel's opacity must answer purely from availability — a control that
+    /// works is at full strength even while it owes a hardware check, and a
+    /// control the funnel refused is quiet even when it owes nothing.
+    func testOpacityAnswersFromAvailabilityAloneNotFromEvidence() {
+        let card = effectCard("opal")
+        let strategy = card.strategy
+        for unverified in [true, false] {
+            let cases: [(CustomizationAvailability, Double)] = [
+                (.active, 1),
+                (.partial(supported: 1, total: 3, reason: .partialHardwareCoverage), 1),
+                (.staged(reason: .requiresEntertainment, remediation: .enableStreaming),
+                 StudioBoardAvailability.stagedOpacity),
+                (.unavailable(reason: .noColorCapableLights, remediation: nil),
+                 StudioBoardAvailability.disabledOpacity),
+            ]
+            for (availability, expected) in cases {
+                let resolution = StudioBoardResolution(
+                    resolution: CustomizationResolution(
+                        control: CustomizationControlID(cardID: card.id, paramID: "speed"),
+                        availability: availability,
+                        behavior: .debounced),
+                    isHardwareUnverified: unverified,
+                    totalLights: 3)
+                XCTAssertEqual(
+                    StudioBoardAvailability.opacity(resolution: resolution,
+                                                    strategy: strategy),
+                    expected,
+                    "\(availability) with isHardwareUnverified=\(unverified)")
+            }
+        }
     }
 
     /// The same control while the look really is streaming: fully live.
@@ -340,10 +388,16 @@ final class StudioBoardAvailabilityTests: XCTestCase {
             resolution: resolution, strategy: card.strategy))
         XCTAssertEqual(StudioBoardAvailability.note(for: resolution!, isColor: false),
                        "UNVERIFIED ON THESE LIGHTS")
+        // FULL STRENGTH. Dimming is reserved for "you cannot use this right
+        // now"; this control is fully live and fully working, and the one
+        // thing that is unknown about it is said in words beside it. The first
+        // cut quieted every `isHardwareUnverified` control to `stagedOpacity`,
+        // and since `brightness` and `speed` owe a check on every transport,
+        // that made EVERY bridge-native board — hero knob included — read as
+        // half-disabled.
         XCTAssertEqual(StudioBoardAvailability.opacity(resolution: resolution,
-                                                       strategy: card.strategy),
-                       StudioBoardAvailability.stagedOpacity,
-                       "unproven must not LOOK like proven")
+                                                       strategy: card.strategy), 1,
+                       "a working control must not be dimmed for owing a hardware check")
     }
 
     /// `base_color` is code-proven only on its per-light `effects_v2` path. On
@@ -672,8 +726,13 @@ final class StudioBoardAvailabilityTests: XCTestCase {
                        .partial(supported: 1, total: 3, reason: .partialHardwareCoverage))
     }
 
-    /// The narrowing only ever NARROWS. A capability that is itself scarcer
-    /// than the v2 subset keeps its own smaller count.
+    /// The narrowing only ever NARROWS, and it narrows to the INTERSECTION.
+    ///
+    /// Four lights: three take this effect's `effects_v2` body, one renders
+    /// colour — and it is one of the three. The true reach of `base_color` is
+    /// therefore 1, which is also what `min(3, 1)` happens to say here, so the
+    /// snapshot's own count is what makes the claim rather than the arithmetic
+    /// coincidence.
     func testNarrowerCapabilityCoverageOutranksTheV2Subset() {
         let card = effectCard("opal")
         let snapshot = target(card: card, lights: 4,
@@ -681,6 +740,7 @@ final class StudioBoardAvailabilityTests: XCTestCase {
                                                         evidence: .known),
                               effectsV2: CapabilityCoverage(supported: 3, total: 4,
                                                             evidence: .known),
+                              effectV2ColorLights: 1,
                               transport: .bridgeEffectV2)
 
         let resolution = StudioBoardAvailability.resolve(
@@ -688,6 +748,111 @@ final class StudioBoardAvailabilityTests: XCTestCase {
 
         XCTAssertEqual(resolution?.availability,
                        .partial(supported: 1, total: 4, reason: .partialHardwareCoverage))
+    }
+
+    /// The intersection is not the minimum, and this is the room that proves
+    /// it: ONE white-ambiance light that runs the effect, TWO colour lights
+    /// that do not. `effects_v2` reach is 1, colour coverage is 2, and
+    /// `min(1, 2) = 1` — so the pre-intersection funnel captioned the swatch
+    /// row "1 OF 3 LIGHTS RESPOND" and left it live, when the honest answer is
+    /// that the one reachable light cannot render colour and the two colour
+    /// lights never receive the write. Nothing responds.
+    func testColourControlWithNoLightInBothSetsIsRefused() {
+        let card = effectCard("opal")
+        let snapshot = target(card: card, lights: 3,
+                              color: CapabilityCoverage(supported: 2, total: 3,
+                                                        evidence: .known),
+                              effectsV2: CapabilityCoverage(supported: 1, total: 3,
+                                                            evidence: .known),
+                              effectV2ColorLights: 0,
+                              transport: .bridgeEffectV2)
+
+        let resolution = StudioBoardAvailability.resolve(
+            card: card, param: param(card, "base_color"), snapshot: snapshot)
+
+        // A refusal, not "0 OF 3 LIGHTS RESPOND": `.partial(supported: 0)` is
+        // an EDITABLE control that moves and changes nothing, which is the
+        // defect this whole funnel exists to close.
+        XCTAssertEqual(resolution?.availability,
+                       .unavailable(reason: .partialHardwareCoverage,
+                                    remediation: .addCapableLights))
+        XCTAssertFalse(StudioBoardAvailability.isInteractive(
+            resolution: resolution, strategy: card.strategy))
+        XCTAssertEqual(StudioBoardAvailability.opacity(resolution: resolution,
+                                                       strategy: card.strategy),
+                       StudioBoardAvailability.disabledOpacity)
+        // NOT "NO COLOR LIGHTS HERE" — there are two, and saying otherwise
+        // would be a false claim about the inventory. What is true is that
+        // none of them responds to THIS control.
+        XCTAssertEqual(StudioBoardAvailability.note(for: resolution!, isColor: true),
+                       "NO LIGHT HERE RESPONDS TO THIS")
+        // A refusal is one problem, not two: the evidence caveat stays off.
+        XCTAssertEqual(resolution?.isHardwareUnverified, false)
+    }
+
+    /// The same room for `warmth`, through the CT intersection: the one light
+    /// that runs the effect is white-ambiance, so warmth DOES reach it.
+    func testWarmthReachesTheOneEffectCapableWhiteLight() {
+        let card = effectCard("opal")
+        let snapshot = target(card: card, lights: 3,
+                              color: CapabilityCoverage(supported: 2, total: 3,
+                                                        evidence: .known),
+                              effectsV2: CapabilityCoverage(supported: 1, total: 3,
+                                                            evidence: .known),
+                              effectV2ColorLights: 0,
+                              effectV2CTLights: 1,
+                              transport: .bridgeEffectV2)
+
+        let resolution = StudioBoardAvailability.resolve(
+            card: card, param: param(card, "warmth"), snapshot: snapshot)
+
+        XCTAssertEqual(resolution?.availability,
+                       .partial(supported: 1, total: 3, reason: .partialHardwareCoverage))
+        XCTAssertTrue(StudioBoardAvailability.isInteractive(
+            resolution: resolution, strategy: card.strategy),
+                      "the intersection is per-axis — colour's zero must not take warmth down with it")
+    }
+
+    /// `speed` is not a per-light capability, so it intersects with nothing:
+    /// the effect-specific v2 subset is its whole reach, whatever colour and
+    /// CT do.
+    func testSpeedIgnoresTheColourAndCTIntersections() {
+        let card = effectCard("opal")
+        let snapshot = target(card: card, lights: 3,
+                              color: CapabilityCoverage(supported: 2, total: 3,
+                                                        evidence: .known),
+                              effectsV2: CapabilityCoverage(supported: 1, total: 3,
+                                                            evidence: .known),
+                              effectV2ColorLights: 0,
+                              effectV2CTLights: 0,
+                              transport: .bridgeEffectV2)
+
+        let resolution = StudioBoardAvailability.resolve(
+            card: card, param: param(card, "speed"), snapshot: snapshot)
+
+        XCTAssertEqual(resolution?.availability,
+                       .partial(supported: 1, total: 3, reason: .partialHardwareCoverage))
+    }
+
+    /// Nil intersections are the snapshot saying "never computed", not "zero".
+    /// The funnel falls back to the `min` there — the pre-intersection answer —
+    /// so a target with nothing bridge-native running keeps its old behaviour
+    /// instead of resolving every colour control into a refusal.
+    func testUncomputedIntersectionsFallBackToTheMinimum() {
+        let card = effectCard("opal")
+        let snapshot = target(card: card, lights: 3,
+                              color: CapabilityCoverage(supported: 2, total: 3,
+                                                        evidence: .known),
+                              effectsV2: CapabilityCoverage(supported: 1, total: 3,
+                                                            evidence: .known),
+                              transport: .bridgeEffectV2)
+
+        let resolution = StudioBoardAvailability.resolve(
+            card: card, param: param(card, "base_color"), snapshot: snapshot)
+
+        XCTAssertNil(snapshot.effectV2ColorLights)
+        XCTAssertEqual(resolution?.availability,
+                       .partial(supported: 1, total: 3, reason: .partialHardwareCoverage))
     }
 
     /// `brightness` is a GROUPED write — it reaches the whole room whatever
@@ -798,12 +963,29 @@ final class StudioBoardAvailabilityTests: XCTestCase {
         XCTAssertEqual(resolution?.availability,
                        .partial(supported: 1, total: 3, reason: .partialHardwareCoverage))
         XCTAssertEqual(resolution?.isHardwareUnverified, true)
+        // JOINED, the caveat says it in fewer words. The long form made a
+        // 50-character caption that has to fit under a 60 pt knob in a
+        // three-column grid; it overran the caption's line budget and the
+        // clipped tail was the caveat itself. The coverage clause has already
+        // named the lights, so the caveat only has to say WHETHER.
         XCTAssertEqual(StudioBoardAvailability.note(for: resolution!, isColor: false),
-                       "1 OF 3 LIGHTS RESPOND · UNVERIFIED ON THESE LIGHTS")
+                       "1 OF 3 LIGHTS RESPOND · UNVERIFIED HERE")
         // The colour section suppresses COVERAGE only; the caveat survives,
-        // because nothing else on screen is saying it.
+        // because nothing else on screen is saying it — and standing alone it
+        // has the whole line, so it names the lights again.
         XCTAssertEqual(StudioBoardAvailability.note(for: resolution!, isColor: true),
                        "UNVERIFIED ON THESE LIGHTS")
+    }
+
+    /// The two forms are the SAME fact, and the short one is only ever used
+    /// where the coverage count is carrying the "which lights".
+    func testTheJoinedCaveatIsTheShortFormAndTheLoneCaveatIsTheLong() {
+        XCTAssertEqual(StudioBoardAvailability.unverifiedCopy,
+                       "UNVERIFIED ON THESE LIGHTS")
+        XCTAssertEqual(StudioBoardAvailability.unverifiedJoinedCopy, "UNVERIFIED HERE")
+        XCTAssertLessThan(StudioBoardAvailability.unverifiedJoinedCopy.count,
+                          StudioBoardAvailability.unverifiedCopy.count,
+                          "the joined form exists to be shorter — if it is not, drop it")
     }
 
     // ──────────────────────────────────────────────────────────

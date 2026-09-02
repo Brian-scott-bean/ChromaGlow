@@ -156,9 +156,18 @@ struct StudioBoardView: View {
                             // The caption is a caption. Uncapped, the capability
                             // copy wrapped to four-plus lines under a knob in a
                             // three-column grid and became the loudest thing on
-                            // the board; two lines with a small scale floor keeps
-                            // it legible without letting it take over.
-                            .lineLimit(2)
+                            // the board; a small line budget with a scale floor
+                            // keeps it legible without letting it take over.
+                            //
+                            // THREE, not two: the joined coverage-plus-caveat
+                            // note ("1 OF 3 LIGHTS RESPOND · UNVERIFIED HERE")
+                            // is the longest thing this caption ever says, and
+                            // under a 60 pt knob in a one-third-width column it
+                            // needs three lines even at the 0.85 scale floor.
+                            // At two it truncated, and the clipped tail was the
+                            // caveat — the half that cannot be read anywhere
+                            // else on screen.
+                            .lineLimit(3)
                             .minimumScaleFactor(0.85)
                             .foregroundStyle(HuePalette.amber.opacity(0.65))
                             .accessibilityLabel("\(param.label): \(note)")
@@ -248,10 +257,14 @@ struct StudioBoardView: View {
                         )
                         .opacity(opacity)
                         if let note {
+                            // Same three-line budget as the grid captions: the
+                            // colour caption is narrower than the editor it
+                            // sits under, and the caveat must not be the half
+                            // that gets clipped.
                             Text(note)
                                 .font(HueFont.stageTag)
                                 .tracking(0.8)
-                                .lineLimit(2)
+                                .lineLimit(3)
                                 .minimumScaleFactor(0.85)
                                 .foregroundStyle(HuePalette.amber.opacity(0.65))
                                 .accessibilityLabel("\(param.label): \(note)")

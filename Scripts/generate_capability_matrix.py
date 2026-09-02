@@ -50,7 +50,9 @@ anything: deleting the speed branch, or renaming `performBridgeSend`, left
 `--check` green while 34 matrix rows went on claiming a code-proven SEND PATH
 for a send that no longer exists. `verify_send_path` closes that hole by
 reading the function's real span out of the wiring file and requiring the
-parameter's own literal inside it.
+function to READ the parameter's own literal out of the send window — a
+subscript key, not merely a substring, so a `debugLog("speed")` left behind by
+a deleted branch cannot stand in for the branch.
 """
 
 import argparse
@@ -95,10 +97,10 @@ ENGINE_READS_PROOF = ("HueHomeTests/StudioParamCatalogTests.swift",
 # the line numbers; run `--refresh-citations` after touching the run* loops.
 # BEGIN CITED_CONSUMERS
 CITED_CONSUMERS = {
-    ("strobe", "flash_color"): "UnifiedOrchestrator.swift:8278",
-    ("party", "color"): "UnifiedOrchestrator.swift:8439,8535",
-    ("thunderstorm", "ambient_color"): "UnifiedOrchestrator.swift:8631,8672,8777",
-    ("thunderstorm", "flash_color"): "UnifiedOrchestrator.swift:8695,8778",
+    ("strobe", "flash_color"): "UnifiedOrchestrator.swift:8331",
+    ("party", "color"): "UnifiedOrchestrator.swift:8492,8588",
+    ("thunderstorm", "ambient_color"): "UnifiedOrchestrator.swift:8684,8725,8834",
+    ("thunderstorm", "flash_color"): "UnifiedOrchestrator.swift:8748,8835",
 }
 # END CITED_CONSUMERS
 
@@ -388,29 +390,58 @@ def verify_discovery():
 
 # ── Send-path verification (bridge-native prose citations) ───────────
 def _code_only(line):
-    """(code, code_without_string_literals) — a `//` comment is truncated.
+    """(code, code_without_string_literals, subscript_keys).
 
-    String state is tracked so a `//` INSIDE a Swift string literal is not
-    mistaken for a comment, and so braces inside literals cannot skew the
-    brace balance used to find the function's end.
+    A `//` comment is truncated. String state is tracked so a `//` INSIDE a
+    Swift string literal is not mistaken for a comment, and so braces inside
+    literals cannot skew the brace balance used to find the function's end.
+
+    `subscript_keys` is the send-path evidence (see verify_send_path), and it
+    is read off the STRING-STRIPPED `bare` text on purpose. A real branch READS
+    its parameter out of the send window — `window.numbers["speed"]` — and a
+    whole-body substring search for `"speed"` cannot tell that apart from a
+    literal that is merely PASSED somewhere: `debugLog("speed")` satisfied the
+    old check exactly as well as the branch did, so the branch could be deleted
+    and replaced by a log line with `--check` still printing "code-proven SEND
+    PATH". Stripping the literals is what separates them — the read leaves
+    `window.numbers[]` behind it, the log leaves `debugLog()` — so a literal
+    counts as a key only when the bare code immediately before it is `[` and
+    the code immediately after it is `]`.
     """
-    code, bare = [], []
+    code, bare, keys = [], [], []
     in_str = False
+    lit = None
     i, n = 0, len(line)
     while i < n:
         ch = line[i]
         if in_str:
             if ch == "\\" and i + 1 < n:
                 code.append(line[i:i + 2])
+                lit.append(line[i:i + 2])
                 i += 2
                 continue
             code.append(ch)
             if ch == '"':
                 in_str = False
+                # `[` immediately before, in the string-stripped text …
+                k = len(bare) - 1
+                while k >= 0 and bare[k] in " \t":
+                    k -= 1
+                # … and `]` immediately after.
+                j = i + 1
+                while j < n and line[j] in " \t":
+                    j += 1
+                if k >= 0 and bare[k] == "[" and j < n and line[j] == "]":
+                    keys.append("".join(lit))
+                lit = None
+                i += 1
+                continue
+            lit.append(ch)
             i += 1
             continue
         if ch == '"':
             in_str = True
+            lit = []
             code.append(ch)
             i += 1
             continue
@@ -419,16 +450,21 @@ def _code_only(line):
         code.append(ch)
         bare.append(ch)
         i += 1
-    return "".join(code), "".join(bare)
+    return "".join(code), "".join(bare), keys
 
 
 def _swift_function_body(text, name):
-    """(first_line, last_line, [code lines]) for `func <name>(`, else None.
+    """(first_line, last_line, [code lines], {subscript keys}) for `func <name>(`.
+
+    None when the function is not declared.
 
     The span is found by BRACE BALANCE from the declaration, with comments and
     string literals removed first, so the body cannot be over- or under-read by
     a brace in prose. Doc comments ABOVE the declaration are deliberately
     excluded: the whole point is that prose is not evidence.
+
+    The fourth element is every literal the body READS as a subscript key —
+    the send-path evidence `verify_send_path` measures against.
     """
     lines = text.splitlines()
     decl = re.compile(r"\bfunc\s+%s\s*[(<]" % re.escape(name))
@@ -439,15 +475,16 @@ def _swift_function_body(text, name):
             break
     if start is None:
         return None
-    depth, opened, body = 0, False, []
+    depth, opened, body, keys = 0, False, [], set()
     for j in range(start, len(lines) + 1):
-        code, bare = _code_only(lines[j - 1])
+        code, bare, line_keys = _code_only(lines[j - 1])
         body.append(code)
+        keys.update(line_keys)
         if "{" in bare:
             opened = True
         depth += bare.count("{") - bare.count("}")
         if opened and depth <= 0:
-            return (start, j, body)
+            return (start, j, body, keys)
     return None
 
 
@@ -460,9 +497,18 @@ def verify_send_path():
     PATH" for a send that had stopped existing — 34 rows of confident fiction.
 
     So: the function must exist, and the parameter's own literal (`"speed"`,
-    `"base_color"`, …) must appear inside its real body on a line that is not a
-    comment. `transition` is checked the same way — it sends nothing itself,
-    but it only shapes later sends while the body still READS it.
+    `"base_color"`, …) must be READ inside its real body as a send-window
+    subscript key — `window.numbers["speed"]`, `window.colors["base_color"]`,
+    `live.numbers["transition"]`. `transition` is checked the same way — it
+    sends nothing itself, but it only shapes later sends while the body still
+    READS it.
+
+    A KEY, not a substring. The first cut searched the string-RETAINING body
+    text for `"speed"`, which any occurrence of the literal satisfied: delete
+    the branch, leave a `debugLog("speed")` behind, and `--check` stayed green
+    while the matrix printed a code-proven send path for a parameter the send
+    ignores. `_code_only` reads the keys off the string-STRIPPED text, where a
+    read (`window.numbers[]`) and a mention (`debugLog()`) no longer look alike.
     """
     errors = []
     path = ROOT / SEND_SOURCE
@@ -476,8 +522,7 @@ def verify_send_path():
                 "`func %s(` — the cited send path was renamed or deleted and "
                 "every bridge-native row would still print \"code-proven\""
                 % (SEND_FUNC, len(EFFECT_PROFILES), SEND_SOURCE, SEND_FUNC)]
-    _, _, body = span
-    haystack = "\n".join(body)
+    _, _, _, keys = span
     for param in sorted(EFFECT_PROFILES):
         consumer, _, _, _, evidence = EFFECT_PROFILES[param]
         # Anything that CLAIMS the send path, plus every code-proven row: a
@@ -485,12 +530,12 @@ def verify_send_path():
         # proven send.
         if evidence != "codeProven" and SEND_FUNC not in consumer:
             continue
-        if '"%s"' % param not in haystack:
+        if param not in keys:
             errors.append(
-                'EFFECT_PROFILES row %r says %r, but %s() never reads "%s" — '
-                "the branch is gone and the row would print a code-proven send "
-                "path for a parameter the send path ignores"
-                % (param, consumer, SEND_FUNC, param))
+                'EFFECT_PROFILES row %r says %r, but %s() never reads "%s" out '
+                "of the send window — the branch is gone and the row would "
+                "print a code-proven send path for a parameter the send path "
+                "ignores" % (param, consumer, SEND_FUNC, param))
     return errors
 
 

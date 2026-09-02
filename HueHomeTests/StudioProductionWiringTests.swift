@@ -837,6 +837,46 @@ final class StudioProductionWiringTests: XCTestCase {
         XCTAssertNil(defaults.numbers["transition"])
     }
 
+    /// …and copying it must not DELETE the defaults it is SILENT about (H1).
+    ///
+    /// A running set is sparse own-values over a base frozen at start, so it
+    /// says nothing about a default written after that instant — which is
+    /// exactly what the look browser's setup sliders write while another room
+    /// runs the card. `setDefaults` replaces the whole dictionary, so seeding
+    /// it with the live set raw ERASED them: the user moved a setup slider,
+    /// tapped Apply Current Look on an idle room, and the slider was back to
+    /// the catalog default with nothing said.
+    func testApplyCurrentLookDoesNotDeleteDefaultsWrittenAfterTheInstanceStarted() {
+        let candle = vm.effectCards.first { $0.id == "candle" }!
+        vm.valueScopes.clearDefaults(forCard: candle.id)
+        let a = room("room-a")
+        startRunning(candle, on: a)
+        edit(candle, on: a, paramID: "speed", value: 80)
+
+        // The look browser's setup sliders on an IDLE room: defaults-only
+        // writes, landing AFTER room A's instance froze its base. One of them
+        // is a control the instance also holds (speed), one is a control it
+        // has never had an opinion about (brightness).
+        vm.selectedRoom = room("room-idle")
+        vm.commitParam(cardID: candle.id, paramID: "speed", value: 5)
+        vm.commitParam(cardID: candle.id, paramID: "brightness", value: 42)
+
+        XCTAssertEqual(vm.seedApplyCurrentLook()?.id, "candle",
+                       "the only active target is the source")
+
+        let defaults = vm.valueScopes.defaults(forCard: candle.id)
+        XCTAssertEqual(defaults.numbers["speed"], 80, """
+            copy-once still WINS for everything the instance actually holds — \
+            the later default write does not survive on that control
+            """)
+        XCTAssertEqual(defaults.numbers["brightness"], 42, """
+            …but a default this instance never had an opinion about is not \
+            destroyed by copying one that it did
+            """)
+        XCTAssertNil(defaults.numbers["warmth"],
+                     "…and layering still invents nothing")
+    }
+
     // ── Apply seeds from the room it is STARTING ON ─────────────
 
     /// An apply that names a room other than the selected one must seed from
@@ -974,6 +1014,88 @@ final class StudioProductionWiringTests: XCTestCase {
         XCTAssertEqual(spy.groupedEffectPuts.last?.mirek, 300,
                        "warmth was chosen last, so warmth wins on the wall")
         XCTAssertNil(spy.groupedEffectPuts.last?.xy)
+    }
+
+    // ── …and one effects_v2 body cannot carry them either ───────
+
+    /// The v2 path is the PREFERRED one for every bridge-native look on a
+    /// v2-capable light, and `EffectsV2Body.dictionary()` emits
+    /// `parameters.color` and `parameters.color_temperature` out of ONE body.
+    /// The bridge rejects a body carrying both, and `gate.send(retry: false)`
+    /// swallows the rejection — so a window that changed colour AND warmth
+    /// lost the colour, the warmth AND the speed riding with them, silently.
+    ///
+    /// Only the LATER-committed member travels, exactly as the grouped path's
+    /// second PUT is the one that wins on the wall.
+    func testTheV2BodyCarriesOnlyTheLaterCommittedMemberOfTheExclusivePair() async throws {
+        let spy = WiringSpyClient(bridgeID: "bridge-a", bridgeName: "Bridge A",
+                                  ip: "192.0.2.1", token: "spy-token")
+        orchestrator.injectForTesting(clients: ["bridge-a": spy])
+        let a = room("room-a")
+        let candle = vm.effectCards.first { $0.id == "candle" }!
+        let identity = installV2Candle(candle, on: a)
+
+        vm.selectedRoom = a
+        vm.commitColorParam(cardID: candle.id, paramID: "base_color", color: .green)
+        vm.commitParam(cardID: candle.id, paramID: "warmth", value: 300)
+        vm.commitParam(cardID: candle.id, paramID: "speed", value: 80)
+
+        await vm.testFlushPendingParamSends(for: identity.targetKey)
+        await drainStudioMailbox(bridgeID: "bridge-a", roomID: "room-a")
+
+        XCTAssertEqual(spy.v2Puts.count, 1, "one body per v2-capable light")
+        let params = try XCTUnwrap(spy.v2Puts.first?.body["parameters"] as? [String: Any])
+        XCTAssertNil(params["color"], """
+            the colour was committed FIRST, so it is the one dropped — a body \
+            carrying both is rejected whole and nothing lands at all
+            """)
+        let temperature = try XCTUnwrap(params["color_temperature"] as? [String: Any])
+        XCTAssertEqual(temperature["mirek"] as? Int, 300,
+                       "the later-committed member is the one that travels")
+        XCTAssertEqual(params["speed"] as? Double, 0.8, """
+            …and the speed riding in the same window survives, which the \
+            swallowed rejection used to take down with it
+            """)
+    }
+
+    /// …and the mirror image: a colour picked after a warmth drag is the one
+    /// that reaches the lights.
+    func testTheV2BodyKeepsTheColourWhenTheColourWasCommittedLast() async throws {
+        let spy = WiringSpyClient(bridgeID: "bridge-a", bridgeName: "Bridge A",
+                                  ip: "192.0.2.1", token: "spy-token")
+        orchestrator.injectForTesting(clients: ["bridge-a": spy])
+        let a = room("room-a")
+        let candle = vm.effectCards.first { $0.id == "candle" }!
+        let identity = installV2Candle(candle, on: a)
+
+        vm.selectedRoom = a
+        vm.commitParam(cardID: candle.id, paramID: "warmth", value: 300)
+        vm.commitColorParam(cardID: candle.id, paramID: "base_color", color: .green)
+        vm.commitParam(cardID: candle.id, paramID: "speed", value: 80)
+
+        await vm.testFlushPendingParamSends(for: identity.targetKey)
+        await drainStudioMailbox(bridgeID: "bridge-a", roomID: "room-a")
+
+        XCTAssertEqual(spy.v2Puts.count, 1)
+        let params = try XCTUnwrap(spy.v2Puts.first?.body["parameters"] as? [String: Any])
+        XCTAssertNil(params["color_temperature"],
+                     "warmth was committed first, so warmth is the one dropped")
+        XCTAssertNotNil(params["color"], "the colour the user picked last is what travels")
+        XCTAssertEqual(params["speed"] as? Double, 0.8)
+    }
+
+    /// A v2-capable bridge-native look on one light, for the exclusive-pair
+    /// tests — the PREFERRED routing, where the pair has no second PUT to fall
+    /// back on.
+    private func installV2Candle(_ card: StudioCard,
+                                 on target: RoomDisplayItem) -> RunningLookIdentity {
+        let identity = vm.installRunningIdentity(
+            room: target, card: card, execution: .bridgeNative(effect: "candle"))
+        vm.runningEffects[StudioSelectionKey(room: target)] = RunningEffect(
+            cardID: card.id, card: card, room: target, lightIDs: ["L1"],
+            isEntertainment: false, requestedTransport: nil, transportFallback: false,
+            identity: identity, v2CapableLightIDs: ["L1"])
+        return identity
     }
 
     // ── A dropped in-flight window is carried, not lost ─────────
@@ -1228,6 +1350,94 @@ final class StudioProductionWiringTests: XCTestCase {
             effects: nil, effects_v2: nil, timed_effects: nil, gradient: nil)
     }
 
+    // ── effects_v2 coverage is EFFECT-SPECIFIC while a look runs ─
+
+    /// The board narrows `base_color`/`warmth`/`speed` to the snapshot's
+    /// `effectsV2` coverage, and the live send fans out to exactly the lights
+    /// whose `effects_v2.action.effect_values` name THIS effect. Reporting
+    /// generic v2 support instead made a mixed room read 3 of 3 while Cosmos
+    /// ran on one light and the other two never moved.
+    func testEffectsV2CoverageIsSpecificToTheRunningEffect() throws {
+        let a = room("room-a")
+        let cosmos = try XCTUnwrap(vm.effectCards.first { $0.id == "cosmos" })
+        // One light can run cosmos and does colour; the other two run only
+        // candle/fire and are CT-only white bulbs.
+        orchestrator.seedRawLightCache(bridgeID: "bridge-a", lights: [
+            v2Light(id: "L1", effects: ["cosmos", "candle"], color: true, ct: true),
+            v2Light(id: "L2", effects: ["candle", "fire"], color: false, ct: true),
+            v2Light(id: "L3", effects: ["candle", "fire"], color: false, ct: true)
+        ])
+        let identity = vm.installRunningIdentity(
+            room: a, card: cosmos, execution: .bridgeNative(effect: "cosmos"))
+        let effect = RunningEffect(
+            cardID: cosmos.id, card: cosmos, room: a, lightIDs: ["L1", "L2", "L3"],
+            isEntertainment: false, requestedTransport: nil, transportFallback: false,
+            identity: identity, v2CapableLightIDs: ["L1"])
+
+        let snapshot = vm.targetSnapshot(for: effect)
+
+        XCTAssertEqual(snapshot.totalLights, 3)
+        XCTAssertEqual(snapshot.effectsV2.supported, 1, """
+            all three lights support effects_v2 GENERICALLY, but only one lists \
+            cosmos — and the per-light send reaches only that one
+            """)
+        XCTAssertEqual(snapshot.effectsV2.total, 3)
+        XCTAssertEqual(snapshot.color.supported, 1,
+                       "colour coverage is unchanged: it measures the room")
+        XCTAssertEqual(snapshot.colorTemperature.supported, 3)
+        XCTAssertEqual(snapshot.effectV2ColorLights, 1, """
+            the TRUE intersection — a caller narrowing a colour control must not \
+            have to take min(v2, colour), which overstates a partial overlap
+            """)
+        XCTAssertEqual(snapshot.effectV2CTLights, 1, """
+            …and likewise for warmth: three lights do CT, but only one of them \
+            takes a cosmos effects_v2 body
+            """)
+    }
+
+    /// The intersection counts describe a read that HAPPENED. A target whose
+    /// lights could not be read reports unknown, not zero.
+    func testAnUnreadableTargetReportsNoEffectV2IntersectionAtAll() throws {
+        let a = room("room-a")
+        let cosmos = try XCTUnwrap(vm.effectCards.first { $0.id == "cosmos" })
+        let identity = vm.installRunningIdentity(
+            room: a, card: cosmos, execution: .bridgeNative(effect: "cosmos"))
+        let effect = RunningEffect(
+            cardID: cosmos.id, card: cosmos, room: a, lightIDs: ["L1", "L2", "L3"],
+            isEntertainment: false, requestedTransport: nil, transportFallback: false,
+            identity: identity, v2CapableLightIDs: [])
+
+        let snapshot = vm.targetSnapshot(for: effect)
+
+        XCTAssertEqual(snapshot.effectsV2.evidence, .unreadable,
+                       "no cached lights: the answer is unknown, not unsupported")
+        XCTAssertNil(snapshot.effectV2ColorLights,
+                     "an intersection of two sets we could not read is not zero")
+        XCTAssertNil(snapshot.effectV2CTLights)
+    }
+
+    /// A light with a v2 capability list, colour and CT as asked for.
+    private func v2Light(id: String, effects: [String],
+                         color: Bool, ct: Bool) -> HueLight {
+        HueLight(
+            id: id,
+            metadata: LightMetadata(name: id, archetype: nil),
+            on: OnState(on: true),
+            dimming: DimmingState(brightness: 100),
+            color: color ? LightColor(xy: CIExy(x: 0.4, y: 0.4), gamut_type: "C") : nil,
+            color_temperature: ct
+                ? LightColorTemp(mirek: 300,
+                                 mirek_schema: MirekSchema(mirek_minimum: 153,
+                                                           mirek_maximum: 500),
+                                 mirek_valid: true)
+                : nil,
+            owner: nil,
+            effects: nil,
+            effects_v2: LightEffectsV2(action: LightEffectsV2.Action(effect_values: effects),
+                                       status: nil),
+            timed_effects: nil, gradient: nil)
+    }
+
     // ── The orchestrator never calls back into Studio's stop ────
 
     /// The engine start/stop paths must never reach `studioStopHandler` or
@@ -1304,6 +1514,20 @@ final class StudioProductionWiringTests: XCTestCase {
         XCTAssertTrue(joined.contains("compositionEntParamBoxes[bridgeID] == nil"), """
             the second half of the same question: a successor that installed its \
             own Entertainment box in the gap is not this failover's run either
+            """)
+
+        // …and the value the re-check measures against must be READ BEFORE the
+        // body's first suspension point. A capture after any await is a
+        // capture of the successor's world, and the re-check then compares the
+        // successor to itself and always passes — the guard would be present,
+        // ordered correctly, and completely inert.
+        let capture = try XCTUnwrap(joined.range(of: "let failoverGeneration ="),
+                                    "the generation is captured into a local")
+        let firstAwait = try XCTUnwrap(joined.range(of: "await "),
+                                       "the failover still suspends")
+        XCTAssertLessThan(capture.lowerBound, firstAwait.lowerBound, """
+            the generation must be captured before the body's FIRST await — \
+            after one, it already describes whoever took the bridge
             """)
     }
 

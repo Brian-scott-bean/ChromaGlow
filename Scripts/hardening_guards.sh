@@ -1239,8 +1239,18 @@ fi
 # reading 1. `ScrollViewReader {` is not a scroll surface and does not match:
 # `[({]` has to follow the word `ScrollView` itself.
 # The comment filter is anchored here too — single-file grep, so `^[0-9]+:`.
+#
+# The `.horizontal` exclusion is ANCHORED TO THE SCROLLVIEW TOKEN, for the same
+# reason the comment filters above are anchored. The bare `grep -vE '\.horizontal'`
+# discarded any matching line that mentioned the word anywhere — so a brand-new
+# VERTICAL scroller whose trailing comment happened to say ".horizontal"
+# (`ScrollView {  // not .horizontal`, or `// paired with the .horizontal lane
+# below`) was thrown away before it could be counted, and the host could grow a
+# second vertical scroll surface with the count still reading 1. Only the axis
+# argument of the ScrollView itself excludes: `ScrollView(.horizontal…`.
 r36_vertical=$(grep -nE 'ScrollView[[:space:]]*[({]' "$R36_HOST" 2>/dev/null \
-    | grep -vE '\.horizontal' | grep -vE '^[0-9]+:[[:space:]]*//' || true)
+    | grep -vE 'ScrollView[[:space:]]*\(\.horizontal' \
+    | grep -vE '^[0-9]+:[[:space:]]*//' || true)
 r36_vcount=$(printf '%s' "$r36_vertical" | grep -c . || true)
 if [[ "$r36_vcount" -ne 1 ]]; then
     fail "studio-one-surface" $'the host must have exactly ONE vertical ScrollView, found '"$r36_vcount"$':\n'"$r36_vertical"
@@ -1273,6 +1283,8 @@ fi
 # ──────────────────────────────────────────────────────────────
 
 HC_BEAT="HueHome/Core/Audio/BeatBinding.swift"
+HC_ENT="HueHome/Core/Network/HueEntertainmentClient.swift"
+[[ -f "$HC_ENT" ]] || fail "slice2-r1" "$HC_ENT is missing — the transport's delivery answer has no home"
 
 # (a) The pure API exists — as a DECLARATION, not as a mention. A bare
 #     whole-file substring grep is satisfied by the prose above each fix, which
@@ -1283,7 +1295,10 @@ HC_BEAT="HueHome/Core/Audio/BeatBinding.swift"
 hc_beat_code=$(grep -vE '^[[:space:]]*//' "$HC_BEAT" 2>/dev/null || true)
 for sym in entertainmentFrameDuration entertainmentFrameNanoseconds minOnsetPeriod \
            minOnsetLedgerPeriod onsetComparisonTolerance onsetRiseThreshold onsetColorDelta \
-           onsetVisibleBrightness clampedInt \
+           redFlashLuminanceDelta saturatedRedFraction clampedInt \
+           dimmingLuminance linearRGB chromaticityLuminanceFactor redDriveFraction \
+           relativeLuminance isSaturatedRed luminanceTroughSinceOnset \
+           Reservation commit forgetWire \
            slowestPlannedHz minCycleFrames entertainmentMaxLockHz cycleFrames splitFrames \
            WireFrame FrameVerdict OnsetGate OnsetLedger StrobePlan PartyPlan ThunderstormPlan \
            requestedGapFrames flashFrameRange afterglowFrameRange noteAmbient noteStrike gapFrames; do
@@ -1375,8 +1390,35 @@ hc_emit_body=$(awk '/private func emitGatedFrame\(/,/^    }$/' "$HC_ORCH" 2>/dev
 [[ -n "$hc_emit_body" ]] || fail "slice2-r1" "emitGatedFrame is gone from $HC_ORCH"
 echo "$hc_emit_body" | grep -q 'ledger.admit(' \
     || fail "slice2-r1" "emitGatedFrame no longer asks the shared ledger about the FRAME through admit("
-echo "$hc_emit_body" | grep -q 'lastEmitted' \
-    || fail "slice2-r1" "emitGatedFrame no longer binds the ledger's lastEmitted hold frame — a hold that re-derives its own level is defect B1"
+echo "$hc_emit_body" | grep -q 'let onWire = reservation.frame' \
+    || fail "slice2-r1" "emitGatedFrame no longer takes its wire frame from the reservation the ledger returned — a hold that re-derives its own level is defect B1"
+
+# Third pass, blocker B-1: the ledger may not run ahead of the wire. `admit`
+# only RESERVES; the send answers whether the transport took the frame; `commit`
+# is what makes the reservation true or rolls it back. The ORDER is the whole
+# invariant — a commit before the send is the old stamp-then-hope, and a missing
+# commit leaves the ledger holding a frame nobody saw. Both are checked
+# positionally, because a body containing all three tokens in the wrong order
+# reads exactly like a body containing them in the right one.
+echo "$hc_emit_body" | grep -q 'ledger.commit(' \
+    || fail "slice2-r1" "emitGatedFrame never commits its reservation — the ledger would keep a record of a frame the transport may have dropped (B-1)"
+hc_admit_at=$(echo "$hc_emit_body" | grep -n 'ledger.admit(' | head -1 | cut -d: -f1)
+hc_send_at=$(echo "$hc_emit_body" | grep -n 'sendUniform(' | head -1 | cut -d: -f1)
+hc_commit_at=$(echo "$hc_emit_body" | grep -n 'ledger.commit(' | head -1 | cut -d: -f1)
+[[ "$hc_admit_at" -lt "$hc_send_at" ]] \
+    || fail "slice2-r1" "emitGatedFrame sends before it reserves (admit at $hc_admit_at, sendUniform at $hc_send_at)"
+[[ "$hc_send_at" -lt "$hc_commit_at" ]] \
+    || fail "slice2-r1" "emitGatedFrame commits at line $hc_commit_at, BEFORE its sendUniform( at line $hc_send_at — the commit must record what the transport actually did, and it is also what stamps the onset at DELIVERY time (H-3)"
+echo "$hc_emit_body" | grep -qE 'let delivered = await [A-Za-z]+\.sendUniform\(' \
+    || fail "slice2-r1" "emitGatedFrame discards sendUniform's answer — a frame the transport refused mid-reconnect changed no light, and a ledger that cannot tell runs ahead of the wire (B-1)"
+echo "$hc_emit_body" | grep -q 'delivered: delivered' \
+    || fail "slice2-r1" "emitGatedFrame does not pass the transport's answer to commit(delivered:)"
+# `sendUniform` has to HAVE an answer to pass.
+grep -qE '^[[:space:]]*func sendUniform\(.*\) -> Bool' "$HC_ENT" \
+    || fail "slice2-r1" "HueEntertainmentClient.sendUniform no longer returns Bool — nothing downstream can tell a delivered frame from one the reconnect dropped (B-1)"
+grep -qE '^[[:space:]]*func send\(channels:.*\) -> Bool' "$HC_ENT" \
+    || fail "slice2-r1" "HueEntertainmentClient.send(channels:) no longer returns Bool"
+
 echo "$hc_emit_body" | grep -q 'minOnsetLedgerPeriod' \
     || fail "slice2-r1" "emitGatedFrame no longer enforces the 17-frame minOnsetLedgerPeriod (minOnsetPeriod concedes 6.67 ms the cross-run path cannot afford)"
 echo "$hc_emit_body" | grep -q 'BeatMath.FlashSafety.entertainmentFrameNanoseconds' \
@@ -1400,8 +1442,8 @@ echo "$hc_onset_body" | grep -q 'while !Task.isCancelled' \
     || fail "slice2-r1" "emitOnsetFrame no longer loops until the frame lands — only cancellation may end the wait"
 echo "$hc_onset_body" | grep -q 'emitGatedFrame(' \
     || fail "slice2-r1" "emitOnsetFrame no longer streams its wait through the frame gate"
-echo "$hc_onset_body" | grep -q 'wasAdmitted' \
-    || fail "slice2-r1" "emitOnsetFrame no longer returns on the REQUESTED frame reaching the wire (wasAdmitted)"
+echo "$hc_onset_body" | grep -q 'landedOnWire' \
+    || fail "slice2-r1" "emitOnsetFrame no longer returns on the REQUESTED frame reaching the WIRE (landedOnWire) — 'wasAdmitted' alone means the ledger agreed, which says nothing about a transport that dropped the frame mid-reconnect (B-1)"
 echo "$hc_onset_body" | grep -qE '[<>]=?[[:space:]]*[0-9]|[0-9][[:space:]]*[<>]=?' \
     && fail "slice2-r1" "emitOnsetFrame compares against a numeric bound — a refusal must DELAY the flash, never skip it (both spellings of the bail-out are banned)"
 
@@ -1459,26 +1501,61 @@ done
 # prose above each fix, which necessarily names every symbol it explains.
 hc_gate_body=$(awk '/^        struct OnsetGate \{/,/^        \}$/' "$HC_BEAT" 2>/dev/null | grep -vE '^[[:space:]]*//' || true)
 [[ -n "$hc_gate_body" ]] || fail "slice2-r1" "BeatMath.FlashSafety.OnsetGate is gone from $HC_BEAT"
-for decl in 'var lastEmitted' 'var troughSinceOnset' 'var lastAdmittedBrightness' \
-            'func admit(frame' 'func isOnsetCandidate('; do
+for decl in 'var lastEmitted' 'var luminanceTroughSinceOnset' \
+            'func admit(frame' 'func isOnsetCandidate(' 'func commit(' 'func forgetWire('; do
     echo "$hc_gate_body" | grep -qF "$decl" \
-        || fail "slice2-r1" "OnsetGate no longer declares '$decl' — without the wire state and the trough the gate is back to measuring what the loop computed"
+        || fail "slice2-r1" "OnsetGate no longer declares '$decl' — without the wire state, the luminance trough and the reserve/commit pair the gate is back to measuring what the loop computed"
 done
 echo "$hc_gate_body" | grep -q 'lastEmitted = frame' \
     || fail "slice2-r1" "OnsetGate.admit no longer RECORDS the frame it emitted — a gate that does not remember the wire cannot hold it"
-echo "$hc_gate_body" | grep -q 'min(troughSinceOnset,' \
-    || fail "slice2-r1" "OnsetGate no longer lowers troughSinceOnset toward the darkest EMITTED frame — a rise measured against the previous frame is a slew limit, and a 0.019/frame ramp walks straight past it (defect M3)"
+echo "$hc_gate_body" | grep -q 'min(luminanceTroughSinceOnset,' \
+    || fail "slice2-r1" "OnsetGate no longer lowers luminanceTroughSinceOnset toward the darkest EMITTED frame — a rise measured against the previous frame is a slew limit, and a 0.019/frame ramp walks straight past it (defect M3)"
 echo "$hc_gate_body" | grep -q 'FlashSafety.onsetRiseThreshold' \
     || fail "slice2-r1" "OnsetGate's candidacy test no longer uses the shared onsetRiseThreshold"
-echo "$hc_gate_body" | grep -qE 'return[[:space:]]+\.hold\(' \
-    || fail "slice2-r1" "OnsetGate.admit never returns .hold — a refusal must yield the frame already on the wire, not a level the caller invents"
+echo "$hc_gate_body" | grep -qE 'return[[:space:]]+\.hold\(|reservation\(\.hold\(' \
+    || fail "slice2-r1" "OnsetGate.admit never yields .hold — a refusal must yield the frame already on the wire (or black, when there isn't one), not a level the caller invents"
 
-# The ledger decides AND records in one critical section. Two calls would let the
-# other loop instance alive during the un-awaited cancel window interleave a frame
-# between them, and the trough would then belong to neither loop.
+# Third pass, H-1/H-2/M-3: candidacy is measured in RELATIVE LUMINANCE, not in
+# Hue dimming. A dimming rule misses a 0.235-of-maximum flash at the top of the
+# range (0.901 → 1.000) and reads a 0.60 luminance RISE (blue 0.90 → white 0.85)
+# as a decay. The candidacy body is scoped on its own: a file-wide grep would be
+# satisfied by the paragraph that explains the fix.
+hc_candidacy=$(echo "$hc_gate_body" | awk '/func isOnsetCandidate\(/,/^            \}$/' || true)
+[[ -n "$hc_candidacy" ]] || fail "slice2-r1" "OnsetGate.isOnsetCandidate is gone"
+echo "$hc_candidacy" | grep -q 'relativeLuminance' \
+    || fail "slice2-r1" "OnsetGate.isOnsetCandidate no longer measures relativeLuminance — a threshold applied to Hue dimming is not the WCAG threshold (H-1)"
+echo "$hc_candidacy" | grep -q 'luminanceTroughSinceOnset' \
+    || fail "slice2-r1" "OnsetGate.isOnsetCandidate no longer measures the rise from the LUMINANCE trough"
+echo "$hc_candidacy" | grep -qE '\.brightness' \
+    && fail "slice2-r1" "OnsetGate.isOnsetCandidate reads .brightness — candidacy is stated in relative luminance and nothing else (H-1/H-2/M-3)"
+echo "$hc_candidacy" | grep -q 'isSaturatedRed' \
+    || fail "slice2-r1" "OnsetGate.isOnsetCandidate no longer applies the WCAG red-flash rule — chromaticity's only rule of its own"
+echo "$hc_candidacy" | grep -q 'FlashSafety.redFlashLuminanceDelta' \
+    || fail "slice2-r1" "OnsetGate.isOnsetCandidate no longer uses the shared redFlashLuminanceDelta"
+# The exemption that the luminance model made unnecessary must stay gone: a
+# chroma rule that fires on any palette step needs one, and needing one is the
+# signal that the rule is measuring the wrong quantity.
+echo "$hc_gate_body" | grep -q 'lastAdmittedBrightness' \
+    && fail "slice2-r1" "OnsetGate is carrying a lastAdmittedBrightness exemption again — in luminance the storm's afterglow → ambient step is a FALL and needs no carve-out"
+
+# The luminance model itself: the two halves and their pairing.
+hc_lum_body=$(grep -vE '^[[:space:]]*//' "$HC_BEAT" | awk '/var relativeLuminance/,/^            \}$/' || true)
+echo "$hc_lum_body" | grep -q 'chromaticityLuminanceFactor' \
+    || fail "slice2-r1" "WireFrame.relativeLuminance no longer scales by the chromaticity factor — dimming alone treats saturated blue and white as the same flash"
+echo "$hc_lum_body" | grep -q 'dimmingLuminance' \
+    || fail "slice2-r1" "WireFrame.relativeLuminance no longer converts dimming through the CIE L* cube"
+echo "$hc_beat_code" | grep -qE '0\.2126|0\.7152|0\.0722' \
+    || fail "slice2-r1" "the sRGB luminance coefficients are gone from $HC_BEAT — the chromaticity factor cannot be a luminance without them"
+
+# The ledger decides AND records in one critical section, and exposes the commit
+# half under the same lock. Two calls would let the other loop instance alive
+# during the un-awaited cancel window interleave a frame between them, and the
+# trough would then belong to neither loop.
 hc_ledger_body=$(awk '/^        final class OnsetLedger/,/^        \}$/' "$HC_BEAT" 2>/dev/null | grep -vE '^[[:space:]]*//' || true)
 echo "$hc_ledger_body" | grep -q 'return gate.admit(frame:' \
     || fail "slice2-r1" "OnsetLedger no longer forwards admit( to its gate under the lock"
+echo "$hc_ledger_body" | grep -q 'gate.commit(' \
+    || fail "slice2-r1" "OnsetLedger no longer forwards commit( to its gate under the lock — a reservation the loops cannot settle is a ledger running ahead of the wire (B-1)"
 
 echo "$hc_storm_body" | grep -q 'FlashSafety.clampedInt(' \
     || fail "slice2-r1" "runThunderstormEntertainment no longer converts its param-box Ints through the finite-guarded FlashSafety.clampedInt"
@@ -1651,6 +1728,37 @@ echo "$r2_snapshot" | grep -qF 'capabilityInventoryGeneration' \
 R2_BROWSER="HueHome/UI/Studio/StudioLookBrowserView.swift"
 [[ -f "$R2_BROWSER" ]] || fail "slice2-r2" "$R2_BROWSER is missing — the details-panel half of the funnel rule is unenforceable"
 
+#     NON-SHADOWING PIN. `.disabled(!interactive)` and `.opacity(opacity)` name
+#     LOCAL BINDINGS, and (b)/(g) only pin that the funnel is called SOMEWHERE
+#     in the same body. So the whole rule could be bypassed without deleting a
+#     single checked line — leave the `StudioBoardAvailability.isInteractive(…)`
+#     call standing under a different name and write `let interactive = true`
+#     beside it, and every guard above stays green while a control the funnel
+#     refused renders live at full strength. The bypass is cheap to close: the
+#     binding the view actually reads must take its value FROM the funnel.
+#
+#     Checked as a window (the binding line plus the two after it) rather than
+#     as one line, because the real call is split across lines in all three
+#     bodies and reads through a `live == nil ? …` ternary in the browser's.
+r2_binding_pin() {
+    local body="$1" where="$2" name="$3" callee="$4"
+    local hits n window
+    # `let <name>` with an optional type annotation, then `=`. Anchored on the
+    # `let` so `isInteractive: interactive` argument lines are not bindings.
+    hits=$(echo "$body" | grep -nE "let[[:space:]]+${name}([[:space:]]*:[^=]*)?[[:space:]]*=" || true)
+    if [[ -z "$hits" ]]; then
+        fail "slice2-r2" "$where binds no \`let $name\` — the funnel's verdict has no name for .disabled/.opacity to read"
+        return
+    fi
+    while IFS= read -r hit; do
+        [[ -n "$hit" ]] || continue
+        n=${hit%%:*}
+        window=$(echo "$body" | sed -n "${n},$((n + 2))p")
+        echo "$window" | grep -qF "$callee" \
+            || fail "slice2-r2" $''"$where"$' binds `'"$name"$'` to something other than '"$callee"$' — a shadowing constant (`let interactive = true`, `let opacity: Double = 1`) leaves every other guard green while the funnel\'s answer is thrown away:\n'"$hit"
+    done <<< "$hits"
+}
+
 r2_applied_check() {
     local body="$1" where="$2"
     echo "$body" | grep -qF '.disabled(!interactive)' \
@@ -1659,6 +1767,8 @@ r2_applied_check() {
         || fail "slice2-r2" "$where does not apply the funnel's opacity (.opacity(opacity)) — an unproven or staged control would look exactly like a fully live one"
     echo "$body" | grep -qF 'if let note' \
         || fail "slice2-r2" "$where does not render the funnel's note (if let note) — the control would go quiet about why it cannot do what it looks like it does"
+    r2_binding_pin "$body" "$where" interactive 'StudioBoardAvailability.isInteractive('
+    r2_binding_pin "$body" "$where" opacity 'StudioBoardAvailability.opacity('
 }
 
 for fn in boardControl colorSection; do

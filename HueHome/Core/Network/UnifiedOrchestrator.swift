@@ -6262,7 +6262,15 @@ final class UnifiedOrchestrator {
         entertainmentConfigsFetchedBridges.remove(bridgeID)
         if let entClient = studioEntClients[bridgeID] {
             await entClient.stopSession()   // no-op post-teardown (configID cleared)
-            studioEntClients.removeValue(forKey: bridgeID)
+            // M5: remove only OUR client. `stopSession()` is a long await, and
+            // a Studio look (or a successor composition) that acquires this
+            // bridge inside it installs its OWN client under this very key —
+            // an unconditional removal then deleted the live session's record,
+            // leaving a stream running that nothing in the app could name or
+            // stop. Identity, not key presence, is the authorization.
+            if studioEntClients[bridgeID] === entClient {
+                studioEntClients.removeValue(forKey: bridgeID)
+            }
         }
 
         // RE-CHECK AFTER THE AWAIT, before anything is started. A successor
@@ -6273,6 +6281,15 @@ final class UnifiedOrchestrator {
         // above, so a non-nil slot is somebody else's). Bail touching NOTHING
         // — no re-entry, no transport relabel, no fallback telemetry: the
         // successor is running and none of it describes the successor.
+        //
+        // M4, ACCEPTED: a successor still INSIDE `prepareEntertainment` when
+        // this re-check runs has bumped neither the generation nor installed
+        // its box yet, so both questions answer "not superseded" and this
+        // failover proceeds. It is benign by construction: the successor's own
+        // start bumps the room generation after it finishes, which fences
+        // everything this re-entry installs. Recorded rather than closed —
+        // closing it needs an in-progress-start ledger, which is a wider
+        // change than this failover.
         guard compositionGenerations[playbackKey] == failoverGeneration,
               compositionEntParamBoxes[bridgeID] == nil else {
             debugLog("[Composer] Failover for room=\(roomID) superseded during teardown — leaving the successor alone")
@@ -8150,9 +8167,20 @@ final class UnifiedOrchestrator {
     // MARK: - Strobe Engine
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+    /// One frame's whole story: what the ledger decided, and whether the
+    /// transport took it. `landedOnWire` is the only thing a caller waiting on a
+    /// flash may act on — an admitted frame the transport dropped changed no
+    /// light at all, so the flash it was waiting for has not happened.
+    struct GatedFrameOutcome {
+        let verdict: BeatMath.FlashSafety.FrameVerdict
+        let delivered: Bool
+        var landedOnWire: Bool { verdict.wasAdmitted && delivered }
+    }
+
     /// Streams ONE frame through the bridge's shared onset ledger and sleeps the
-    /// 20 ms Entertainment quantum. Returns the ledger's verdict — what actually
-    /// reached the wire — or `nil` if the task was cancelled.
+    /// 20 ms Entertainment quantum. Returns what the ledger decided AND what the
+    /// transport did with it — or `nil` if the task was cancelled before the
+    /// reservation was taken.
     ///
     /// **This is the only place a flash-class ENT loop may call `sendUniform`,
     /// and that is the entire mechanism.** The ledger used to gate the
@@ -8183,6 +8211,12 @@ final class UnifiedOrchestrator {
     /// frame the bridge is already showing, so a refusal costs nothing on the
     /// wire, and the DTLS stream never pauses — pausing it would let the bridge
     /// fall back to its own light state mid-effect.
+    ///
+    /// Third pass, blocker B-1: measuring the wire is not the same as REACHING
+    /// it. `sendUniform` is fire-and-forget and drops every frame while the DTLS
+    /// connection is re-establishing, so this helper reserves, sends, and then
+    /// commits what the transport actually did — the three steps in that order,
+    /// with no exit between them.
     private func emitGatedFrame(
         entClient: HueEntertainmentClient,
         channelIDs: [UInt8],
@@ -8190,26 +8224,36 @@ final class UnifiedOrchestrator {
         x: Double,
         y: Double,
         brightness: Double
-    ) async -> BeatMath.FlashSafety.FrameVerdict? {
+    ) async -> GatedFrameOutcome? {
         guard !Task.isCancelled else { return nil }
-        // `minOnsetLedgerPeriod` (0.34 s), not `minOnsetPeriod` (1/3 s): the
-        // gate is the ONLY thing guarding the cross-run path, where no frame
-        // plan has already spent the 17 frames, and it stamps the moment of
-        // ADMISSION rather than the moment the frame reaches the wire. There is
-        // no room here for the 6.67 ms the WCAG period would concede.
-        let verdict = ledger.admit(
+        // RESERVE. `minOnsetLedgerPeriod` (0.34 s), not `minOnsetPeriod`
+        // (1/3 s): the gate is the ONLY thing guarding the cross-run path, where
+        // no frame plan has already spent the 17 frames. The decision is taken
+        // on a clock sample from BEFORE the send, which is conservative in the
+        // right direction — the realized interval can only be longer than the
+        // one this compares.
+        let reservation = ledger.admit(
             frame: BeatMath.FlashSafety.WireFrame(x: x, y: y, brightness: brightness),
             at: CACurrentMediaTime(),
             minPeriod: BeatMath.FlashSafety.minOnsetLedgerPeriod)
-        let onWire: BeatMath.FlashSafety.WireFrame
-        switch verdict {
-        case .emit(let admitted):    onWire = admitted
-        case .hold(let lastEmitted): onWire = lastEmitted
-        }
-        await entClient.sendUniform(channelIDs: channelIDs,
-                                    x: onWire.x, y: onWire.y, brightness: onWire.brightness)
+        let onWire = reservation.frame
+        // SEND. `sendUniform` answers whether the frame reached the transport at
+        // all: it drops every frame while the DTLS connection is re-establishing,
+        // and `isTerminallyFailed` stays false for the whole reconnect budget, so
+        // nothing else in this loop can tell.
+        let delivered = await entClient.sendUniform(
+            channelIDs: channelIDs, x: onWire.x, y: onWire.y, brightness: onWire.brightness)
+        // COMMIT, unconditionally and immediately after the send — including
+        // when this task was cancelled inside it. Bailing out between the
+        // reserve and the commit is the one thing that would leave the ledger
+        // holding a frame the wire never saw (M-2), which is the same defect as
+        // the dropped send by another route. Committing here also moves the
+        // onset stamp forward to the DELIVERY time, so the period the ledger
+        // enforces is measured from the wire and not from a decision an actor
+        // hop ago (H-3).
+        ledger.commit(reservation, delivered: delivered, at: CACurrentMediaTime())
         try? await Task.sleep(nanoseconds: BeatMath.FlashSafety.entertainmentFrameNanoseconds)
-        return verdict
+        return GatedFrameOutcome(verdict: reservation.verdict, delivered: delivered)
     }
 
     /// Streams gate-held frames until the REQUESTED frame itself reaches the
@@ -8232,11 +8276,20 @@ final class UnifiedOrchestrator {
         brightness: Double
     ) async -> Bool {
         while !Task.isCancelled {
-            guard let verdict = await emitGatedFrame(
+            // A dead session is the one non-cancellation exit, and it is not a
+            // bail-out: there is no wire left for the frame to land on, so
+            // waiting for it to land would spin until the task is cancelled.
+            // The caller treats `false` exactly as it treats cancellation — it
+            // leaves the loop.
+            if await entClient.isTerminallyFailed { return false }
+            guard let outcome = await emitGatedFrame(
                 entClient: entClient, channelIDs: channelIDs, ledger: ledger,
                 x: x, y: y, brightness: brightness)
             else { return false }
-            if verdict.wasAdmitted { return true }
+            // `landedOnWire`, not `wasAdmitted`: a frame the ledger admitted and
+            // the transport dropped mid-reconnect changed no light, so the flash
+            // this call is waiting for has not happened yet.
+            if outcome.landedOnWire { return true }
         }
         return false
     }
@@ -8727,11 +8780,15 @@ final class UnifiedOrchestrator {
             // — so unlike the strike's own frames they DO pay into the budget.
             var strikeOnWire = false
             while !strikeOnWire {
-                guard let verdict = await emitGatedFrame(
+                if await entClient.isTerminallyFailed { return }
+                guard let outcome = await emitGatedFrame(
                     entClient: entClient, channelIDs: channelIDs, ledger: onsetLedger,
                     x: flashXY.x, y: flashXY.y, brightness: flashIntensity)
                 else { return }
-                strikeOnWire = verdict.wasAdmitted
+                // `landedOnWire`: a strike frame the transport dropped during a
+                // reconnect never lit the room, so the strike has not happened
+                // and the budget keeps paying ambient time for it.
+                strikeOnWire = outcome.landedOnWire
                 if !strikeOnWire { budget.noteAmbient() }
             }
 
