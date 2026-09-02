@@ -64,6 +64,20 @@ class ManualBridgeEndpointParserTest {
     }
 
     @Test
+    fun ipv4OctetWithLeadingZero_isRejected() {
+        // I-01: "010.0.0.1" is octal-ambiguous and would never match the discovered "10.0.0.1".
+        assertInvalid("010.0.0.1")
+        assertInvalid("192.168.01.1")
+        assertInvalid("192.168.1.007")
+    }
+
+    @Test
+    fun ipv4SingleZeroOctet_isStillAccepted() {
+        val endpoint = valid("10.0.0.1")
+        assertEquals("10.0.0.1", endpoint.host)
+    }
+
+    @Test
     fun ipv4OctetAbove255_isRejected() {
         assertInvalid("256.1.1.1")
     }

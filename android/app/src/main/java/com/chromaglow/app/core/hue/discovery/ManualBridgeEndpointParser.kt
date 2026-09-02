@@ -73,6 +73,9 @@ object ManualBridgeEndpointParser {
             part.isNotEmpty() &&
                 part.length <= 3 &&
                 part.all { it.isDigit() } &&
+                // Canonical dotted-decimal only: a leading zero ("010") is octal-ambiguous and
+                // would diverge from the discovered form of the same address (audit I-01).
+                (part.length == 1 || part[0] != '0') &&
                 part.toInt() in 0..255
         }
     }
