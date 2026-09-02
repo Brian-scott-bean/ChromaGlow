@@ -51,7 +51,8 @@ class ArchitectureBoundaryTest {
         val knownCompositionRootAccess = mapOf("feature/setup/SetupViewModel.kt" to setOf("app.LiveAppGraph"))
         val offenders = kotlinFiles().mapNotNull { f ->
             val path = rel(f)
-            val guarded = path.startsWith("feature/") || path.startsWith("ui/") || path.startsWith("data/") || path == "app/ChromaGlowApp.kt"
+            val guarded = path.startsWith("feature/") || path.startsWith("ui/") || path.startsWith("data/") ||
+                path in setOf("app/ChromaGlowApp.kt", "app/AppShellController.kt", "app/AppShellViewModel.kt", "MainActivity.kt")
             if (!guarded) return@mapNotNull null
             val text = f.readText()
             val hits = tokens.filter { text.contains(it) } - knownCompositionRootAccess[path].orEmpty()
