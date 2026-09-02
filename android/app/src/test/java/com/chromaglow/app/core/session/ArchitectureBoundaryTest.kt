@@ -37,17 +37,33 @@ class ArchitectureBoundaryTest {
         if (offenders.isNotEmpty()) fail("HueClipClient referenced outside core/session and core/hue/rest: ${offenders.map(::rel)}")
     }
 
+    /**
+     * A-03 / D-05: the boundary is un-bypassable, not merely un-imported. ANY occurrence (fully
+     * qualified references included) of a transport/credential/composition-root token in feature,
+     * ui, data or the router shell fails; only app/LiveAppGraph.kt (the composition root) is exempt.
+     */
     @Test
-    fun featureUiAndAppNeverImportTransportOrStreamPackages() {
-        val offenders = kotlinFiles().filter { f ->
+    fun featureUiDataAndShellNeverReferenceTransportCredentialsOrTheCompositionRoot() {
+        val tokens = listOf("HueClipClient", "ClipWriteBody", "putResource", "core.hue.rest", "core.hue.sse", "core.credentials", "app.LiveAppGraph", ".environment")
+        // CHARLES QUESTION for Adam: feature/setup/SetupViewModel.kt reaches LiveAppGraph.get(ctx).pairingWorkflow
+        // (Adam-owned, pre-existing). It is exempted for that ONE token only so the guard can land; the
+        // exemption should disappear when the workflow is injected instead.
+        val knownCompositionRootAccess = mapOf("feature/setup/SetupViewModel.kt" to setOf("app.LiveAppGraph"))
+        val offenders = kotlinFiles().mapNotNull { f ->
             val path = rel(f)
-            (path.startsWith("feature/") || path.startsWith("ui/") || path.startsWith("app/")) &&
-                f.readLines().any { line ->
-                    line.startsWith("import com.chromaglow.app.core.hue.rest") ||
-                        line.startsWith("import com.chromaglow.app.core.hue.sse")
-                }
+            val guarded = path.startsWith("feature/") || path.startsWith("ui/") || path.startsWith("data/") || path == "app/ChromaGlowApp.kt"
+            if (!guarded) return@mapNotNull null
+            val text = f.readText()
+            val hits = tokens.filter { text.contains(it) } - knownCompositionRootAccess[path].orEmpty()
+            if (hits.isEmpty()) null else "$path -> $hits"
         }
-        if (offenders.isNotEmpty()) fail("feature/ui/app code imports transport packages: ${offenders.map(::rel)}")
+        if (offenders.isNotEmpty()) fail("boundary bypass: $offenders")
+    }
+
+    @Test
+    fun sessionEnvironmentIsNotReachableFromOutsideCore() {
+        val source = File(root, "core/session/DefaultBridgeSession.kt").readText()
+        assertTrue("DefaultBridgeSession.environment must be internal", source.contains("internal val environment"))
     }
 
     @Test
