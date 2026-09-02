@@ -43,8 +43,12 @@ class LiveScenesViewModel(
     )
 
     fun activate(row: SceneRowUi) {
-        if (!row.enabled) return
-        if (row.activation == SceneActivation.ACTIVATING) return
+        // Guard on the CURRENT truth, not the row the UI captured: a stale row could re-send a
+        // scene that is already activating, or send to a bridge that has since gone offline.
+        val now = LiveScenesUiMapper.map(liveHome.home.value, pending.value, failed.value, clock())
+        val live = now.sections.flatMap { it.groups }.flatMap { it.scenes }.firstOrNull { it.key == row.key } ?: return
+        if (!live.enabled) return
+        if (live.activation == SceneActivation.ACTIVATING || live.activation == SceneActivation.ACTIVE) return
         failed.update { it - row.key }
         pending.update { it + row.key }
         commands.activateScene(row.target)
