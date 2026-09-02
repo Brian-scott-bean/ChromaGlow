@@ -28,8 +28,14 @@ object GroupDetailUiMapper {
             lights = members.map { lightCard(it, enabled, reason) },
             coverage = coverageLines(members),
             strip = strip,
+            groupColor = instrument(members.count { it.capabilities.color.isInteractive }, members.size),
+            groupWarmth = instrument(members.count { it.capabilities.colorTemperature.isInteractive }, members.size),
         )
     }
+
+    /** Hidden (null) unless at least one member reports the capability as KNOWN. */
+    fun instrument(capableCount: Int, total: Int): GroupInstrumentUi? =
+        if (capableCount > 0) GroupInstrumentUi(capableCount, total) else null
 
     fun memberLights(snapshot: BridgeSnapshot, group: GroupState): List<LightState> {
         val children = group.children.toSet()

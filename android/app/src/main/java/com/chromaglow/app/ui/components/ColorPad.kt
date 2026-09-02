@@ -50,6 +50,11 @@ fun ColorPad(
     onCommit: (CieXy) -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
+    /** Provenance copy under the pad; callers rendering a group override it honestly. */
+    footnote: String = when (gamut.source) {
+        GamutSource.BRIDGE -> "Colours limited to what this light reports it can show."
+        GamutSource.SPEC_DERIVED -> "Colour range derived from this light's gamut type; the bridge did not publish an exact range."
+    },
 ) {
     var preview by remember { mutableStateOf<CieXy?>(null) }
     val shown = preview ?: current
@@ -150,10 +155,7 @@ fun ColorPad(
             modifier = Modifier.testTag(COLOR_PAD_CHIPS_TAG),
         )
         Text(
-            text = when (gamut.source) {
-                GamutSource.BRIDGE -> "Colours limited to what this light reports it can show."
-                GamutSource.SPEC_DERIVED -> "Colour range derived from this light's gamut type; the bridge did not publish an exact range."
-            },
+            text = footnote,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

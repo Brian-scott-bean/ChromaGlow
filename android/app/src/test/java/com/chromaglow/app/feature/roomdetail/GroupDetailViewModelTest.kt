@@ -1,5 +1,6 @@
 package com.chromaglow.app.feature.roomdetail
 
+import com.chromaglow.app.core.hue.capability.CieXy
 import com.chromaglow.app.core.identity.TargetRef
 import com.chromaglow.app.core.session.ConnectionState
 import com.chromaglow.app.feature.testing.FakeLiveHome
@@ -71,6 +72,39 @@ class GroupDetailViewModelTest {
         vm.setGroupBrightness(g, 50)
         vm.setLightPower(l, true)
         vm.setLightBrightness(l, 50)
+        assertTrue(commands.calls.isEmpty())
+    }
+
+    @Test
+    fun groupColourAndWarmth_addressTheGroupKey_andClampWarmthToProtocol() {
+        val vm = vm()
+        vm.setGroupColor(CieXy(0.4, 0.4))
+        vm.setGroupColorTemperature(9000)
+        vm.setGroupColorTemperature(10)
+        assertEquals(
+            listOf<Call>(
+                Call.LightColor(TargetRef.Live(Fixtures.livingRoom), CieXy(0.4, 0.4)),
+                Call.LightCt(TargetRef.Live(Fixtures.livingRoom), 500),
+                Call.LightCt(TargetRef.Live(Fixtures.livingRoom), 153),
+            ),
+            commands.calls,
+        )
+    }
+
+    @Test
+    fun groupColour_refusedWhenNoMemberIsColourCapable() {
+        liveHome.emit(Fixtures.home())
+        val vm = GroupDetailViewModel(liveHome, commands, Fixtures.bedroom, clock = { 0L }) // CT-only member
+        vm.setGroupColor(CieXy(0.4, 0.4))
+        vm.setGroupColorTemperature(300)
+        assertEquals(listOf<Call>(Call.LightCt(TargetRef.Live(Fixtures.bedroom), 300)), commands.calls)
+    }
+
+    @Test
+    fun groupInstruments_refusedOffline() {
+        val vm = vm(ConnectionState.Offline)
+        vm.setGroupColor(CieXy(0.4, 0.4))
+        vm.setGroupColorTemperature(300)
         assertTrue(commands.calls.isEmpty())
     }
 }

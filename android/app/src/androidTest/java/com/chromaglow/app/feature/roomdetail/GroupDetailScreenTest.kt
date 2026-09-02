@@ -11,6 +11,7 @@ import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -22,7 +23,11 @@ import com.chromaglow.app.core.identity.ResourceKey
 import com.chromaglow.app.core.session.ConnectionState
 import com.chromaglow.app.feature.home.GroupCardUi
 import com.chromaglow.app.testing.Fixtures
+import com.chromaglow.app.ui.components.COLOR_PAD_TAG
 import com.chromaglow.app.ui.components.groupHeaderTag
+import com.chromaglow.app.ui.components.sectionTag
+import androidx.compose.ui.test.performScrollTo
+import com.chromaglow.app.core.hue.capability.CieXy
 import com.chromaglow.app.ui.components.groupSwitchTag
 import com.chromaglow.app.ui.components.lightFaderTag
 import com.chromaglow.app.ui.components.lightHeaderTag
@@ -45,6 +50,8 @@ class GroupDetailScreenTest {
     private val groupPowers = mutableListOf<Pair<GroupCardUi, Boolean>>()
     private val lightPowers = mutableListOf<Pair<LightCardUi, Boolean>>()
     private val lightBrightness = mutableListOf<Pair<LightCardUi, Int>>()
+    private val groupColours = mutableListOf<CieXy>()
+    private val groupMireks = mutableListOf<Int>()
 
     private fun show(state: GroupDetailUiState) {
         rule.setContent {
@@ -57,6 +64,8 @@ class GroupDetailScreenTest {
                     onGroupBrightness = { _, _ -> },
                     onLightPower = { l, on -> lightPowers += l to on },
                     onLightBrightness = { l, p -> lightBrightness += l to p },
+                    onGroupColor = { groupColours += it },
+                    onGroupColorTemperature = { groupMireks += it },
                 )
             }
         }
@@ -128,5 +137,34 @@ class GroupDetailScreenTest {
         rule.onNodeWithText("This group is no longer available").assertIsDisplayed()
         rule.onNodeWithTag(GROUP_DETAIL_BACK_TAG).performClick()
         assertEquals(1, backs)
+    }
+
+    @Test
+    fun groupInstruments_showCaption_andSend() {
+        show(living())
+        rule.onNodeWithTag(sectionTag(GROUP_COLOR_SECTION_ID)).performScrollTo().assertIsDisplayed()
+        rule.onNodeWithTag(groupInstrumentCaptionTag(GROUP_COLOR_SECTION_ID)).assertTextEquals("Applies to 1 of 2 lights")
+        rule.onNodeWithText(GROUP_COLOR_FOOTNOTE).assertIsDisplayed()
+        rule.onNodeWithTag(COLOR_PAD_TAG).assertIsDisplayed()
+        rule.onNodeWithTag(sectionTag(GROUP_WARMTH_SECTION_ID)).performScrollTo()
+        rule.onNodeWithTag(GROUP_WARMTH_FADER_TAG).performSemanticsAction(SemanticsActions.SetProgress) { it(300f) }
+        assertEquals(listOf(300), groupMireks)
+        rule.onNodeWithText(GROUP_WARMTH_FOOTNOTE).assertIsDisplayed()
+    }
+
+    @Test
+    fun groupInstruments_hiddenWhenNoMemberIsCapable() {
+        show(GroupDetailUiMapper.map(Fixtures.home(), Fixtures.bedroom, 0L)) // CT-only member
+        rule.onNodeWithTag(sectionTag(GROUP_COLOR_SECTION_ID)).assertDoesNotExist()
+        rule.onNodeWithTag(sectionTag(GROUP_WARMTH_SECTION_ID)).performScrollTo().assertIsDisplayed()
+        rule.onNodeWithTag(groupInstrumentCaptionTag(GROUP_WARMTH_SECTION_ID)).assertTextEquals("Applies to the 1 light")
+    }
+
+    @Test
+    fun groupInstruments_refuseInputOffline() {
+        show(living(ConnectionState.Offline))
+        rule.onNodeWithTag(sectionTag(GROUP_WARMTH_SECTION_ID)).performScrollTo()
+        rule.onNodeWithTag(GROUP_WARMTH_FADER_TAG).assert(SemanticsMatcher.keyNotDefined(SemanticsActions.SetProgress))
+        assertTrue(groupMireks.isEmpty())
     }
 }

@@ -22,16 +22,25 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import com.chromaglow.app.core.hue.capability.CieXy
+import com.chromaglow.app.core.hue.capability.Gamut
+import com.chromaglow.app.core.hue.capability.GamutType
+import com.chromaglow.app.core.hue.capability.MirekRange
 import com.chromaglow.app.core.identity.ResourceKey
 import com.chromaglow.app.core.session.GroupKind
 import com.chromaglow.app.feature.home.GroupCardUi
 import com.chromaglow.app.ui.components.ColorMath
+import com.chromaglow.app.ui.components.ColorPad
 import com.chromaglow.app.ui.components.ConnectionStrip
 import com.chromaglow.app.ui.components.EmptyState
 import com.chromaglow.app.ui.components.GroupCard
 import com.chromaglow.app.ui.components.LightCard
 import com.chromaglow.app.ui.components.LocalReduceMotion
+import com.chromaglow.app.ui.components.SectionCard
+import com.chromaglow.app.ui.components.StageFader
 import com.chromaglow.app.ui.components.rememberReduceMotion
+
+fun groupInstrumentCaptionTag(sectionId: String): String = "${sectionId}_caption"
 
 const val GROUP_DETAIL_LIST_TAG: String = "group_detail_list"
 const val GROUP_DETAIL_BACK_TAG: String = "group_detail_back"
@@ -54,10 +63,20 @@ fun GroupDetailRoute(
             onGroupBrightness = viewModel::setGroupBrightness,
             onLightPower = viewModel::setLightPower,
             onLightBrightness = viewModel::setLightBrightness,
+            onGroupColor = viewModel::setGroupColor,
+            onGroupColorTemperature = viewModel::setGroupColorTemperature,
             modifier = modifier,
         )
     }
 }
+
+const val GROUP_COLOR_SECTION_ID: String = "group_color"
+const val GROUP_WARMTH_SECTION_ID: String = "group_warmth"
+const val GROUP_WARMTH_FADER_TAG: String = "group_warmth_fader"
+const val GROUP_COLOR_FOOTNOTE: String =
+    "Shown in a standard colour range. Each light is limited to the colours it can actually show."
+const val GROUP_WARMTH_FOOTNOTE: String =
+    "Group range. Each light stays within its own colour-temperature limits."
 
 /**
  * Live Room/Zone detail: the group instrument (same card as Home, header not clickable), honest
@@ -73,6 +92,8 @@ fun GroupDetailScreen(
     onLightPower: (LightCardUi, Boolean) -> Unit,
     onLightBrightness: (LightCardUi, Int) -> Unit,
     modifier: Modifier = Modifier,
+    onGroupColor: (CieXy) -> Unit = {},
+    onGroupColorTemperature: (Int) -> Unit = {},
 ) {
     LazyColumn(
         modifier = modifier
@@ -130,6 +151,50 @@ fun GroupDetailScreen(
                 onBrightnessCommit = { onGroupBrightness(group, it) },
                 badge = if (group.kind == GroupKind.ZONE) "ZONE" else null,
             )
+        }
+        state.groupColor?.let { instrument ->
+            item(key = "group_color") {
+                SectionCard(id = GROUP_COLOR_SECTION_ID, title = "Colour", footnote = GROUP_COLOR_FOOTNOTE) {
+                    Text(
+                        text = instrument.caption,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.testTag(groupInstrumentCaptionTag(GROUP_COLOR_SECTION_ID)),
+                    )
+                    ColorPad(
+                        gamut = Gamut.specDerived(GamutType.C),
+                        current = null,
+                        label = "${group.name} colour",
+                        onPreview = {},
+                        onCommit = onGroupColor,
+                        enabled = group.controlsEnabled,
+                        footnote = "",
+                    )
+                }
+            }
+        }
+        state.groupWarmth?.let { instrument ->
+            item(key = "group_warmth") {
+                SectionCard(id = GROUP_WARMTH_SECTION_ID, title = "Warmth", footnote = GROUP_WARMTH_FOOTNOTE) {
+                    Text(
+                        text = instrument.caption,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.testTag(groupInstrumentCaptionTag(GROUP_WARMTH_SECTION_ID)),
+                    )
+                    StageFader(
+                        value = (MirekRange.PROTOCOL_MINIMUM + MirekRange.PROTOCOL_MAXIMUM) / 2,
+                        onPreview = {},
+                        onCommit = onGroupColorTemperature,
+                        label = "${group.name} warmth",
+                        range = MirekRange.PROTOCOL_MINIMUM..MirekRange.PROTOCOL_MAXIMUM,
+                        enabled = group.controlsEnabled,
+                        disabledReason = group.disabledReason,
+                        readout = ColorMath::mirekToKelvinLabel,
+                        modifier = Modifier.testTag(GROUP_WARMTH_FADER_TAG),
+                    )
+                }
+            }
         }
         if (state.coverage.isNotEmpty()) {
             item(key = "coverage") {

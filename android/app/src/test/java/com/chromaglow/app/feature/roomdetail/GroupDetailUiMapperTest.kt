@@ -107,4 +107,34 @@ class GroupDetailUiMapperTest {
         val bed = GroupDetailUiMapper.map(Fixtures.home(), Fixtures.bedroom, 0L)
         assertEquals(366, bed.lights.single().mirek)
     }
+
+    @Test
+    fun groupInstruments_presentOnlyWhenAMemberIsKnown_withHonestCaption() {
+        val living = GroupDetailUiMapper.map(Fixtures.home(), Fixtures.livingRoom, 0L)
+        assertEquals("Applies to 1 of 2 lights", living.groupColor!!.caption)
+        assertEquals("Applies to 1 of 2 lights", living.groupWarmth!!.caption)
+
+        val bed = GroupDetailUiMapper.map(Fixtures.home(), Fixtures.bedroom, 0L) // CT-only lamp
+        assertNull(bed.groupColor)
+        assertEquals("Applies to the 1 light", bed.groupWarmth!!.caption)
+
+        val whiteRoom = group(roomKey("w"), "Hall", listOf(com.chromaglow.app.feature.testing.lightKey("wl")), groupedKey("gw"))
+        val home = homeOf(
+            snapshot(rooms = listOf(whiteRoom), groupedLights = listOf(grouped(groupedKey("gw"))), lights = listOf(light("wl", "Bulb", capabilities = Caps.white()))) to ConnectionState.Connected,
+        )
+        val white = GroupDetailUiMapper.map(home, roomKey("w"), 0L)
+        assertNull(white.groupColor)
+        assertNull(white.groupWarmth)
+    }
+
+    @Test
+    fun groupInstruments_unknownMembersDoNotCount() {
+        val room = group(roomKey("u"), "Attic", listOf(com.chromaglow.app.feature.testing.lightKey("ul")), groupedKey("gu"))
+        val home = homeOf(
+            snapshot(rooms = listOf(room), groupedLights = listOf(grouped(groupedKey("gu"))), lights = listOf(light("ul", "Mystery", capabilities = Caps.unknown()))) to ConnectionState.Connected,
+        )
+        val state = GroupDetailUiMapper.map(home, roomKey("u"), 0L)
+        assertNull(state.groupColor)
+        assertNull(state.groupWarmth)
+    }
 }
