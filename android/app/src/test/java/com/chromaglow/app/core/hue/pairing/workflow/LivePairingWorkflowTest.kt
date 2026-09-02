@@ -10,10 +10,13 @@ import com.chromaglow.app.core.hue.pairing.transport.HuePairingClient
 import com.chromaglow.app.core.hue.pairing.transport.HuePairingResult
 import com.chromaglow.app.core.hue.pairing.transport.PairingFailureReason
 import com.chromaglow.app.core.hue.pairing.transport.PairingStage
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -81,6 +84,47 @@ class LivePairingWorkflowTest {
         assertEquals(PairingOutcome.Failed(PairingErrorReason.UNTRUSTED_OR_UNREACHABLE), outcome)
         assertTrue(store.tokens.isEmpty())
         assertTrue(registry.records.isEmpty())
+    }
+
+    @Test
+    fun pair_transportReturnsNonCanonicalBridgeId_isTypedFailure_andPersistsNothing() = runTest {
+        // The record guard must never throw out of pair(): an out-of-contract id from the
+        // transport becomes a typed failure with nothing persisted.
+        val client = FakeHuePairingClient(HuePairingResult.Success(bridgeId = "not-a-bridge-id", username = username))
+        val store = FakeCredentialStore()
+        val registry = FakeBridgeRegistry()
+
+        val outcome = LivePairingWorkflow(client, store, registry, io).pair(selected)
+
+        assertEquals(PairingOutcome.Failed(PairingErrorReason.BRIDGE_RESPONSE_INVALID), outcome)
+        assertTrue(store.tokens.isEmpty())
+        assertTrue(registry.records.isEmpty())
+        assertEquals(0, store.saveCount)
+    }
+
+    @Test
+    fun pair_cancelledDuringPersistence_stillCommitsBothOrNeither() = runTest {
+        // Cancellation between the token save and the metadata upsert must not strand a token
+        // without its record: the persistence critical section is NonCancellable.
+        val client = FakeHuePairingClient(HuePairingResult.Success(bridgeId, username))
+        val store = FakeCredentialStore()
+        val registry = GatedBridgeRegistry()
+        val workflow = LivePairingWorkflow(client, store, registry, io)
+
+        val job = launch { workflow.pair(selected) }
+        runCurrent()
+        // Token is saved and the workflow is parked inside the registry upsert.
+        assertEquals(username, store.tokens[bridgeId])
+        assertTrue(registry.records.isEmpty())
+
+        job.cancel()
+        registry.release()
+        runCurrent()
+
+        // Both halves committed despite the cancellation; no compensation ran.
+        assertEquals(listOf(pairedRecord), registry.records)
+        assertEquals(username, store.tokens[bridgeId])
+        assertEquals(0, store.deleteCount)
     }
 
     // --- pair: retryable + terminal mapping ---------------------------------------------------
@@ -209,6 +253,61 @@ class LivePairingWorkflowTest {
     }
 
     // --- forget ---------------------------------------------------------------------------------
+
+    // --- restore: classification never deletes ------------------------------------------------
+
+    @Test
+    fun restore_corruptRegistry_isUnavailable_andLeavesCredentialsUntouched() = runTest {
+        val store = FakeCredentialStore().apply { tokens[bridgeId] = username }
+        val registry = FakeBridgeRegistry().apply { readResult = BridgeRegistryResult.Corrupt }
+
+        val state = LivePairingWorkflow(noClient(), store, registry, io).restore()
+
+        assertEquals(RestoredState.Unavailable, state)
+        assertEquals(username, store.tokens[bridgeId])
+        assertEquals(0, store.deleteCount)
+    }
+
+    @Test
+    fun restore_recordWithoutToken_needsRepair_andDeletesNothing() = runTest {
+        val store = FakeCredentialStore()
+        val registry = FakeBridgeRegistry().apply { records.add(pairedRecord) }
+
+        val state = LivePairingWorkflow(noClient(), store, registry, io).restore()
+
+        assertEquals(RestoredState.NeedsRepair(pairedRecord), state)
+        assertEquals(listOf(pairedRecord), registry.records)
+        assertEquals(0, store.deleteCount)
+        assertEquals(0, registry.removeCount)
+    }
+
+    // --- resetMetadata ----------------------------------------------------------------------------
+
+    @Test
+    fun resetMetadata_clearsRegistryOnly_neverTouchesCredentials() = runTest {
+        val store = FakeCredentialStore().apply { tokens[bridgeId] = username }
+        val registry = FakeBridgeRegistry().apply {
+            records.add(pairedRecord)
+            readResult = BridgeRegistryResult.Corrupt
+        }
+
+        val result = LivePairingWorkflow(noClient(), store, registry, io).resetMetadata()
+
+        assertEquals(ForgetResult.Forgotten, result)
+        assertEquals(1, registry.clearCount)
+        assertTrue(registry.records.isEmpty())
+        assertEquals(username, store.tokens[bridgeId])
+        assertEquals(0, store.deleteCount)
+    }
+
+    @Test
+    fun resetMetadata_clearFails_returnsCleanupFailed() = runTest {
+        val registry = FakeBridgeRegistry().apply { failClear = true }
+
+        val result = LivePairingWorkflow(noClient(), FakeCredentialStore(), registry, io).resetMetadata()
+
+        assertEquals(ForgetResult.CleanupFailed, result)
+    }
 
     @Test
     fun forget_deletesTokenAndRecord_andIsIdempotent() = runTest {
@@ -345,6 +444,36 @@ class LivePairingWorkflowTest {
             if (failClear) return BridgeRegistryResult.Failure(IOException("clear failed"))
             records.clear()
             readResult = null
+            return BridgeRegistryResult.Success(Unit)
+        }
+    }
+
+    /** Registry whose upsert parks on a gate so a test can cancel the caller mid-persistence. */
+    private class GatedBridgeRegistry : BridgeRegistry {
+        val records = mutableListOf<PairedBridgeRecord>()
+        private val gate = CompletableDeferred<Unit>()
+
+        fun release() {
+            gate.complete(Unit)
+        }
+
+        override suspend fun bridges(): BridgeRegistryResult<List<PairedBridgeRecord>> =
+            BridgeRegistryResult.Success(records.toList())
+
+        override suspend fun upsert(record: PairedBridgeRecord): BridgeRegistryResult<Unit> {
+            gate.await()
+            records.removeAll { it.bridgeId == record.bridgeId }
+            records.add(record)
+            return BridgeRegistryResult.Success(Unit)
+        }
+
+        override suspend fun remove(bridgeId: String): BridgeRegistryResult<Unit> {
+            records.removeAll { it.bridgeId == bridgeId }
+            return BridgeRegistryResult.Success(Unit)
+        }
+
+        override suspend fun clear(): BridgeRegistryResult<Unit> {
+            records.clear()
             return BridgeRegistryResult.Success(Unit)
         }
     }

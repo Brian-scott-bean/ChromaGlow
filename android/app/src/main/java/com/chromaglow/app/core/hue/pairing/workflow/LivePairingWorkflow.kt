@@ -12,6 +12,7 @@ import com.chromaglow.app.core.hue.pairing.transport.PairingFailureReason
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 
 /**
@@ -61,8 +62,23 @@ class LivePairingWorkflow(
         }
 
         return when (result) {
-            is HuePairingResult.Success ->
-                persist(record = activeRecord(result.bridgeId, endpoint), username = result.username)
+            is HuePairingResult.Success -> {
+                // The record guard (canonical id, non-blank name/host) can only fail if the
+                // transport handed back something outside its contract; that is a typed,
+                // persist-nothing failure, never an exception out of pair().
+                val record = try {
+                    activeRecord(result.bridgeId, endpoint)
+                } catch (_: IllegalArgumentException) {
+                    return PairingOutcome.Failed(PairingErrorReason.BRIDGE_RESPONSE_INVALID)
+                }
+                // The two-phase commit is a critical section: a cancelled caller (navigation,
+                // process teardown) must never leave token-without-metadata or half state behind.
+                // NonCancellable is scoped to persistence only; the network call above stays
+                // cancellable.
+                withContext(NonCancellable) {
+                    persist(record = record, username = result.username)
+                }
+            }
 
             HuePairingResult.LinkButtonNotPressed -> PairingOutcome.LinkButtonRequired
 
@@ -99,6 +115,13 @@ class LivePairingWorkflow(
     /**
      * Reconstruct the paired state at startup. Only a record paired with a readable token is a
      * valid [RestoredState.Paired] session.
+     *
+     * Credential/metadata mismatches are CLASSIFIED, never repaired destructively: a record whose
+     * token is missing or unreadable is [RestoredState.NeedsRepair]; unreadable metadata is
+     * [RestoredState.Unavailable]. This method never deletes a credential or a record — a corrupt
+     * or transiently unreadable store must not destroy a valid token. Deletion happens only through
+     * the failed-pairing compensation in [pair], the user's explicit [forget], or the user's
+     * explicit [resetMetadata].
      */
     suspend fun restore(): RestoredState {
         val active = when (val bridges = bridgeRegistry.bridges()) {
@@ -132,6 +155,18 @@ class LivePairingWorkflow(
             else -> ForgetResult.CleanupFailed
         }
     }
+
+    /**
+     * Explicit, user-authorised local reset of the bridge METADATA store for the
+     * [RestoredState.Unavailable] case, where no bridge id is readable and so [forget] has no
+     * target. Metadata only: no credential is touched. Any token left behind is inert (nothing
+     * references it) and is overwritten by the next successful pairing of the same bridge.
+     */
+    suspend fun resetMetadata(): ForgetResult =
+        when (bridgeRegistry.clear()) {
+            is BridgeRegistryResult.Success -> ForgetResult.Forgotten
+            else -> ForgetResult.CleanupFailed
+        }
 
     private fun activeRecord(bridgeId: String, endpoint: BridgeEndpoint): PairedBridgeRecord =
         PairedBridgeRecord(
