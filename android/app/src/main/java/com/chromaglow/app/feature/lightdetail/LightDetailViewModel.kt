@@ -29,11 +29,12 @@ class LightDetailViewModel(
     private val commands: HomeCommands,
     val lightKey: ResourceKey,
     private val register: EffectSafetyRegister = DefaultEffectSafetyRegister,
-    noticeAcknowledged: Boolean = PhotosensitivityNotice.acknowledged,
+    /** Durable store injected by the shell; the in-memory default keeps un-wired callers honest. */
+    private val noticeStore: NoticeAcknowledgementStore = InMemoryNoticeAcknowledgementStore(),
     private val clock: () -> Long = { System.currentTimeMillis() },
 ) : ViewModel() {
 
-    private val edits = MutableStateFlow(LightEdits(noticeAcknowledged = noticeAcknowledged))
+    private val edits = MutableStateFlow(LightEdits(noticeAcknowledged = noticeStore.isAcknowledged()))
 
     val uiState: StateFlow<LightDetailUiState> = combine(liveHome.home, edits) { home, e ->
         LightDetailUiMapper.map(home, lightKey, e, register, clock())
@@ -170,7 +171,7 @@ class LightDetailViewModel(
     }
 
     fun acknowledgeNotice() {
-        PhotosensitivityNotice.acknowledged = true
+        noticeStore.acknowledge()
         edits.update { it.copy(noticeAcknowledged = true) }
     }
 }
