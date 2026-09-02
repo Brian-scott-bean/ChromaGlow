@@ -44,6 +44,58 @@ class PairedBridgeCodecTest {
         assertFalse(serialized.contains("clientkey"))
     }
 
+    // --- recoverable decode --------------------------------------------------------------------
+
+    @Test
+    fun decodeRecoverable_allValid_returnsAllWithZeroSkipped() {
+        val recovered = PairedBridgeCodec.decodeRecoverable(PairedBridgeCodec.encode(listOf(recordA, recordB)))
+
+        assertEquals(listOf(recordA, recordB), recovered.records)
+        assertEquals(0, recovered.skipped)
+    }
+
+    @Test
+    fun decodeRecoverable_oneDamagedEntry_keepsTheOthers_andCountsIt() {
+        val raw = """[
+            {"bridgeId":"001788FFFE112233","name":"Bridge A","host":"192.168.1.10","port":443,"isActive":true},
+            {"bridgeId":"not-hex","name":"Broken","host":"x","port":443,"isActive":false},
+            "not an object",
+            {"bridgeId":"AABBCCDDEEFF0011","name":"Bridge B","host":"bridge-b.local","port":8443,"isActive":false}
+        ]"""
+
+        val recovered = PairedBridgeCodec.decodeRecoverable(raw)
+
+        assertEquals(listOf(recordA, recordB), recovered.records)
+        assertEquals(2, recovered.skipped)
+    }
+
+    @Test
+    fun decodeRecoverable_duplicateBridgeId_keepsFirst_andCountsTheRest() {
+        val dupe = recordA.copy(name = "Later duplicate")
+        val recovered = PairedBridgeCodec.decodeRecoverable(PairedBridgeCodec.encode(listOf(recordA, dupe)))
+
+        assertEquals(listOf(recordA), recovered.records)
+        assertEquals(1, recovered.skipped)
+    }
+
+    @Test
+    fun decodeRecoverable_nonArrayRoot_stillThrowsMalformed() {
+        assertThrows(MalformedMetadataException::class.java) {
+            PairedBridgeCodec.decodeRecoverable("""{"bridgeId":"001788FFFE112233"}""")
+        }
+        assertThrows(MalformedMetadataException::class.java) {
+            PairedBridgeCodec.decodeRecoverable("{ corrupt")
+        }
+    }
+
+    @Test
+    fun decodeStrict_stillFailsOnOneDamagedEntry() {
+        // The strict variant keeps all-or-nothing semantics for round-trip checks.
+        assertThrows(MalformedMetadataException::class.java) {
+            PairedBridgeCodec.decode("""[{"bridgeId":"001788FFFE112233","name":"A","host":"h","port":443,"isActive":true},{"x":1}]""")
+        }
+    }
+
     @Test
     fun decode_invalidJson_throwsMalformed() {
         assertThrows(MalformedMetadataException::class.java) {

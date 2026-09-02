@@ -61,4 +61,11 @@ interface BridgeRegistry {
      * Returns [BridgeRegistryResult.Success] or [BridgeRegistryResult.Failure] on an IO error.
      */
     suspend fun remove(bridgeId: String): BridgeRegistryResult<Unit>
+
+    /**
+     * Remove every record, including metadata that could not be decoded at all. This is the
+     * explicit, user-authorised local reset for an unreadable store; it touches NO credential —
+     * secrets are never deleted by the registry. Idempotent and retryable.
+     */
+    suspend fun clear(): BridgeRegistryResult<Unit>
 }

@@ -36,11 +36,15 @@ class DataStoreBridgeRegistry internal constructor(
             return BridgeRegistryResult.Failure(cause)
         }
         val raw = preferences[RECORDS_KEY] ?: return BridgeRegistryResult.Success(emptyList())
-        return try {
-            BridgeRegistryResult.Success(PairedBridgeCodec.decode(raw))
+        val recovered = try {
+            PairedBridgeCodec.decodeRecoverable(raw)
         } catch (cause: MalformedMetadataException) {
-            BridgeRegistryResult.Corrupt
+            return BridgeRegistryResult.Corrupt
         }
+        // Per-element recovery: damaged entries are dropped and the readable ones are returned.
+        // Only a store with entries and NOTHING readable is reported as Corrupt.
+        if (recovered.records.isEmpty() && recovered.skipped > 0) return BridgeRegistryResult.Corrupt
+        return BridgeRegistryResult.Success(recovered.records)
     }
 
     override suspend fun upsert(record: PairedBridgeRecord): BridgeRegistryResult<Unit> =
@@ -52,10 +56,14 @@ class DataStoreBridgeRegistry internal constructor(
     override suspend fun remove(bridgeId: String): BridgeRegistryResult<Unit> =
         mutate { current -> current.filterNot { it.bridgeId == bridgeId } }
 
+    override suspend fun clear(): BridgeRegistryResult<Unit> =
+        mutate { emptyList() }
+
     /**
-     * Authoritatively rewrites the stored list. A previously corrupt blob is treated as empty (and
-     * thus discarded) so writes — re-pairing after damage, or forgetting to clear corruption —
-     * always make progress. IO errors are surfaced as [BridgeRegistryResult.Failure].
+     * Authoritatively rewrites the stored list. Readable entries of a partially damaged blob are
+     * preserved through the write (per-element recovery); a blob with no readable root is treated
+     * as empty so writes — re-pairing after damage, or forgetting to clear corruption — always
+     * make progress. IO errors are surfaced as [BridgeRegistryResult.Failure].
      */
     private suspend fun mutate(
         transform: (List<PairedBridgeRecord>) -> List<PairedBridgeRecord>,
@@ -63,7 +71,8 @@ class DataStoreBridgeRegistry internal constructor(
         try {
             dataStore.edit { preferences ->
                 val current = preferences[RECORDS_KEY]?.let { raw ->
-                    runCatching { PairedBridgeCodec.decode(raw) }.getOrDefault(emptyList())
+                    runCatching { PairedBridgeCodec.decodeRecoverable(raw).records }
+                        .getOrDefault(emptyList())
                 } ?: emptyList()
                 val next = transform(current)
                 if (next.isEmpty()) {

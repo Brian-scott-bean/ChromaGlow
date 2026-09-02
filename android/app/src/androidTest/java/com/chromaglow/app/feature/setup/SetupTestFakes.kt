@@ -52,8 +52,11 @@ class FakeCredentialStore : BridgeCredentialStore {
 class FakeBridgeRegistry : BridgeRegistry {
     val records = mutableListOf<PairedBridgeRecord>()
 
+    /** When set, [bridges] returns this instead of the record list (e.g. to simulate Corrupt). */
+    var readResult: BridgeRegistryResult<List<PairedBridgeRecord>>? = null
+
     override suspend fun bridges(): BridgeRegistryResult<List<PairedBridgeRecord>> =
-        BridgeRegistryResult.Success(records.toList())
+        readResult ?: BridgeRegistryResult.Success(records.toList())
 
     override suspend fun upsert(record: PairedBridgeRecord): BridgeRegistryResult<Unit> {
         records.removeAll { it.bridgeId == record.bridgeId }
@@ -63,6 +66,12 @@ class FakeBridgeRegistry : BridgeRegistry {
 
     override suspend fun remove(bridgeId: String): BridgeRegistryResult<Unit> {
         records.removeAll { it.bridgeId == bridgeId }
+        return BridgeRegistryResult.Success(Unit)
+    }
+
+    override suspend fun clear(): BridgeRegistryResult<Unit> {
+        records.clear()
+        readResult = null
         return BridgeRegistryResult.Success(Unit)
     }
 }

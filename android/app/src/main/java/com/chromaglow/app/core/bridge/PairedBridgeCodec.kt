@@ -45,30 +45,61 @@ internal object PairedBridgeCodec {
         return array.toString()
     }
 
-    /** Parse [raw] into records, or throw [MalformedMetadataException] when it is not decodable. */
-    fun decode(raw: String): List<PairedBridgeRecord> {
+    /**
+     * Recoverable parse: a structurally valid array is decoded element by element, so one damaged
+     * entry hides neither the others nor the Forget path (Baylee convergence finding). Invalid
+     * entries are counted in [RecoveredMetadata.skipped]; duplicate ids keep the first occurrence.
+     * A root that is not a JSON array (or not JSON at all) still throws [MalformedMetadataException]
+     * — nothing can be recovered from it.
+     */
+    fun decodeRecoverable(raw: String): RecoveredMetadata {
+        val array = parseArrayRoot(raw)
+        val records = ArrayList<PairedBridgeRecord>(array.size)
+        val seen = HashSet<String>()
+        var skipped = 0
+        for (element in array) {
+            val record = try {
+                decodeEntry(element)
+            } catch (_: MalformedMetadataException) {
+                skipped += 1
+                continue
+            }
+            if (seen.add(record.bridgeId)) records.add(record) else skipped += 1
+        }
+        return RecoveredMetadata(records = records, skipped = skipped)
+    }
+
+    /**
+     * Strict parse: [raw] must be entirely valid, or [MalformedMetadataException] is thrown. Kept
+     * for callers that need all-or-nothing semantics (tests, round-trip checks).
+     */
+    fun decode(raw: String): List<PairedBridgeRecord> =
+        parseArrayRoot(raw).map { element -> decodeEntry(element) }
+
+    private fun parseArrayRoot(raw: String): JsonArray {
         val root = try {
             Json.parseToJsonElement(raw)
         } catch (cause: Exception) {
             throw MalformedMetadataException("metadata is not valid JSON", cause)
         }
-        val array = root as? JsonArray
+        return root as? JsonArray
             ?: throw MalformedMetadataException("metadata root is not a JSON array")
-        return array.map { element ->
-            val obj = element as? JsonObject
-                ?: throw MalformedMetadataException("metadata entry is not a JSON object")
-            try {
-                PairedBridgeRecord(
-                    bridgeId = obj.requireString(FIELD_BRIDGE_ID),
-                    name = obj.requireString(FIELD_NAME),
-                    host = obj.requireString(FIELD_HOST),
-                    port = obj.requireInt(FIELD_PORT),
-                    isActive = obj.requireBoolean(FIELD_IS_ACTIVE),
-                )
-            } catch (cause: IllegalArgumentException) {
-                // Covers both a violated record guard and a field-extraction failure below.
-                throw MalformedMetadataException("metadata entry is invalid", cause)
-            }
+    }
+
+    private fun decodeEntry(element: kotlinx.serialization.json.JsonElement): PairedBridgeRecord {
+        val obj = element as? JsonObject
+            ?: throw MalformedMetadataException("metadata entry is not a JSON object")
+        return try {
+            PairedBridgeRecord(
+                bridgeId = obj.requireString(FIELD_BRIDGE_ID),
+                name = obj.requireString(FIELD_NAME),
+                host = obj.requireString(FIELD_HOST),
+                port = obj.requireInt(FIELD_PORT),
+                isActive = obj.requireBoolean(FIELD_IS_ACTIVE),
+            )
+        } catch (cause: IllegalArgumentException) {
+            // Covers both a violated record guard and a field-extraction failure below.
+            throw MalformedMetadataException("metadata entry is invalid", cause)
         }
     }
 
@@ -95,6 +126,12 @@ internal object PairedBridgeCodec {
         }
     }
 }
+
+/** Result of [PairedBridgeCodec.decodeRecoverable]: the usable records plus how many were dropped. */
+internal data class RecoveredMetadata(
+    val records: List<PairedBridgeRecord>,
+    val skipped: Int,
+)
 
 /** Thrown when stored bridge metadata cannot be decoded into valid records (fail closed). */
 internal class MalformedMetadataException(

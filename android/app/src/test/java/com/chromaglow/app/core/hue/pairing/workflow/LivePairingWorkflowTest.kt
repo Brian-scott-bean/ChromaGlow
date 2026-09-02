@@ -317,8 +317,10 @@ class LivePairingWorkflowTest {
         var readResult: BridgeRegistryResult<List<PairedBridgeRecord>>? = null
         var failUpsert = false
         var failRemove = false
+        var failClear = false
         var upsertCount = 0
         var removeCount = 0
+        var clearCount = 0
 
         override suspend fun bridges(): BridgeRegistryResult<List<PairedBridgeRecord>> =
             readResult ?: BridgeRegistryResult.Success(records.toList())
@@ -335,6 +337,14 @@ class LivePairingWorkflowTest {
             removeCount++
             if (failRemove) return BridgeRegistryResult.Failure(IOException("remove failed"))
             records.removeAll { it.bridgeId == bridgeId }
+            return BridgeRegistryResult.Success(Unit)
+        }
+
+        override suspend fun clear(): BridgeRegistryResult<Unit> {
+            clearCount++
+            if (failClear) return BridgeRegistryResult.Failure(IOException("clear failed"))
+            records.clear()
+            readResult = null
             return BridgeRegistryResult.Success(Unit)
         }
     }

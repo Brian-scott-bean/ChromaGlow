@@ -128,6 +128,58 @@ class DataStoreBridgeRegistryTest {
     }
 
     @Test
+    fun oneDamagedEntry_readsTheRemainingRecords_notCorrupt() = runTest {
+        withRegistry { registry, dataStore ->
+            val damaged = """[
+                {"bridgeId":"001788FFFE112233","name":"Bridge A","host":"192.168.1.10","port":443,"isActive":true},
+                {"bridgeId":"bad","name":"Broken","host":"x","port":443,"isActive":false}
+            ]"""
+            dataStore.edit { it[recordsKey] = damaged }
+
+            assertEquals(BridgeRegistryResult.Success(listOf(recordA)), registry.bridges())
+        }
+    }
+
+    @Test
+    fun onlyDamagedEntries_readsCorrupt() = runTest {
+        withRegistry { registry, dataStore ->
+            dataStore.edit { it[recordsKey] = """[{"bridgeId":"bad"}]""" }
+
+            assertEquals(BridgeRegistryResult.Corrupt, registry.bridges())
+        }
+    }
+
+    @Test
+    fun upsert_overPartiallyDamagedMetadata_preservesReadableRecords() = runTest {
+        withRegistry { registry, dataStore ->
+            val damaged = """[
+                {"bridgeId":"001788FFFE112233","name":"Bridge A","host":"192.168.1.10","port":443,"isActive":true},
+                {"garbage":true}
+            ]"""
+            dataStore.edit { it[recordsKey] = damaged }
+
+            assertEquals(BridgeRegistryResult.Success(Unit), registry.upsert(recordB))
+
+            // Bridge A survived the write; only the damaged entry was dropped.
+            assertEquals(setOf(recordA, recordB), loadedBridges(registry).toSet())
+        }
+    }
+
+    @Test
+    fun clear_removesEverything_includingUnreadableMetadata_andIsIdempotent() = runTest {
+        withRegistry { registry, dataStore ->
+            dataStore.edit { it[recordsKey] = "{ corrupt" }
+            assertEquals(BridgeRegistryResult.Corrupt, registry.bridges())
+
+            assertEquals(BridgeRegistryResult.Success(Unit), registry.clear())
+            assertEquals(BridgeRegistryResult.Success(emptyList<PairedBridgeRecord>()), registry.bridges())
+            assertEquals(null, dataStore.data.first()[recordsKey])
+
+            assertEquals(BridgeRegistryResult.Success(Unit), registry.clear())
+        }
+    }
+
+    @Test
     fun storedBlob_isTheNonSecretRecordListOnly() = runTest {
         withRegistry { registry, dataStore ->
             registry.upsert(recordA)
