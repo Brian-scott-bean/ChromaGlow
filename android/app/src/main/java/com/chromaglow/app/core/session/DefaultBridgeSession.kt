@@ -102,6 +102,13 @@ class DefaultBridgeSession(
     @Volatile
     private var eventsDuringLoad = false
 
+    /** The load now running is the single follow-up a stale load earned; events during it never arm another (B-17). */
+    @Volatile
+    private var currentLoadIsFollowUp = false
+
+    @Volatile
+    private var nextLoadIsFollowUp = false
+
     internal val environment: SessionEnvironment = SessionEnvironment(
         bridgeId = bridgeId,
         scope = scope,
@@ -111,7 +118,7 @@ class DefaultBridgeSession(
         clock = clock,
         requestRefresh = ::requestRefresh,
         reportUnauthorized = ::onUnauthorized,
-        onStreamEvent = { if (loadInFlight) eventsDuringLoad = true },
+        onStreamEvent = { if (loadInFlight && !currentLoadIsFollowUp) eventsDuringLoad = true },
     )
 
     private val coordinator: MutationCoordinator = coordinatorFactory(environment)
@@ -177,6 +184,8 @@ class DefaultBridgeSession(
             if (credentials.state != CredentialState.Loaded) continue
             loadInFlight = true
             eventsDuringLoad = false
+            currentLoadIsFollowUp = nextLoadIsFollowUp
+            nextLoadIsFollowUp = false
             val outcome = try {
                 loader.load()
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
@@ -192,9 +201,11 @@ class DefaultBridgeSession(
                     store.update { current -> environment.authority.overlayPending(outcome.snapshot, current, clock.nowMillis()) }
                     connectionState.value = ConnectionState.Connected
                     cache.write(outcome.snapshot)
-                    if (eventsDuringLoad) {
-                        // Newer stream truth arrived while the older GET was in flight: reconcile once (B-06).
+                    if (eventsDuringLoad && !currentLoadIsFollowUp) {
+                        // Newer stream truth changed the snapshot while the older GET was in flight:
+                        // reconcile ONCE (B-06); the follow-up itself never earns another (B-17).
                         eventsDuringLoad = false
+                        nextLoadIsFollowUp = true
                         requestRefresh(RefreshReason.STREAM_RECONNECTED)
                     }
                 }
