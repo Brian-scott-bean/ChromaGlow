@@ -1,6 +1,6 @@
 # Android Live Capability Convergence — Physical Hardware Test Packet
 
-Prepared by Adam (orchestrator) for Brian, 2026-09-02. Automated/adversarial validation of
+Prepared by Adam (orchestrator) for Brian, 2026-09-02. REVISED after the follow-up core fixes (B-17 reload cap, B-18 cache clear, bridge-rejection settlement, wider boundary guard): the versionCode 3 APK recorded earlier is SUPERSEDED — install only the versionCode 4 artifact whose hash appears below. Automated/adversarial validation of
 `feat/android-live-capability-convergence` is complete; nothing below is proven until Brian observes
 it on real bridges and lamps. Record results per row: PASS / FAIL (what happened) / N/A (lamp does
 not advertise it). Any FAIL in H9 or H12-C is a merge blocker.
@@ -10,10 +10,10 @@ not advertise it). Any FAIL in H9 or H12-C is a merge blocker.
 | Field | Value |
 |---|---|
 | Feature branch | `feat/android-live-capability-convergence` |
-| HEAD | `c66205e8f97e62c38aec0280b13fd6dca7859319 (code head; the docs commit on top does not change the APK)` |
-| versionCode / versionName | 3 / 1.0 |
+| HEAD | `6d53925731bc3e5af72047a1fcb00834a2271f39` (code head; the docs commit on top does not change the APK) |
+| versionCode / versionName | 4 / 1.0 |
 | Debug APK path | `android/app/build/outputs/apk/debug/app-debug.apk` |
-| APK SHA-256 | `5b6e93098ee82f6ea9a1b8a148e76e699aac948cd67678ef11d2460c76cff861` |
+| APK SHA-256 | `041e1be77da832b26aba314b9ede2da33da44c52484045c0ec31dc4d80759345` |
 | Build command | `cd android && ./gradlew clean lintDebug testDebugUnitTest assembleDebug` (JDK 21 at `/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home`) |
 | Install | `adb install -r android/app/build/outputs/apk/debug/app-debug.apk` then confirm Settings → About shows 1.0 |
 

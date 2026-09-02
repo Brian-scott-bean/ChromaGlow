@@ -412,13 +412,18 @@ class DefaultMutationCoordinator(
                     is ClipError.Timeout -> if (e.afterTransmission) DeliveryOutcome.AMBIGUOUS_AFTER_TRANSMISSION else DeliveryOutcome.FAILED_BEFORE_TRANSMISSION
                     is ClipError.Transport -> if (e.afterTransmission) DeliveryOutcome.AMBIGUOUS_AFTER_TRANSMISSION else DeliveryOutcome.FAILED_BEFORE_TRANSMISSION
                     ClipError.MissingCredentials, ClipError.TlsIdentity -> DeliveryOutcome.FAILED_BEFORE_TRANSMISSION
-                    is ClipError.Unauthorized, ClipError.RateLimited, is ClipError.BridgeRejected -> DeliveryOutcome.NOT_APPLIED
+                    is ClipError.Unauthorized, ClipError.RateLimited -> DeliveryOutcome.NOT_APPLIED
+                    // A 2xx with errors[] and no data: the bridge took the request; whether any lamp moved is not
+                    // provable from here, so the LEDGER treats it as ambiguous (stamp kept, wire unknown). The UI
+                    // still rolls back and reports REJECTED_BY_BRIDGE.
+                    is ClipError.BridgeRejected -> DeliveryOutcome.AMBIGUOUS_AFTER_TRANSMISSION
                     is ClipError.Http -> if (e.status in 400..499) DeliveryOutcome.NOT_APPLIED else DeliveryOutcome.AMBIGUOUS_AFTER_TRANSMISSION
                     is ClipError.Decode -> DeliveryOutcome.AMBIGUOUS_AFTER_TRANSMISSION
                 }
                 ledger.settle(verdict.ticket, outcome, at)
                 (e as? ClipError.Unauthorized)?.let { env.reportUnauthorized(it.status) }
-                val rolledBack = if (outcome == DeliveryOutcome.AMBIGUOUS_AFTER_TRANSMISSION) {
+                val keepOverlay = outcome == DeliveryOutcome.AMBIGUOUS_AFTER_TRANSMISSION && e !is ClipError.BridgeRejected
+                val rolledBack = if (keepOverlay) {
                     // The lamp may hold the new value: keep the overlay, drop the fence, let truth reconcile.
                     authority.release(w.target, w.field, w.token)
                     scheduleRefresh()

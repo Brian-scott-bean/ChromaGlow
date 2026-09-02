@@ -75,8 +75,10 @@ class EventStreamRunner(
                             everConnected = true
                         }
                         is SseFrame.Data -> {
-                            env.store.update { s -> reducer(s, frame.payload, authority, env.clock.nowMillis()) }
-                            env.onStreamEvent()
+                            val before = env.store.value
+                            val after = env.store.update { s -> reducer(s, frame.payload, authority, env.clock.nowMillis()) }
+                            // Only a frame that actually changed the snapshot can make an in-flight load stale (B-17).
+                            if (after !== before) env.onStreamEvent()
                         }
                     }
                 }
