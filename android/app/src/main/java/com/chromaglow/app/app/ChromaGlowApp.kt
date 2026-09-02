@@ -69,6 +69,8 @@ private val LIVE_DESTINATIONS = setOf(
 fun ChromaGlowApp() {
     val context = LocalContext.current.applicationContext
     val shellViewModel: AppShellViewModel = viewModel(factory = AppShellViewModel.factory(context))
+    // Durable, local-only acknowledgement of the photosensitivity notice (C-2).
+    val noticeStore = remember(context) { SharedPreferencesNoticeStore(context) }
     val controller = shellViewModel.controller
     val session by controller.session.collectAsState()
     val startup by controller.startup.collectAsState()
@@ -207,7 +209,7 @@ fun ChromaGlowApp() {
             } else {
                 LightDetailRoute(
                     viewModel = liveViewModel(home, "light:${lightKey.composeKey}") {
-                        LightDetailViewModel(home, commands, lightKey)
+                        LightDetailViewModel(home, commands, lightKey, noticeStore = noticeStore)
                     },
                     onBack = { destination = ChromaGlowDestination.GroupDetail },
                 )
