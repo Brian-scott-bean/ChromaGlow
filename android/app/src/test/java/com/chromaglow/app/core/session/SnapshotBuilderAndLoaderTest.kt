@@ -140,9 +140,9 @@ class SnapshotBuilderAndLoaderTest {
     @Test
     fun loader_anyOtherFailure_isFailed_andNothingIsAccepted() = runTest {
         val fake = FakeHueClipTransport(bridgeA)
-        fake.fail(ResourceType.LIGHT, ClipError.Transport)
+        fake.fail(ResourceType.LIGHT, ClipError.Transport())
         val loader = BridgeLoader(fake)
-        assertEquals(LoadOutcome.Failed(ClipError.Transport), loader.load())
+        assertEquals(LoadOutcome.Failed(ClipError.Transport()), loader.load())
         assertEquals(0L, loader.acceptedGeneration)
     }
 

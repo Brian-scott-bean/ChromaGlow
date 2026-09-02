@@ -8,8 +8,13 @@ package com.chromaglow.app.core.hue.rest
 sealed interface ClipError {
     data object MissingCredentials : ClipError
 
-    /** Connection-level failure (reset, DNS, TLS handshake). Cause intentionally not retained. */
-    data object Transport : ClipError
+    /**
+     * Connection-level failure (reset, EOF, DNS, TLS handshake). Cause intentionally not retained.
+     * [afterTransmission] is true when the request body had already been handed to the socket
+     * (a reset while awaiting the response): the bridge MAY have applied it, so safety accounting
+     * treats it exactly like [Timeout] with `afterTransmission = true`.
+     */
+    data class Transport(val afterTransmission: Boolean = false) : ClipError
 
     /**
      * The call timed out. [afterTransmission] is true when the request body had been handed to
