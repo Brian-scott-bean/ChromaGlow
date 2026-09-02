@@ -188,6 +188,19 @@ class LiveHomeTest {
     }
 
     @Test
+    fun b18_lastBridgeForget_removeThenImmediateClose_stillClearsTheCache() = runTest {
+        val h = Harness(this)
+        h.registry.records += h.record(bridgeA)
+        h.credentials.tokens[bridgeA.value] = "tok-a-0000000000"
+        h.home.start()
+        advanceUntilIdle()
+        h.home.remove(bridgeA)
+        h.home.close()               // the shell closes the home right after the last Forget
+        advanceUntilIdle()
+        assertEquals(1, h.caches.getValue(bridgeA).clearCount)
+    }
+
+    @Test
     fun b11_removeDuringStart_neverResurrectsTheBridge() = runTest {
         val h = Harness(this)
         h.registry.records += h.record(bridgeA)
