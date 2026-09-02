@@ -108,6 +108,69 @@ final class LookPreviewMathTests: XCTestCase {
         XCTAssertEqual(LookPreviewMath.color(spec: s, phase: 0.3), Color.purple)
     }
 
+    // ── Idle vs running rendering (static idle frame, animated running) ──
+
+    /// Idle cards render one frame at a fixed time: deterministic (same
+    /// input → same output), strictly positive, and not the degenerate t = 0
+    /// frame every card would otherwise share.
+    func testIdlePreviewHasDeterministicRepresentativeFrozenTime() {
+        let frozen = LookPreviewMath.frozenTime
+        XCTAssertGreaterThan(frozen, 0)
+        XCTAssertEqual(frozen, LookPreviewMath.frozenTime)
+
+        let s = spec(pattern: .wave, shape: .breathe, speed: 40, bpm: 60)
+        let a = LookPreviewMath.sample(index: 0, count: 8, spec: s, time: frozen)
+        let b = LookPreviewMath.sample(index: 0, count: 8, spec: s, time: frozen)
+        XCTAssertEqual(a.phase, b.phase)
+        XCTAssertEqual(a.level, b.level)
+
+        // Representative, not degenerate: the default 60 BPM breathe sits at
+        // mid-brightness, and the frame differs from t = 0 across the strip.
+        let level0 = LookPreviewMath.sample(index: 0, count: 8, spec: s, time: 0).level
+        XCTAssertNotEqual(a.level, level0, accuracy: 0.01)
+        XCTAssertTrue((0.2...0.8).contains(a.level),
+                      "frozen frame should be mid-cycle, got \(a.level)")
+    }
+
+    /// Idle parameters sit inside the Effects/Live at-rest band and well
+    /// below running on every axis that reads as visual noise.
+    func testIdleRenderingParametersAreSubstantiallyQuieterThanRunning() {
+        let idleIntensity = LookPreviewMath.canvasIntensity(isRunning: false)
+        let runIntensity  = LookPreviewMath.canvasIntensity(isRunning: true)
+        // Peak canvas alpha is intensity × (0.35 + 0.65 × 1.0) = intensity.
+        XCTAssertLessThanOrEqual(idleIntensity, 0.12,
+                                 "idle peak alpha must stay in the engine-card band (≤0.175)")
+        XCTAssertGreaterThanOrEqual(runIntensity / idleIntensity, 2.0)
+
+        XCTAssertLessThan(LookPreviewMath.canvasRadiusScale(isRunning: false),
+                          LookPreviewMath.canvasRadiusScale(isRunning: true))
+
+        // Strip: idle swing (max − min) is at most a third of running's and
+        // never drops below 0.35 so the palette stays legible.
+        let idleMin = LookPreviewMath.stripOpacity(level: 0, isRunning: false)
+        let idleMax = LookPreviewMath.stripOpacity(level: 1, isRunning: false)
+        let runMin  = LookPreviewMath.stripOpacity(level: 0, isRunning: true)
+        let runMax  = LookPreviewMath.stripOpacity(level: 1, isRunning: true)
+        XCTAssertGreaterThanOrEqual(idleMin, 0.35)
+        XCTAssertLessThanOrEqual(idleMax, 0.60)
+        XCTAssertLessThanOrEqual((idleMax - idleMin) / (runMax - runMin), 1.0 / 3.0)
+
+        // Out-of-range levels are clamped, never amplified.
+        XCTAssertEqual(LookPreviewMath.stripOpacity(level: 2, isRunning: false), idleMax, accuracy: 0.0001)
+        XCTAssertEqual(LookPreviewMath.stripOpacity(level: -1, isRunning: true), runMin, accuracy: 0.0001)
+    }
+
+    /// The selected/running card is unchanged: these are the literal values
+    /// LookPreview shipped with before idle went static.
+    func testRunningRenderingParametersAreRegressionLocked() {
+        XCTAssertEqual(LookPreviewMath.canvasIntensity(isRunning: true), 0.55, accuracy: 0.0001)
+        XCTAssertEqual(LookPreviewMath.canvasRadiusScale(isRunning: true), 0.45, accuracy: 0.0001)
+        for level in stride(from: 0.0, through: 1.0, by: 0.25) {
+            XCTAssertEqual(LookPreviewMath.stripOpacity(level: level, isRunning: true),
+                           0.25 + 0.75 * level, accuracy: 0.0001)
+        }
+    }
+
     // ── Spec equatability (card diffing) ──
 
     func testSpecEquatability() {

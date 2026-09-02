@@ -9,8 +9,12 @@
 // background).
 //
 // Perf/safety contract (same as PatternStripView / StudioCardCanvas):
-//  - paused by Reduce Motion, \.isTabActive, and KeyboardState;
-//  - off-screen renders a single static frame;
+//  - only the selected/running card animates; idle cards render ONE static
+//    representative frame (LookPreviewMath.frozenTime) at reduced prominence,
+//    so a deck of visible cards costs no animation work and reads as quietly
+//    as the Effects/Live cards beside it;
+//  - paused by Reduce Motion, \.isTabActive, and KeyboardState (same frame);
+//  - off-screen renders that same single static frame;
 //  - preview motion is floored at 0.75s/cycle (≤1.33 flashes/sec) — the
 //    photosensitivity clamp applies to PREVIEWS ONLY, never engine timing.
 
@@ -117,11 +121,39 @@ enum LookPreviewMath {
         return HueColorUtils.color(fromX: xy.x, y: xy.y, brightness: 100)
     }
 
-    /// Static fallback (Reduce Motion / not animated / off-screen): the real
-    /// palette sampled evenly across the strip at full level.
+    /// Swatch fallback (`animated == false`): the real palette sampled evenly
+    /// across the strip at full level.
     static func staticPhases(count: Int) -> [Double] {
         guard count > 1 else { return [0.5] }
         return (0..<count).map { Double($0) / Double(count - 1) }
+    }
+
+    // MARK: Idle vs running rendering
+
+    /// Idle (unselected) previews render ONE static frame sampled at this
+    /// deterministic time instead of ticking a clock. Quarter-phase of the
+    /// default 60 BPM breathe envelope, so the default look freezes at
+    /// mid-brightness rather than the t = 0 peak every card would share.
+    static let frozenTime: Double = 4.25
+
+    /// Canvas blob alpha scale. Running keeps its historic value; idle sits
+    /// inside StudioCardCanvas's at-rest band (0.04–0.175 peak alpha).
+    static func canvasIntensity(isRunning: Bool) -> Double {
+        isRunning ? 0.55 : 0.10
+    }
+
+    /// Canvas blob radius as a fraction of the card's long edge. Running
+    /// keeps its historic full-bleed value; idle matches drawOpal's 0.35.
+    static func canvasRadiusScale(isRunning: Bool) -> Double {
+        isRunning ? 0.45 : 0.35
+    }
+
+    /// Strip segment opacity for a motion-weighted level. Running keeps the
+    /// historic 0.25…1.0 swing; idle narrows it to 0.35…0.60 so the palette
+    /// stays legible without the shimmer dominating the card.
+    static func stripOpacity(level: Double, isRunning: Bool) -> Double {
+        let l = min(1, max(0, level))
+        return isRunning ? 0.25 + 0.75 * l : 0.35 + 0.25 * l
     }
 }
 
@@ -131,10 +163,11 @@ enum LookPreviewMath {
 /// 8 capsules shows its own palette color and motion-weighted brightness.
 struct LookPreviewStrip: View, Equatable {
     let spec: LookPreviewSpec
+    /// `false` = swatch mode: an even, static palette spread (scene chips).
     var animated: Bool = true
-    /// Frame-budget tier (StudioCardCanvas discipline): running cards tick
-    /// at 12fps, at-rest "living" cards drift at 4fps — the canvas always
-    /// had this split; the strip used to run 12fps at rest.
+    /// Only the running card animates (12fps). An animated-but-idle strip
+    /// shows one static representative frame of its real motion signature at
+    /// idle prominence — no clock, no shimmer — until it becomes running.
     var isRunning: Bool = false
     var height: CGFloat = 8
 
@@ -149,11 +182,14 @@ struct LookPreviewStrip: View, Equatable {
     }
 
     private var isLive: Bool {
-        animated && !reduceMotion && isTabActive && !KeyboardState.shared.isKeyboardUp
+        animated && isRunning && !reduceMotion && isTabActive
+            && !KeyboardState.shared.isKeyboardUp
     }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: isRunning ? 1.0 / 12.0 : 0.25,
+        // The TimelineView stays mounted in every state (paused when not
+        // live) so idle↔running never swaps the subtree or resets identity.
+        TimelineView(.animation(minimumInterval: 1.0 / 12.0,
                                 paused: !isLive)) { timeline in
             let t = timeline.date.timeIntervalSinceReferenceDate
             HStack(spacing: 4) {
@@ -165,21 +201,31 @@ struct LookPreviewStrip: View, Equatable {
         .accessibilityHidden(true)   // decorative signature; state announced elsewhere
     }
 
-    @ViewBuilder
     private func segment(index i: Int, time t: Double) -> some View {
+        let frame = segmentFrame(index: i, time: t)
+        // One Capsule for every state: only its colour/opacity values change.
+        return Capsule()
+            .fill(frame.color)
+            .frame(height: height)
+            .opacity(frame.opacity)
+    }
+
+    private func segmentFrame(index i: Int, time t: Double) -> (color: Color, opacity: Double) {
         if isLive {
             let s = LookPreviewMath.sample(index: i, count: Self.segmentCount,
                                            spec: spec, time: t)
-            Capsule()
-                .fill(LookPreviewMath.color(spec: spec, phase: s.phase))
-                .frame(height: height)
-                .opacity(0.25 + 0.75 * s.level)
+            return (LookPreviewMath.color(spec: spec, phase: s.phase),
+                    LookPreviewMath.stripOpacity(level: s.level, isRunning: true))
+        } else if animated {
+            // Idle, Reduce Motion, off-tab, or under a keyboard: one
+            // deterministic representative frame of the real signature.
+            let s = LookPreviewMath.sample(index: i, count: Self.segmentCount,
+                                           spec: spec, time: LookPreviewMath.frozenTime)
+            return (LookPreviewMath.color(spec: spec, phase: s.phase),
+                    LookPreviewMath.stripOpacity(level: s.level, isRunning: isRunning))
         } else {
             let phases = LookPreviewMath.staticPhases(count: Self.segmentCount)
-            Capsule()
-                .fill(LookPreviewMath.color(spec: spec, phase: phases[i]))
-                .frame(height: height)
-                .opacity(0.55)
+            return (LookPreviewMath.color(spec: spec, phase: phases[i]), 0.55)
         }
     }
 }
@@ -188,8 +234,9 @@ struct LookPreviewStrip: View, Equatable {
 
 /// Card-scale background: three soft radial blobs in the preset's real
 /// colors, drifting at the (clamped) motion rate, breathing with the real
-/// envelope. StudioCardCanvas's frame-budget discipline: idle 4fps, running
-/// 12fps, single static frame off-screen or under a keyboard.
+/// envelope. Only the running card animates (12fps); idle cards render one
+/// static representative frame at reduced intensity/radius — the same frame
+/// used off-screen, under Reduce Motion, and under a keyboard.
 struct LookPreviewCanvas: View, Equatable {
     let spec: LookPreviewSpec
     var isRunning: Bool = false
@@ -202,19 +249,24 @@ struct LookPreviewCanvas: View, Equatable {
         lhs.spec == rhs.spec && lhs.isRunning == rhs.isRunning && lhs.isVisible == rhs.isVisible
     }
 
+    private var isLive: Bool {
+        isRunning && isVisible && isTabActive && !reduceMotion
+            && !KeyboardState.shared.isKeyboardUp
+    }
+
     var body: some View {
-        if isVisible && isTabActive && !reduceMotion && !KeyboardState.shared.isKeyboardUp {
-            TimelineView(.animation(minimumInterval: isRunning ? 1.0 / 12.0 : 0.25)) { timeline in
-                canvasContent(time: timeline.date.timeIntervalSinceReferenceDate)
-            }
-        } else {
-            canvasContent(time: 0)
+        // Stays mounted (paused when not live) so idle↔running never swaps
+        // the subtree; the static frame is deterministic, never t = 0.
+        TimelineView(.animation(minimumInterval: 1.0 / 12.0, paused: !isLive)) { timeline in
+            canvasContent(time: isLive
+                          ? timeline.date.timeIntervalSinceReferenceDate
+                          : LookPreviewMath.frozenTime)
         }
     }
 
     private func canvasContent(time: Double) -> some View {
         Canvas { context, size in
-            let intensity: Double = isRunning ? 0.55 : 0.30
+            let intensity = LookPreviewMath.canvasIntensity(isRunning: isRunning)
             // Three blobs anchored across the palette (start/middle/end),
             // drifting on the clamped motion clock.
             let anchors: [Double] = [0.15, 0.5, 0.85]
@@ -230,7 +282,8 @@ struct LookPreviewCanvas: View, Equatable {
                 let angle = drift * .pi * 2 * (blob == 1 ? -0.5 : 1.0) + Double(blob) * 2.1
                 let cx = size.width  * (anchor + 0.18 * cos(angle) * (blob == 1 ? 1 : 0.6))
                 let cy = size.height * (0.45 + 0.25 * sin(angle))
-                let radius = max(size.width, size.height) * 0.45
+                let radius = max(size.width, size.height)
+                    * LookPreviewMath.canvasRadiusScale(isRunning: isRunning)
                 let alpha = intensity * (0.35 + 0.65 * s.level)
                 let rect = CGRect(x: cx - radius, y: cy - radius,
                                   width: radius * 2, height: radius * 2)
