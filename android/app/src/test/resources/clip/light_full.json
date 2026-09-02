@@ -1,0 +1,32 @@
+{
+  "id": "6d0f9d3a-0b1e-4c7d-9c2a-1f2e3d4c5b6a",
+  "id_v1": "/lights/3",
+  "type": "light",
+  "owner": {"rid": "dev-1", "rtype": "device"},
+  "metadata": {"name": "Play Gradient", "archetype": "hue_lightstrip"},
+  "on": {"on": true},
+  "dimming": {"brightness": 62.5, "min_dim_level": 0.2},
+  "color": {
+    "xy": {"x": 0.3127, "y": 0.329},
+    "gamut": {"red": {"x": 0.6915, "y": 0.3083}, "green": {"x": 0.17, "y": 0.7}, "blue": {"x": 0.1532, "y": 0.0475}},
+    "gamut_type": "C"
+  },
+  "color_temperature": {"mirek": 366, "mirek_valid": true, "mirek_schema": {"mirek_minimum": 153, "mirek_maximum": 500}},
+  "dynamics": {"status": "none", "status_values": ["none", "dynamic_palette"], "speed": 0.5, "speed_valid": false},
+  "effects": {"status_values": ["no_effect", "candle", "fire"], "status": "no_effect", "effect_values": ["no_effect", "candle", "fire"]},
+  "effects_v2": {
+    "action": {"effect_values": ["no_effect", "candle", "fire", "prism", "sparkle", "opal", "glisten", "cosmos"]},
+    "status": {"effect": "candle", "effect_values": ["no_effect", "candle", "fire"], "parameters": {"speed": 0.6, "color": {"xy": {"x": 0.5, "y": 0.4}}, "color_temperature": {"mirek": 250}}}
+  },
+  "timed_effects": {"status_values": ["no_effect", "sunrise", "sunset"], "status": "no_effect", "effect_values": ["no_effect", "sunrise", "sunset"], "duration": 0},
+  "gradient": {
+    "points": [{"color": {"xy": {"x": 0.64, "y": 0.33}}}, {"color": {"xy": {"x": 0.17, "y": 0.7}}}],
+    "mode": "interpolated_palette",
+    "mode_values": ["interpolated_palette", "interpolated_palette_mirrored", "random_pixelated"],
+    "points_capable": 5,
+    "pixel_count": 7
+  },
+  "signaling": {"signal_values": ["no_signal", "on_off", "on_off_color", "alternating"], "status": {"signal": "no_signal"}},
+  "mode": "normal",
+  "future_block_nobody_knows": {"x": [1, 2, 3]}
+}

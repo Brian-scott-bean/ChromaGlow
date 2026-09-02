@@ -1,0 +1,3 @@
+{"id": "room-1", "type": "room", "metadata": {"name": "Living", "archetype": "living_room"},
+ "children": [{"rid": "dev-1", "rtype": "device"}, {"rid": "dev-2", "rtype": "device"}, {"rid": "", "rtype": "device"}],
+ "services": [{"rid": "gl-1", "rtype": "grouped_light"}, {"rid": "x", "rtype": "other"}]}

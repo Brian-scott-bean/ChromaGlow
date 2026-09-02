@@ -1,0 +1,1 @@
+{"id": "zone-1", "type": "zone", "metadata": {"name": "Upstairs"}, "children": [{"rid": "6d0f9d3a-0b1e-4c7d-9c2a-1f2e3d4c5b6a", "rtype": "light"}], "services": [{"rid": "gl-2", "rtype": "grouped_light"}]}

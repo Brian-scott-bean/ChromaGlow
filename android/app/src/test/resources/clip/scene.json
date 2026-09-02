@@ -1,0 +1,4 @@
+{"id": "scene-1", "type": "scene", "metadata": {"name": "Relax"}, "group": {"rid": "room-1", "rtype": "room"},
+ "status": {"active": "static"}, "speed": 0.5, "auto_dynamic": false,
+ "actions": [{"target": {"rid": "6d0f9d3a-0b1e-4c7d-9c2a-1f2e3d4c5b6a", "rtype": "light"}, "action": {"on": {"on": true}, "dimming": {"brightness": 50}, "color_temperature": {"mirek": 447}}}, {"target": {"rid": "", "rtype": "light"}, "action": {}}],
+ "palette": {"color": [{"color": {"xy": {"x": 0.5, "y": 0.4}}, "dimming": {"brightness": 50}}], "dimming": [], "color_temperature": []}}
