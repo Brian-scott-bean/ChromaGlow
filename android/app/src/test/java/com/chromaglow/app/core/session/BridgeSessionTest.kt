@@ -17,8 +17,10 @@ import com.chromaglow.app.testing.FakeEventStream
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -289,11 +291,12 @@ class BridgeSessionTest {
         val h = Harness(this, probe = true, stream = stream)
         h.transport.fail(ResourceType.BRIDGE, ClipError.Unauthorized(401))
         h.session.start()
-        advanceUntilIdle()
+        advanceTimeBy(1_000)
         assertEquals(ConnectionState.Revoked, h.session.connection.value)
         assertEquals(0, stream.openCount)
         assertTrue(h.attachment.events.none { it == "foreground" })
         assertEquals("no load after a revoked probe", 1, h.transport.getCount)
+        h.session.close()
     }
 
     @Test
@@ -326,15 +329,72 @@ class BridgeSessionTest {
         val off = """[{"type":"update","data":[{"id":"la","type":"light","on":{"on":false}}]}]"""
         stream.fallback = FakeEventStream.connectedAndHang(off)
         val h = Harness(this, probe = false, stream = stream)
+        h.cache.stored = BridgeSnapshot.empty(h.bridge).copy(generation = 1, lights = mapOf(lightKey to lightState(lightKey, "Cached").copy(isOn = true)))
         val gate = CompletableDeferred<Unit>()
         h.transport.getGate = gate
         h.session.start()
-        advanceUntilIdle()                 // load in flight, stream connected, event reduced
+        advanceTimeBy(1_000)               // load in flight, stream connected, event reduced
         h.transport.getGate = null
         val loadsBefore = h.transport.getCount / 5
         gate.complete(Unit)                // the older GET (lamp on) lands
-        advanceUntilIdle()
+        advanceTimeBy(5_000)
         assertEquals("one reconciling load followed the stale one", loadsBefore + 1, h.transport.getCount / 5)
+        h.session.close()
+    }
+
+    @Test
+    fun b17_aChattyBridge_earnsExactlyOneFollowUpLoad_perExternalRefresh() = runTest {
+        val stream = FakeEventStream(bridge) { testScheduler.currentTime }
+        // Continuous frames that flip the lamp every 50 ms: every one changes the snapshot.
+        stream.fallback = kotlinx.coroutines.flow.flow {
+            emit(com.chromaglow.app.core.hue.sse.SseFrame.Connected)
+            repeat(200) { i ->
+                emit(com.chromaglow.app.core.hue.sse.SseFrame.Data("""[{"type":"update","data":[{"id":"la","type":"light","on":{"on":${i % 2 == 0}}}]}]"""))
+                kotlinx.coroutines.delay(50)
+            }
+            kotlinx.coroutines.awaitCancellation()
+        }
+        val h = Harness(this, probe = false, stream = stream)
+        h.cache.stored = BridgeSnapshot.empty(h.bridge).copy(generation = 1, lights = mapOf(lightKey to lightState(lightKey, "Cached")))
+        val gate = CompletableDeferred<Unit>()
+        h.transport.getGate = gate
+        h.session.start()
+        advanceTimeBy(1_000)
+        h.transport.getGate = null
+        val loadsBefore = h.transport.getCount / 5
+        gate.complete(Unit)
+        advanceTimeBy(10_000)
+        assertEquals("one stale load + exactly one follow-up, then quiet", loadsBefore + 1, h.transport.getCount / 5)
+        // An external refresh may earn one more follow-up, never a chain.
+        h.session.requestRefresh(RefreshReason.USER_PULL)
+        advanceTimeBy(10_000)
+        assertTrue("no chain: ${h.transport.getCount / 5}", h.transport.getCount / 5 <= loadsBefore + 3)
+        h.session.close()
+    }
+
+    @Test
+    fun b17_framesThatDoNotChangeTheSnapshot_neverEarnAFollowUp() = runTest {
+        val stream = FakeEventStream(bridge) { testScheduler.currentTime }
+        stream.fallback = kotlinx.coroutines.flow.flow {
+            emit(com.chromaglow.app.core.hue.sse.SseFrame.Connected)
+            repeat(200) {
+                emit(com.chromaglow.app.core.hue.sse.SseFrame.Data("""[{"type":"update","data":[{"id":"ghost","type":"light","on":{"on":false}}]}]"""))
+                kotlinx.coroutines.delay(50)
+            }
+            kotlinx.coroutines.awaitCancellation()
+        }
+        val h = Harness(this, probe = false, stream = stream)
+        h.cache.stored = BridgeSnapshot.empty(h.bridge).copy(generation = 1, lights = mapOf(lightKey to lightState(lightKey, "Cached")))
+        val gate = CompletableDeferred<Unit>()
+        h.transport.getGate = gate
+        h.session.start()
+        advanceTimeBy(1_000)
+        h.transport.getGate = null
+        val loadsBefore = h.transport.getCount / 5
+        gate.complete(Unit)
+        advanceTimeBy(10_000)
+        assertEquals(loadsBefore, h.transport.getCount / 5)
+        h.session.close()
     }
 
     @Test
