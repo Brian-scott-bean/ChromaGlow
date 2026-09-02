@@ -980,6 +980,59 @@ Row 36 above is SUPERSEDED by rows 45–47: the Advanced bucket, its disclosure,
 and the `StudioParamSheet` reveal it tested no longer exist as a product path —
 every control now lives on the one board (spec §2.3).
 
+### V-C. Slice 3 — Composer convergence (2026-09-02)
+
+**Every row below is UNPROVEN. Nothing here has been on a device or a physical
+bridge.** Branch `feat/composer-convergence-slice3` (base `104f779`, rollback tag
+`checkpoint/pre-slice3-composer-convergence-2026-09-01`).
+
+What the automated run does and does not prove: the registered suite, the
+hardening guards (13(e)–(h), 14(i)–(j), 15(l)) and the mutation runs prove — on
+simulator — that the Composer's supporting controls render inside each layer's
+card, that every Composer control resolves through the shared capability funnel
+and applies the verdict, that every Composer write commits through the exact-
+identity fence, that the instruments are the ones their meaning calls for, that
+per-swatch colour expands the shared editor inline, and that the composition
+Entertainment loop makes no direct send outside the realized-frame gate, and
+that every REST composition sweep and the startup prime reserve their slot at
+dispatch on the projected field. None of that is evidence about what a light
+does. In particular the flash rows below (66–71, 84–85) are the ONLY evidence
+that the field-frame reduction, the shared per-bridge onset ledger, the REST
+dispatch-time reservation and the per-source wire model hold on real output —
+`b43d863`, `ae9c7f1`, `c65a353` and `587d789` are CODE-PROVEN and
+SIMULATOR-PROVEN only.
+
+Film flash rows at 60 fps and count frames between luminance onsets: two onsets
+closer than 20 frames (0.34 s) is a failure of the invariant, not a judgement
+call.
+
+| # | Test | Expected | Result |
+| --- | --- | --- | --- |
+| 66 | Composition, Entertainment transport, Brightness shape = Pulse, BPM 240, Depth 100, Max 100 / Min 0, ≥3 lights | On the wire no two onsets land closer than 0.34 s (≤2.94 Hz) — the authored 4 Hz square is held; the hold frames are the last DELIVERED frame, not black | **UNPROVEN** |
+| 67 | Same room, shape = Flicker at BPM 240 | Same ceiling; flicker's irregular onsets never pair closer than 0.34 s | **UNPROVEN** |
+| 68 | Row 66 running; induce a short DTLS drop (walk out of range / unplug the bridge for ~2 s) and let it recover | Across the gap and after reconnect no onset pair < 0.34 s; if the composition fails over to Room mode the REST cadence shows no >3 Hz pair either; no burst of queued onsets on reconnect | **UNPROVEN** |
+| 69 | Palette = Gradient with 3 saturated colours, Motion = Chase at Speed 100 on an area with ≥10 channels, Envelope = Pulse 240 | The FIELD (all channels together) never flashes above the ceiling even while individual channels alternate faster; no single light flashes >3 Hz | **UNPROVEN** |
+| 70 | Row 66 running: tap Stop, then re-apply the same composition within one second; repeat five times | No onset pair < 0.34 s straddles any stop/restart boundary (the per-bridge ledger survives the run boundary) | **UNPROVEN** |
+| 71 | Open Perform on row 66's composition; crossfade decks rapidly and hit the pads | The ceiling holds through Perform (the mixer renders through the same gated loop); no duplicate runtime — the lights never receive two streams | **UNPROVEN** |
+| 72 | Start any composition; walk every layer (Palette / Motion / Brightness / React) with every shape/pattern/source | No "Advanced" caption anywhere; every control is in its layer's one card in one scrolling column; the only presentation that ever opens is the Entertainment-area BUILDER, from its own row on a spatial pattern with no area | **UNPROVEN** |
+| 73 | Palette with a harmony rule on a colour room: tap swatch 2, drag the pad, tap a My Colors swatch, tap the chip to collapse | The shared editor expands IN PLACE under the swatches; each drag sample and swatch tap changes the lights immediately with no Apply/Done; collapsing keeps the colour; nothing pops over the page | **UNPROVEN** |
+| 74 | White-only room (no colour-capable lights) running a composition: open Palette | Hue pad, harmony row, Randomize and "Save as Hue dynamic scene" render DISABLED under "NO COLOR LIGHTS HERE"; Mode stays live; Motion and Brightness layers are fully live | **UNPROVEN** |
+| 75 | Cold launch straight into Studio → apply a composition before the light inventory has landed | Colour controls read "CHECKING WHAT THESE LIGHTS SUPPORT" (disabled) — never "NO COLOR LIGHTS HERE" — and come live by themselves when the inventory lands, without leaving the page | **UNPROVEN** |
+| 76 | Palette Mode = Temperature on a room of two CT lights with mirek 153…454 and 200…500; then on a CT light with no readable schema | The Warmth knob travels exactly the INTERSECTION (200…454, ≈2200K–5000K) and the lights follow the whole travel; on the schemaless fixture the knob is disabled under CHECKING, never a fake 153…500 | **UNPROVEN** |
+| 77 | Edit Speed and a swatch, Save (empty name); edit again; Revert to Saved; the same preset also running on another room | Save creates "My Composition" with the exact edited values; Revert restores all four layers of the saved document on THIS room only; the other room keeps its own edits | **UNPROVEN** |
+| 78 | Room A on the React layer, room B on Motion; switch A→B→A; stop A; re-apply on A | Each room comes back on its own layer; after the stop, A reopens on Palette (its selection died with it) | **UNPROVEN** |
+| 79 | Enter Perform from a running composition, move faders, exit | The composition keeps the Perform edits; the lights never double-run; the editor still edits the same instance | **UNPROVEN** |
+| 80 | Row-55 analogue: tap a Composer knob's readout and type; scroll; tap the Beat pill mid-entry; then switch rooms mid-entry | The keyboard dismisses BEFORE the layer jumps and the typed value lands or drops — never on another parameter; the host never collapses; switching rooms mid-entry lands the value on the room it began on or drops it | **UNPROVEN** |
+| 81 | Same preset running on room A, on a zone that shares A's id, and on room A of a second bridge | Three independent boxes: a knob on one never moves the other two; each keeps its own layer and colour expansion | **UNPROVEN** |
+| 82 | Mid-drag on a knob: Stop; then re-apply and drag again; then induce an ENT→REST failover mid-drag | No write lands after the stop; the old gesture cannot touch the new run; on failover the in-flight edit drops, the look continues, and the next gesture works | **UNPROVEN** |
+| 83 | Studio deck idle on the Composer category; then Reduce Motion on | No Composer card animates; the "+ Create" border sweep is visibly damped; under Reduce Motion the sweep stops (Effects/Live card canvases still animate — recorded debt) | **UNPROVEN** |
+| 84 | Row 66's composition on **Room** transport (`.roomOnly`, the REST scheduler), Pulse 240 / Flicker 240; then Gradient + Chase 100 on a gradient strip; then Stop and re-apply within one second, five times | Over REST no two onsets land closer than 0.34 s across the whole room (the rotation slices are one field, judged on the projected frame; a strip is judged at its average); the first frame after apply (the prime) obeys the same clock; no restart pair < 0.34 s | **UNPROVEN** |
+| 85 | Two sources on ONE bridge: room A on Entertainment transport running row 66; room B on Room transport running Pulse 240; then swap which room starts first; then run two Room-transport rooms together | Each room's own lamps never pair onsets < 0.34 s; across BOTH rooms' lamps together no two onsets land < 0.34 s either (one clock per bridge); room B's first frame after apply waits for the period rather than merging; neither room's dark frames are ever judged against the other's last frame (no held-black surprise on a steady room) | **UNPROVEN** |
+
+**Slice 3 is NOT hardware-complete until rows 66–85 are physically executed.**
+Row 58 (Warmth authoring range) is CLOSED for the Composer by row 76 and stays
+OPEN for the Studio board's four Warmth params (recorded debt).
+
 ## Supersession notes
 
 - Build 18 items 1–5 (SSE/live cards) are covered by §B (build 20's master-bar + scene-SSE

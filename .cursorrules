@@ -2,7 +2,7 @@
 
 ## Project
 - **App:** ChromaGlow (Philips Hue smart lighting iOS app)
-- **Path:** `/Users/brianbean/Desktop/huehome-pro-v0.3.0/`
+- **Path:** `/Users/brianbean/Developer/huehome-pro-v0.3.0/`
 - **Xcode project:** `HueHome.xcodeproj`
 - **Bundle:** `com.huehome.pro`
 - **Language:** Swift, SwiftUI (iOS 17+)

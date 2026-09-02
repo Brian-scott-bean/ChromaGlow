@@ -279,6 +279,25 @@ enum BeatMath {
             return min(1, max(0, v * v * v))
         }
 
+        /// The exact inverse of `dimmingLuminance` on 0…1: `bri = (116·∛Y − 16) / 100`.
+        ///
+        /// Needed only by `fieldFrame(channels:)`, which averages luminance across
+        /// a per-channel frame and must hand the gate a `WireFrame` — and a
+        /// `WireFrame` states its luminance through a *dimming* level, not
+        /// directly. Round-tripping through the real inverse is what makes
+        /// `fieldFrame`'s luminance exact rather than approximately right: see the
+        /// identity asserted in `FlashSafetyFieldFrameTests`.
+        ///
+        /// Total: a non-finite or ≤ 0 luminance is dimming 0. Luminances below the
+        /// cube's offset (`(16/116)³ ≈ 0.0026`) map to a negative root and clamp to
+        /// 0, which is the same "off is off" convention `dimmingLuminance` uses.
+        static func inverseDimmingLuminance(_ luminance: Double) -> Double {
+            guard luminance.isFinite, luminance > 0 else { return 0 }
+            let y = min(max(luminance, 0), 1)
+            let bri = (116.0 * cbrt(y) - 16.0) / 100.0
+            return min(1, max(0, bri))
+        }
+
         /// CIE xy → linear **sRGB** drive, normalized so the largest channel is
         /// 1.0 — i.e. the colour as the fixture actually renders it at full
         /// drive, which is what a bridge does with an xy request.
@@ -431,6 +450,115 @@ enum BeatMath {
             }
         }
 
+        /// Reduces ONE per-channel Entertainment frame to the single field frame
+        /// the onset gate measures.
+        ///
+        /// The strobe/party/thunderstorm loops stream a UNIFORM frame — one
+        /// colour and one brightness to every channel — so `WireFrame` describes
+        /// their wire exactly. Composer streams a frame PER CHANNEL: an eight-light
+        /// room can chase, scatter or twinkle, and there is no single x/y/brightness
+        /// that is "the frame". Forcing the uniform abstraction onto it would have
+        /// to pick one channel and call it the room, which is wrong in both
+        /// directions — it would miss an all-lights pulse measured on a channel that
+        /// happens to sit at its floor, and it would gate a single twinkling light as
+        /// though the whole room flashed.
+        ///
+        /// What a photosensitive viewer receives is the **field**: WCAG's general
+        /// flash threshold is stated over a proportion of the visual field, not over
+        /// one lamp. So the reduction is:
+        ///
+        ///  • **luminance = the MEAN of the channels' relative luminances.** Mean,
+        ///    not max: eight lights where one twinkles moves the field by an eighth,
+        ///    and that is what the eye sees. Mean of the LUMINANCES, not of the
+        ///    brightnesses — `dimmingLuminance` is a cube, so averaging dimming
+        ///    levels first and cubing after would *understate* every mixed frame
+        ///    (Jensen), and understating is the direction that lets a flash through.
+        ///  • **chromaticity = the luminance-WEIGHTED mean of the channels' xy.**
+        ///    A channel at its floor contributes almost nothing to what colour the
+        ///    room is, so it must not drag the hue — otherwise a chase's dark tail
+        ///    would dilute the red rule until a saturated-red strike stopped reading
+        ///    as red. With no light at all the weights vanish and the plain mean is
+        ///    used, which is defined and harmless: at zero luminance the red rule
+        ///    cannot fire anyway, and `chromaDistance` still wants a real coordinate.
+        ///
+        /// The brightness is then the exact `inverseDimmingLuminance` of the field
+        /// luminance at that chromaticity, so the returned frame's own
+        /// `relativeLuminance` **is** the field luminance rather than an
+        /// approximation of it.
+        ///
+        /// Load-bearing property, and the reason this is safe to share one ledger
+        /// with the uniform loops: for a uniform frame the reduction is the
+        /// IDENTITY. Every channel carries the same luminance, so the mean is that
+        /// luminance; every channel carries the same xy, so any weighting returns
+        /// that xy; and the inverse round-trip returns the original brightness. A
+        /// composition holding every light at one colour is therefore gated on
+        /// exactly the same numbers Strobe would be — the two cannot disagree about
+        /// the same wire.
+        ///
+        /// Total: an empty frame is black at D65 (a room with no channels puts no
+        /// light in the field), and every per-channel coordinate is laundered
+        /// through `WireFrame`'s own NaN totality before it is weighed.
+        /// The per-channel field a REST rotation sweep WILL leave on the wire
+        /// (safety round 2, #3): every channel as last delivered, this
+        /// sweep's channels replaced by what it is about to send. A channel
+        /// never delivered to reads as the sweep's frame — there is nothing
+        /// truer to read it as. Reserving on the whole-room RENDER instead
+        /// let a stale slice's real rise (a dark light lit by a "non-
+        /// candidate" frame) reach the wire unmeasured.
+        /// The ledger's frame SOURCES (per-source wire state). One DTLS session
+        /// per bridge ⇒ one Entertainment source; each REST room is its own.
+        static let entertainmentSource = "entertainment"
+        static func restSource(roomID: String) -> String { "rest:\(roomID)" }
+
+        static func projectedField(
+            lastDelivered: [Int: (x: Double, y: Double, brightness: Double)],
+            sweep: [(index: Int, x: Double, y: Double, brightness: Double)]
+        ) -> [(x: Double, y: Double, brightness: Double)] {
+            var projected = lastDelivered
+            for s in sweep { projected[s.index] = (s.x, s.y, s.brightness) }
+            return projected.keys.sorted().map { projected[$0]! }
+        }
+
+        static func fieldFrame(
+            channels: [(x: Double, y: Double, brightness: Double)]
+        ) -> WireFrame {
+            guard !channels.isEmpty else {
+                // D65, the same white `WireFrame`'s own totality falls back to.
+                return WireFrame(x: 0.3127, y: 0.3290, brightness: 0)
+            }
+            // Launder through WireFrame first: a NaN coordinate resolves to D65
+            // and a NaN brightness to 0 there, so nothing below can be poisoned
+            // by one corrupt channel.
+            let frames = channels.map {
+                WireFrame(x: $0.x, y: $0.y, brightness: $0.brightness)
+            }
+            let count = Double(frames.count)
+            let fieldLuminance = frames.reduce(0.0) { $0 + $1.relativeLuminance } / count
+
+            // Luminance-weighted chromaticity, with the unweighted mean as the
+            // zero-light fallback.
+            let totalWeight = frames.reduce(0.0) { $0 + $1.relativeLuminance }
+            let fieldX: Double
+            let fieldY: Double
+            if totalWeight > 0 {
+                fieldX = frames.reduce(0.0) { $0 + $1.x * $1.relativeLuminance } / totalWeight
+                fieldY = frames.reduce(0.0) { $0 + $1.y * $1.relativeLuminance } / totalWeight
+            } else {
+                fieldX = frames.reduce(0.0) { $0 + $1.x } / count
+                fieldY = frames.reduce(0.0) { $0 + $1.y } / count
+            }
+
+            // Express that luminance as a dimming level AT the field chromaticity,
+            // so the frame's own `relativeLuminance` reproduces it exactly.
+            let chromaFactor = chromaticityLuminanceFactor(x: fieldX, y: fieldY)
+            guard chromaFactor > 0 else {
+                return WireFrame(x: fieldX, y: fieldY, brightness: 0)
+            }
+            let dimming = min(1, max(0, fieldLuminance / chromaFactor))
+            return WireFrame(x: fieldX, y: fieldY,
+                             brightness: inverseDimmingLuminance(dimming))
+        }
+
         /// What the caller must put on the wire for the frame it asked for.
         ///
         /// `.hold` carries the LAST EMITTED frame — colour AND brightness — so a
@@ -472,6 +600,8 @@ enum BeatMath {
         struct Reservation {
             /// What the caller must put on the wire.
             let verdict: FrameVerdict
+            /// The frame source this reservation belongs to (per-source wire state).
+            fileprivate let source: String
             /// The lastOnset value this admit installed, if it stamped one.
             fileprivate let stampedAt: Double?
             /// The lastOnset value before this admit — the rollback target.
@@ -488,6 +618,10 @@ enum BeatMath {
             /// that had fallen to 0.02 and climbed back to 0.30 is measured as a
             /// rise from 0.30 and the climb that follows is under-measured.
             fileprivate let priorTrough: Double
+            /// Who owned the clock before this reservation stamped it — restored
+            /// on rollback so the sweep whose stamp is current again may go on
+            /// (safety round 5).
+            fileprivate let priorOwner: UInt64?
             /// Serial number of this admit, so a rollback can tell whether any
             /// other frame has touched the gate since.
             fileprivate let sequence: UInt64
@@ -505,7 +639,30 @@ enum BeatMath {
             /// wire has been SILENT for a whole period (`lastDeliveredAt`), not
             /// merely that one send was refused. A refused send changed nothing
             /// on the wire, so it leaves this exactly as it was.
-            private(set) var lastEmitted: WireFrame?
+            /// PER-SOURCE wire state (safety round 3, #1). One bridge can carry
+            /// two frame sources at once — a REST composition on one room and
+            /// a DTLS look on another, or two REST rooms — driving DISJOINT
+            /// lights. One shared wire model judged each source's candidacy
+            /// against the OTHER source's last field: room A's bright frame
+            /// after room B's bright frame read as "no rise" and went out
+            /// unstamped, 0.25 s after B's onset. The onset CLOCK
+            /// (`lastOnset`, `lastDeliveredAt`, the sequence and the forget)
+            /// stays per bridge — one wire, one ≤3 Hz budget — while what each
+            /// source last put on ITS lights, and the trough it is measured
+            /// from, are the source's own.
+            private struct SourceWire {
+                var lastEmitted: WireFrame?
+                var trough: Double = 0
+                var lastKnown: WireFrame?
+            }
+            private var wires: [String: SourceWire] = [:]
+            /// The source the current `admit`/`commit` is about.
+            private var currentSource: String = ""
+
+            private(set) var lastEmitted: WireFrame? {
+                get { wires[currentSource]?.lastEmitted }
+                set { wires[currentSource, default: SourceWire()].lastEmitted = newValue }
+            }
 
             /// The LOWEST **relative luminance** EMITTED since the last admitted
             /// onset — the floor a rise is measured from, reset to the emitted
@@ -513,7 +670,10 @@ enum BeatMath {
             /// previous frame) is what makes a slow cumulative ramp a candidate:
             /// the ramp is judged against where the light last was, not against
             /// where it was 20 ms ago.
-            private(set) var luminanceTroughSinceOnset: Double
+            private(set) var luminanceTroughSinceOnset: Double {
+                get { wires[currentSource]?.trough ?? 0 }
+                set { wires[currentSource, default: SourceWire()].trough = newValue }
+            }
 
             /// When a frame — ANY frame, admitted or held — last reached the
             /// transport. Not the onset stamp: `lastOnset` answers "when did the
@@ -546,15 +706,39 @@ enum BeatMath {
             ///    frame after it is then stamped as a first onset — two red
             ///    flashes one frame apart (the in-catalog Thunderstorm
             ///    reproduction, fifth review round).
-            private(set) var lastKnownFrame: WireFrame?
+            private(set) var lastKnownFrame: WireFrame? {
+                get { wires[currentSource]?.lastKnown }
+                set { wires[currentSource, default: SourceWire()].lastKnown = newValue }
+            }
 
             private var sequence: UInt64 = 0
+            /// The `sequence` at the last `forgetWire()` (safety round 2, #2):
+            /// a reservation taken BEFORE a forget may not restore the wire
+            /// model when its late rollback arrives — the forget was a fact
+            /// about the transport (a stop, a group turned off) that the
+            /// reservation predates.
+            private var forgetSequence: UInt64 = 0
+            /// The reservation whose stamp is the clock's current word — the
+            /// only one allowed to move it forward as its lamps rise
+            /// (safety round 4).
+            private var lastOnsetOwner: UInt64?
+            /// A stamped rise that is IN FLIGHT — admitted (or a later batch
+            /// dispatched) and not yet realized on the wire (safety round 5,
+            /// HIGH). While one is pending no source may take an onset: the
+            /// lamps will rise somewhere between the stamp and now, so no
+            /// interval measured from the stamp is proven safe. Cleared by
+            /// the first `noteRealized` of that reservation and by its
+            /// `commit`; the DTLS loop clears its own at commit before its
+            /// next admit, so it costs that loop nothing.
+            private var unrealizedStamp: UInt64?
 
             init(lastOnset: Double? = nil, lastEmitted: WireFrame? = nil) {
                 self.lastOnset = lastOnset
-                self.lastEmitted = lastEmitted
-                self.luminanceTroughSinceOnset = lastEmitted?.relativeLuminance ?? 0
-                self.lastKnownFrame = lastEmitted
+                if let lastEmitted {
+                    wires[""] = SourceWire(lastEmitted: lastEmitted,
+                                           trough: lastEmitted.relativeLuminance,
+                                           lastKnown: lastEmitted)
+                }
             }
 
             /// `t` is a monotonic host time (CACurrentMediaTime). A NaN/infinite
@@ -574,6 +758,9 @@ enum BeatMath {
             mutating func tryOnset(at t: Double,
                                    minPeriod: Double = FlashSafety.minOnsetLedgerPeriod) -> Bool {
                 guard t.isFinite else { return false }
+                // A rise is in flight: its lamps will come up at a time this
+                // clock does not know yet. Nobody takes an onset until they do.
+                guard unrealizedStamp == nil else { return false }
                 let period = (minPeriod.isFinite && minPeriod > 0) ? minPeriod
                                                                    : FlashSafety.minOnsetLedgerPeriod
                 if let last = lastOnset {
@@ -729,19 +916,25 @@ enum BeatMath {
             /// so the first frame back is not a candidate and a fall-then-rise
             /// two frames later is measured from a fresh trough and admitted
             /// against the OLD stamp — two realized onsets 40 ms apart.
-            mutating func admit(frame: WireFrame, at t: Double,
+            mutating func admit(frame: WireFrame, source: String = "", at t: Double,
                                 minPeriod: Double = FlashSafety.minOnsetLedgerPeriod) -> Reservation {
-                sequence &+= 1
+                currentSource = source
                 let tol = FlashSafety.onsetComparisonTolerance
                 let period = (minPeriod.isFinite && minPeriod > 0) ? minPeriod
                                                                    : FlashSafety.minOnsetLedgerPeriod
                 // A silent wire is an unknown wire. Checked BEFORE the priors are
                 // captured, so a dropped send cannot roll the forget back: the
                 // forget is a fact about the transport, not about this frame.
+                // And BEFORE this admit's sequence is minted (safety round 2):
+                // this forget belongs to the wire this reservation is taken
+                // against, so its priors (already nil) may be restored; only a
+                // forget that arrives AFTER a reservation — a stop — may not
+                // be undone by that reservation's rollback.
                 if lastEmitted != nil, t.isFinite, let delivered = lastDeliveredAt,
                    t - delivered >= period - tol {
                     forgetWire()
                 }
+                sequence &+= 1
                 let prior = (onset: lastOnset, emitted: lastEmitted,
                              trough: luminanceTroughSinceOnset)
 
@@ -871,7 +1064,19 @@ enum BeatMath {
             /// being inferred from a single refused send.
             mutating func commit(_ reservation: Reservation, delivered: Bool,
                                  at deliveredAt: Double) {
+                currentSource = reservation.source
                 guard delivered else {
+                    // Nothing rose: the rise is no longer in flight, and the
+                    // clock belongs to whoever owned it before this stamp, so
+                    // a sweep whose stamp is current again may go on with its
+                    // batches. FIRST, above the interleaving exit below: both
+                    // are keyed on this reservation's own sequence and are
+                    // right whatever else was admitted meanwhile — and a
+                    // stamp left in flight past its rollback would hold every
+                    // source on this bridge for the life of the process
+                    // (safety round 6, HIGH).
+                    if unrealizedStamp == reservation.sequence { unrealizedStamp = nil }
+                    if lastOnsetOwner == reservation.sequence { lastOnsetOwner = reservation.priorOwner }
                     // An interleaved admit (the un-awaited cancel window) means
                     // this reservation is no longer the gate's latest word about
                     // the wire, and restoring a state two frames stale would be
@@ -883,7 +1088,15 @@ enum BeatMath {
                     if let stamped = reservation.stampedAt, lastOnset == stamped {
                         lastOnset = reservation.priorLastOnset
                     }
-                    lastEmitted = reservation.priorLastEmitted
+                    // A rollback restores the wire model ONLY if nothing has
+                    // declared the wire unknown since the reservation was
+                    // taken: `stopCompositionMode` forgets AFTER deactivating
+                    // its session, and an executing sweep's late `cancelled
+                    // 0/0` must not hand the ledger back the bright frame the
+                    // stop just turned off (safety round 2, #2).
+                    if reservation.sequence > forgetSequence {
+                        lastEmitted = reservation.priorLastEmitted
+                    }
                     luminanceTroughSinceOnset = reservation.priorTrough
                     return
                 }
@@ -896,6 +1109,7 @@ enum BeatMath {
                     lastDeliveredAt = max(lastDeliveredAt ?? deliveredAt, deliveredAt)
                 }
                 if sequence == reservation.sequence { lastKnownFrame = reservation.frame }
+                if unrealizedStamp == reservation.sequence { unrealizedStamp = nil }
                 guard let stamped = reservation.stampedAt, lastOnset == stamped,
                       deliveredAt.isFinite, deliveredAt > stamped else { return }
                 lastOnset = deliveredAt
@@ -921,16 +1135,79 @@ enum BeatMath {
             ///    the outage — is covered where it belongs, in
             ///    `isColdOnsetCandidate`, which reads "unknown" as black.
             mutating func forgetWire() {
-                lastEmitted = nil
+                for key in wires.keys { wires[key]?.lastEmitted = nil }
+                forgetSequence = sequence
             }
 
-            private func reservation(_ verdict: FrameVerdict, stampedAt: Double?,
-                                     prior: (onset: Double?, emitted: WireFrame?,
-                                             trough: Double)) -> Reservation {
-                Reservation(verdict: verdict, stampedAt: stampedAt,
+            /// A stamped reservation's frame reached the wire in PART — one
+            /// batch of a multi-PUT REST sweep landed (safety round 4, HIGH).
+            /// The clock a co-active source on this bridge is judged against
+            /// must be when the lamps ROSE, not when the sweep was admitted:
+            /// a 15-light room's admit precedes its last batch by ~0.4 s, and
+            /// a DTLS onset admitted 0.34 s after the admit lands 0.28 s after
+            /// the first lamps rose. Moves the realized-onset clock forward to
+            /// the delivery time — forward only, and only while this
+            /// reservation's stamp is still the clock's word.
+            ///
+            /// Returns whether it is. Once another source has stamped between
+            /// two batches, the sweep's remaining lamps would be a further
+            /// rise inside THAT onset's period: the caller sends no further
+            /// batch (the un-lit lamps hold; the next tick projects the rest
+            /// of the rise and is judged on its own). An unstamped
+            /// reservation is not a rise and is never held back here.
+            ///
+            /// The rise is recorded BEFORE ownership is answered (safety
+            /// round 5): lamps that rose are a fact about the wire whoever
+            /// owns the clock, and the batch that discovers the loss has
+            /// already landed. Forward only, so a legitimately later stamp is
+            /// never lowered. It also ends the in-flight window this
+            /// reservation (or `beginRealizing`) opened.
+            mutating func noteRealized(_ reservation: Reservation, at t: Double) -> Bool {
+                guard reservation.stampedAt != nil else { return true }
+                if t.isFinite, let last = lastOnset, t > last { lastOnset = t }
+                if unrealizedStamp == reservation.sequence { unrealizedStamp = nil }
+                return lastOnsetOwner == reservation.sequence
+            }
+
+            /// A further batch of a stamped sweep is about to be DISPATCHED
+            /// (safety round 5, HIGH): the clock must still be this sweep's,
+            /// or the batch would rise inside another onset's period — false
+            /// means send nothing. True re-opens the in-flight window until
+            /// `noteRealized` reports the batch on the wire, so no other
+            /// source can take an onset while these lamps are on their way
+            /// up. An unstamped reservation is not a rise.
+            mutating func beginRealizing(_ reservation: Reservation) -> Bool {
+                guard reservation.stampedAt != nil else { return true }
+                guard lastOnsetOwner == reservation.sequence else { return false }
+                unrealizedStamp = reservation.sequence
+                return true
+            }
+
+            /// What the wire shows after a PARTIAL delivery (safety round 4,
+            /// MEDIUM): the admission recorded the whole sweep's field, but
+            /// the lamps whose PUT failed still show their last frame. The
+            /// source's wire becomes the realized field and its trough may
+            /// only FALL to it — a rising sweep that half-landed must not
+            /// leave the model claiming the whole rise, or the retry lights
+            /// the rest of the room unmeasured. A wire forgotten since the
+            /// admission stays unknown.
+            mutating func correctWire(source: String, frame: WireFrame) {
+                guard var wire = wires[source], wire.lastEmitted != nil else { return }
+                wire.lastEmitted = frame
+                wire.trough = min(wire.trough, frame.relativeLuminance)
+                wires[source] = wire
+            }
+
+            private mutating func reservation(_ verdict: FrameVerdict, stampedAt: Double?,
+                                              prior: (onset: Double?, emitted: WireFrame?,
+                                                      trough: Double)) -> Reservation {
+                let priorOwner = lastOnsetOwner
+                if stampedAt != nil { lastOnsetOwner = sequence; unrealizedStamp = sequence }
+                return Reservation(verdict: verdict, source: currentSource, stampedAt: stampedAt,
                             priorLastOnset: prior.onset,
                             priorLastEmitted: prior.emitted,
                             priorTrough: prior.trough,
+                            priorOwner: priorOwner,
                             sequence: sequence)
             }
 
@@ -1002,10 +1279,10 @@ enum BeatMath {
             /// measures rises from would then belong to neither loop. The record
             /// is provisional precisely so it can be conservative while the send
             /// is still in flight; `commit` settles it.
-            func admit(frame: WireFrame, at t: Double,
+            func admit(frame: WireFrame, source: String = "", at t: Double,
                        minPeriod: Double = FlashSafety.minOnsetLedgerPeriod) -> Reservation {
                 lock.lock(); defer { lock.unlock() }
-                return gate.admit(frame: frame, at: t, minPeriod: minPeriod)
+                return gate.admit(frame: frame, source: source, at: t, minPeriod: minPeriod)
             }
 
             /// Settle a reservation against what the transport did with it. Every
@@ -1024,6 +1301,29 @@ enum BeatMath {
             func forgetWire() {
                 lock.lock(); defer { lock.unlock() }
                 gate.forgetWire()
+            }
+
+            /// One batch of a stamped sweep reached its lamps: the realized-
+            /// onset clock moves to now. False once another source owns the
+            /// clock — the caller sends no further batch (safety round 4).
+            func noteRealized(_ reservation: Reservation, at t: Double) -> Bool {
+                lock.lock(); defer { lock.unlock() }
+                return gate.noteRealized(reservation, at: t)
+            }
+
+            /// A further batch of a stamped sweep is about to go out: false if
+            /// the clock is no longer this sweep's; true holds every other
+            /// source's onsets until the batch is on the wire (safety round 5).
+            func beginRealizing(_ reservation: Reservation) -> Bool {
+                lock.lock(); defer { lock.unlock() }
+                return gate.beginRealizing(reservation)
+            }
+
+            /// A partial delivery: the source's wire becomes the field that
+            /// actually landed (safety round 4).
+            func correctWire(source: String, frame: WireFrame) {
+                lock.lock(); defer { lock.unlock() }
+                gate.correctWire(source: source, frame: frame)
             }
         }
 

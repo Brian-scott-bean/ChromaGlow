@@ -233,9 +233,6 @@ final class StudioScrollStabilityTests: XCTestCase {
                 StudioCustomizationHost(
                     vm: vm,
                     performVM: .constant(nil),
-                    activeCompositionTab: .constant(.palette),
-                    activeHarmonyRule: .constant(HarmonyRule.none),
-                    editingSwatch: .constant(nil),
                     onBackToDecks: {},
                     onSaveComposition: { _ in },
                     onTransportSwitch: { _, _ in }

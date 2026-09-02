@@ -1064,7 +1064,9 @@ for body_name in hc_apply_stop hc_apply_save; do
     body=${!body_name}
     fence_line=$(echo "$body" | grep -n 'presentationFenceHolds(' | head -1 | cut -d: -f1)
     row_line=$(echo "$body" | grep -n 'runningEffects\.removeValue' | head -1 | cut -d: -f1)
-    box_line=$(echo "$body" | grep -n 'activeCompositionBoxes\.removeValue' | head -1 | cut -d: -f1)
+    # The box removal is the eviction funnel since Slice 3 (`evictCompositionState(at:)`
+    # forgets the box AND its gamut in one place); the rule — fence FIRST — is unchanged.
+    box_line=$(echo "$body" | grep -nE 'activeCompositionBoxes\.removeValue|evictCompositionState\(at:' | head -1 | cut -d: -f1)
     if [[ -z "$fence_line" || -z "$row_line" || -z "$box_line" ]] \
         || [[ "$fence_line" -ge "$row_line" ]] || [[ "$fence_line" -ge "$box_line" ]]; then
         fail "composer-hardware-convergence" "$body_name mutates a running row or composition box without first revalidating the presentation fence — a look that started after the outcome returned would be erased"
@@ -1168,6 +1170,7 @@ HC_TESTS=(
     "HueHomeTests/StudioBoardAvailabilityTests.swift"
     "HueHomeTests/StudioPreviewLiveProductionTests.swift"
     "HueHomeTests/StudioLifecycleSerializationTests.swift"
+    "HueHomeTests/ComposerControlAvailabilityTests.swift"
 )
 for f in "${HC_TESTS[@]}"; do
     # A skipped-because-missing suite is coverage silently dropped: rename or
@@ -1205,9 +1208,23 @@ R36_PANEL="HueHome/UI/Composer/CompositionEditorPanel.swift"
 # `isExpanded` ban stays on the host + panel, because StageColorEditor owns a
 # caller-bound `isExpanded` BY DESIGN, and (c)'s one-vertical-ScrollView count
 # is a claim about the host alone.
+# Slice 3 adds the Composer supporting tier: `ComposerSupportingControls`
+# (historical filename ComposerLayerSheet.swift — no sheet lives there any
+# more) renders INSIDE each layer's card, so it is on the one-surface path.
+R36_COMPOSER_SUPPORT="HueHome/UI/Composer/ComposerLayerSheet.swift"
+# …and the Composer's instrument wrappers (S3-2), which render inside the
+# same cards.
+R36_COMPOSER_INSTRUMENTS="HueHome/UI/Composer/ComposerInstrumentControls.swift"
+# …and the Composer's inline colour section (S3-3), which owns the one
+# legitimate `isExpanded` (caller-bound, the editor's own) the same way the
+# board does — so it is on (a) and deliberately NOT on (b).
+R36_COMPOSER_COLOR="HueHome/UI/Composer/ComposerColorSection.swift"
 R36_SURFACES=(
     "$R36_HOST"
     "$R36_PANEL"
+    "$R36_COMPOSER_SUPPORT"
+    "$R36_COMPOSER_INSTRUMENTS"
+    "$R36_COMPOSER_COLOR"
     "HueHome/UI/Studio/StudioBoardView.swift"
     "HueHome/UI/Studio/StudioLookBrowserView.swift"
     "HueHome/UI/Components/StageInstrumentControls.swift"
@@ -1216,9 +1233,10 @@ R36_SURFACES=(
     "HueHome/UI/Components/StageBeatSection.swift"
 )
 
-# (a) No detached presentation from any file on this path. `StudioParamSheet`,
-# `ComposerLayerSheet` and `StageMoreButton` stay DEFINED — Track B owns them —
-# but nothing here may present them.
+# (a) No detached presentation from any file on this path. `StudioParamSheet`
+# stays DEFINED (Track B owns it); `ComposerLayerSheet` and `StageMoreButton`
+# were DELETED in Slice 3 (zero call sites) — their tokens stay in the regex
+# so a resurrection on this path fails the same way a presentation would.
 for f in "${R36_SURFACES[@]}"; do
     [[ -f "$f" ]] || fail "studio-one-surface" "$f is missing — the row-36 rule is unenforceable"
     # Anchored comment filter, as in 14(d): the unanchored `:[[:space:]]*//`
@@ -1230,14 +1248,19 @@ for f in "${R36_SURFACES[@]}"; do
     # made the rule a naming convention rather than a rule.
     r36_present=$(grep -nE '\.sheet\(|\.fullScreenCover\(|\.popover\(|StudioParamSheet\(|ComposerLayerSheet\(|StageMoreButton\(' "$f" 2>/dev/null \
         | grep -vE '^[0-9]+:[[:space:]]*//' || true)
-    # ACCEPTED DEBT, anchored so it cannot widen. The Composer panel's harmony
-    # swatch editor has shipped as a `.popover(item: $editingSwatch)` since
-    # before this rule existed, and rewriting it in place is a Track-B change,
-    # not a guard change. Exactly that one binding is exempt, in exactly that
-    # one file: any OTHER popover — a different binding, an `isPresented:`
-    # form, the same call moved to another surface — still fails.
-    if [[ "$f" == "$R36_PANEL" ]]; then
-        r36_present=$(echo "$r36_present" | grep -vF '.popover(item: $editingSwatch)' || true)
+    # The Composer panel's `.popover(item: $editingSwatch)` carve-out is
+    # GONE (Slice 3, S3-3): per-swatch colour editing expands the shared
+    # StageColorEditor inline (`ComposerColorSection.swift`). No popover is
+    # exempt anywhere on this path any more.
+    # PERMITTED, anchored so it cannot widen: the Entertainment-area BUILDER
+    # (`EntertainmentConfigBuilderView`) is a multi-step creation workflow that
+    # POSTs a new bridge resource — a genuine destination, not a place where a
+    # control was hidden. Exactly that one `isPresented:` binding is exempt, in
+    # exactly that one file; the row that opens it renders inline in the card.
+    # Any other sheet here — a different binding, a `.popover(`, the same call
+    # moved to the panel — still fails.
+    if [[ "$f" == "$R36_COMPOSER_SUPPORT" ]]; then
+        r36_present=$(echo "$r36_present" | grep -vF '.sheet(isPresented: $showEntertainmentBuilder)' || true)
     fi
     if [[ -n "$r36_present" ]]; then
         fail "studio-one-surface" $'the customization host presents a detached surface for its controls again — advanced controls must expand in place:\n'"$f"$':\n'"$r36_present"
@@ -1298,6 +1321,109 @@ if ! grep -q '\.id("reactionBeatControls")' "$R36_PANEL"; then
     fail "studio-one-surface" "the \"reactionBeatControls\" anchor target is gone from $R36_PANEL — the host's scrollTo would resolve to nothing"
 fi
 
+# (e) Slice 3: Composer has NO user-facing "Advanced" concept. The literal
+# `StageCard(title: "Advanced")` was the last Advanced caption in the app; its
+# controls now render in the same card as the essentials. Any string literal
+# containing `Advanced` in either Composer file is a regression — a caption, a
+# sheet title, an accessibility label — as is the retired symbol.
+# Anchored comment filter (two files ⇒ `<file>:<line>:` prefix).
+r36_advanced=$(grep -nE '"[^"]*Advanced[^"]*"|ComposerAdvancedControls|advancedControlIDs|advancedCount\(' "$R36_PANEL" "$R36_COMPOSER_SUPPORT" 2>/dev/null \
+    | grep -vE '^[^:]*:[0-9]+:[[:space:]]*//' || true)
+if [[ -n "$r36_advanced" ]]; then
+    fail "studio-one-surface" $'Composer exposes an "Advanced" concept again — supporting controls belong in the layer card, not behind a caption or a sheet:\n'"$r36_advanced"
+fi
+# The supporting tier must be rendered INSIDE the panel's layer cards (the
+# thing that replaced the Advanced card), and the tab subtree may not regain
+# the `.id(tab)` split that gave the two tiers different identity lifetimes.
+if ! grep -vE '^[[:space:]]*//' "$R36_PANEL" | grep -q 'ComposerSupportingControls(vm: vm, orchestrator: orchestrator,'; then
+    fail "studio-one-surface" "$R36_PANEL no longer renders ComposerSupportingControls inside its layer cards — the supporting tier has no surface"
+fi
+r36_tab_id=$(grep -nE '\.id\(activeCompositionTab\)' "$R36_PANEL" 2>/dev/null \
+    | grep -vE '^[0-9]+:[[:space:]]*//' || true)
+if [[ -n "$r36_tab_id" ]]; then
+    fail "studio-one-surface" $'the Composer tab subtree is keyed by `.id(activeCompositionTab)` again — a tab change tears down in-flight exact entry, and the tiers split lifetimes:\n'"$r36_tab_id"
+fi
+# (f) Slice 3 (S3-5): the host's view identity is the EXACT target key. The
+# running branch keyed on the bare `cardID`, so the same preset on two targets
+# (two rooms; a room and a zone sharing an id; two bridges) shared one SwiftUI
+# identity and carried the first target's gesture/focus state into the second.
+# `RunningLookTargetKey.stableID` carries bridge + kind + group + card +
+# execution and NO generation — a restart, a failover or a Revert must not
+# tear the surface down (the fence handles the write side).
+r36_host_id=$(grep -nE '\.id\(' "$R36_HOST" 2>/dev/null | grep -vE '^[0-9]+:[[:space:]]*//' || true)
+echo "$r36_host_id" | grep -qF 'identity.targetKey.stableID' \
+    || fail "studio-one-surface" $'the customization host no longer keys its identity on the running target key (identity.targetKey.stableID) — the same look on two targets would share one view identity again:\n'"$r36_host_id"
+r36_card_id=$(echo "$r36_host_id" | grep -E 'currentRoomEffect\?\.cardID|\.id\(vm\.currentRoomEffect\?\.cardID|\.id\(effect\.card\.id|\.id\(card\.id' || true)
+[[ -z "$r36_card_id" ]] || fail "studio-one-surface" $'the host keys on the bare cardID again:\n'"$r36_card_id"
+
+# (h) Slice 3 (S3-3): Composer colour is INLINE. The popover carve-out above
+# is gone, so (a) already refuses any `.popover(` on the panel; these pin the
+# replacement so the popover cannot come back under another spelling.
+r36_swatch=$(grep -nE 'editingSwatch|SwatchEditItem|ColorWheelView\(' "$R36_PANEL" "$R36_HOST" "$R36_COMPOSER_COLOR" 2>/dev/null \
+    | grep -vE '^[^:]*:[0-9]+:[[:space:]]*//' || true)
+[[ -z "$r36_swatch" ]] || fail "studio-one-surface" $'the detached swatch editor is back on the Composer path:\n'"$r36_swatch"
+r36_color_src=$(grep -vE '^[[:space:]]*//' "$R36_COMPOSER_COLOR")
+echo "$r36_color_src" | grep -qF 'StageColorEditor(' \
+    || fail "studio-one-surface" "$R36_COMPOSER_COLOR no longer renders the shared StageColorEditor — Composer colour has its own editor again"
+echo "$r36_color_src" | grep -qF 'expandedColorControlID' \
+    || fail "studio-one-surface" "$R36_COMPOSER_COLOR no longer keeps its expansion in session memory (expandedColorControlID)"
+echo "$r36_color_src" | grep -qF 'vm.commitComposerEdit(session)' \
+    || fail "studio-one-surface" "$R36_COMPOSER_COLOR no longer writes the palette through the edit session"
+grep -vE '^[[:space:]]*//' "$R36_PANEL" | grep -qF 'ComposerHarmonySwatches(' \
+    || fail "studio-one-surface" "$R36_PANEL no longer renders ComposerHarmonySwatches — the swatch editor has no inline surface"
+
+# (g) Slice 3 (S3-2): the Composer speaks the shared instrument vocabulary.
+# No gen-1 `StageSlider` and no raw `Toggle(` in any Composer file — every
+# continuous control is a `StageKnob`/`StageFader` (exact entry, double-tap,
+# adjustable accessibility, semantic haptics come with it), every on/off is a
+# `StageToggleRow`, every discrete choice a `StageSteppedEncoder`. And no
+# Composer write re-resolves the box: `activeCompositionBox?.<field> = …`
+# (S3-5) is exactly the pattern the edit session replaced.
+# The re-resolution ban covers every Composer WRITER, not only the Composer
+# files (review round, A-1 / C-2): the host's Perform/auto-anchor, StudioView's
+# save sheet and the Now Playing bar's album-colours path all address the
+# running composition through the edit session now.
+for f in "$R36_HOST" "HueHome/UI/Studio/StudioView.swift" "HueHome/UI/Music/NowPlayingBar.swift"; do
+    r36_direct=$(grep -nE 'activeCompositionBox' "$f" 2>/dev/null \
+        | grep -vE '^[0-9]+:[[:space:]]*//' || true)
+    [[ -z "$r36_direct" ]] || fail "studio-one-surface" $''"$f"$' reaches for activeCompositionBox — the box re-resolved from the selection — instead of the edit session:\n'"$r36_direct"
+done
+grep -vE '^[[:space:]]*//' HueHome/UI/Studio/StudioView.swift | grep -qF 'pendingComposerSaveSession = vm.composerEditSession()' \
+    || fail "studio-one-surface" "StudioView's save sheet no longer captures the edit session when it opens — a room switch while the sheet is up would save the other room's box"
+grep -vE '^[[:space:]]*//' HueHome/UI/Studio/StudioViewModel.swift | grep -qE 'restoredHarmonyRule|harmonyEchoSuppressed' \
+    && fail "studio-one-surface" "the global harmony restore slot is back — a StudioView-scoped chip fed by a global slot let one room's saved rule rewrite another room's palette" || true
+for f in "$R36_PANEL" "$R36_COMPOSER_SUPPORT" "$R36_COMPOSER_INSTRUMENTS"; do
+    r36_gen1=$(grep -nE 'StageSlider[[:space:]]*\(|[^A-Za-z]Toggle[[:space:]]*[(<]' "$f" 2>/dev/null \
+        | grep -vE '^[0-9]+:[[:space:]]*//' || true)
+    [[ -z "$r36_gen1" ]] || fail "studio-one-surface" $''"$f"$' uses a gen-1 slider or a raw Toggle — Composer controls are StageKnob / StageFader / StageSteppedEncoder / StageToggleRow:\n'"$r36_gen1"
+    #     Not just assignments: ANY reference. `if let box = vm.activeCompositionBox
+    #     { write(box, v) }` is the same re-resolution wearing a different
+    #     spelling, and reads belong on `availability.session?.box` too — one
+    #     box per render, captured with its identity.
+    r36_direct=$(grep -nE 'activeCompositionBox' "$f" 2>/dev/null \
+        | grep -vE '^[0-9]+:[[:space:]]*//' || true)
+    [[ -z "$r36_direct" ]] || fail "studio-one-surface" $''"$f"$' reaches for activeCompositionBox — the box re-resolved from the selection — instead of the render'"'"'s captured session:\n'"$r36_direct"
+done
+for f in "$R36_PANEL" "$R36_COMPOSER_SUPPORT" "$R36_COMPOSER_INSTRUMENTS"; do
+    grep -vE '^[[:space:]]*//' "$f" | grep -qF 'commitComposerEdit(' \
+        || fail "studio-one-surface" "$f no longer commits through the Composer edit session"
+done
+grep -vE '^[[:space:]]*//' "$R36_COMPOSER_INSTRUMENTS" | grep -qF 'StageKnob(' \
+    || fail "studio-one-surface" "$R36_COMPOSER_INSTRUMENTS no longer renders a StageKnob"
+grep -vE '^[[:space:]]*//' "$R36_COMPOSER_INSTRUMENTS" | grep -qF 'StageFader(' \
+    || fail "studio-one-surface" "$R36_COMPOSER_INSTRUMENTS no longer renders a StageFader"
+
+# The migration proof exists and runs: the render test that walks every
+# catalog control id per layer/gating state and asserts each one is on the
+# page, with no "Advanced" text and no colour popover.
+R36_CONVERGENCE_TESTS="HueHomeTests/ComposerConvergenceTests.swift"
+[[ -f "$R36_CONVERGENCE_TESTS" ]] \
+    || fail "studio-one-surface" "$R36_CONVERGENCE_TESTS is missing — the Advanced-retirement migration has no proof"
+grep -q 'ComposerConvergenceTests.swift in Sources' HueHome.xcodeproj/project.pbxproj \
+    || fail "studio-one-surface" "ComposerConvergenceTests.swift exists but is not in the test target — it never runs"
+grep -q 'testEveryFormerAdvancedControlIsStillRendered' "$R36_CONVERGENCE_TESTS" \
+    || fail "studio-one-surface" "the per-control migration test is gone from $R36_CONVERGENCE_TESTS"
+
 # ──────────────────────────────────────────────────────────────
 # Guard 14 (Slice 2 R1): the 3 Hz flash ceiling is a REALIZED-FRAME invariant.
 #
@@ -1355,7 +1481,9 @@ done
 # (c) Function-scoped: each ENT loop still routes through the math. Comment-only
 #     lines are stripped, because the prose above each fix necessarily quotes the
 #     literals the rule bans.
-hc_ent_loop() { awk "/private func $1\(/,/^    }\$/" "$HC_ORCH" 2>/dev/null | grep -vE '^[[:space:]]*//' || true; }
+# Whole-line AND trailing comments are stripped (review round, D-5): a positive
+# grep below must be satisfied by CODE, never by a prose mention on a code line.
+hc_ent_loop() { awk "/private func $1\(/,/^    }\$/" "$HC_ORCH" 2>/dev/null | grep -vE '^[[:space:]]*//' | sed -E 's#[[:space:]]*//.*$##' || true; }
 
 for loop in runStrobeEntertainment runPartyEntertainment runThunderstormEntertainment; do
     body=$(hc_ent_loop "$loop")
@@ -1548,13 +1676,405 @@ for loop in runStrobeEntertainment runPartyEntertainment runThunderstormEntertai
     # could stream every frame through it with this guard green and the
     # ledger measuring nothing. `$body` is already comment-stripped by
     # hc_ent_loop, so a prose mention of either spelling is not a call.
-    hc_direct=$(echo "$body" | grep -cE 'sendUniform\(|\.send\(channels:' || true)
+    hc_direct=$(echo "$body" | grep -cE 'sendUniform[[:space:]]*\(|\.send[[:space:]]*\([[:space:]]*channels[[:space:]]*:' || true)
     [[ "$hc_direct" == "0" ]] \
         || fail "slice2-r1" "$loop makes $hc_direct direct transport call(s) (sendUniform( / .send(channels:) — every frame must go through emitGatedFrame(, or the ledger is measuring something other than the wire"
     hc_gated=$(echo "$body" | grep -c 'emitGatedFrame(' || true)
     [[ "$hc_gated" -ge 1 ]] \
         || fail "slice2-r1" "$loop makes no emitGatedFrame( call — a loop that streams nothing through the gate is not gated at all"
 done
+
+# (i) (Slice 3) THE COMPOSITION LOOP IS FLASH-CLASS TOO.
+#
+#     `runCompositionEntertainment` was omitted from the list above because it
+#     streams a frame PER CHANNEL and so cannot call `emitGatedFrame`, which is
+#     uniform. The omission was not a judgement that compositions cannot flash:
+#     `EnvelopeConfig.value(at:)` renders `.pulse` as a SQUARE wave at `bpm/60`
+#     Hz with `bpm` authored to 240 — a full-depth 4 Hz on/off across every
+#     light — and `.flicker` carries an unconditional ~3.68 Hz component at any
+#     tempo. The loop sent straight to the transport at 25 fps, with no ledger
+#     and the delivery answer discarded, so both realized above the ceiling.
+#
+#     Same structural rule, its own gate: zero direct sends, every frame through
+#     `emitGatedCompositionFrame`.
+hc_comp_body=$(hc_ent_loop runCompositionEntertainment)
+[[ -n "$hc_comp_body" ]] \
+    || fail "slice3-flash" "runCompositionEntertainment not found in $HC_ORCH — the composition flash rule is unenforceable"
+hc_comp_direct=$(echo "$hc_comp_body" | grep -cE 'sendUniform[[:space:]]*\(|\.send[[:space:]]*\([[:space:]]*channels[[:space:]]*:' || true)
+[[ "$hc_comp_direct" == "0" ]] \
+    || fail "slice3-flash" "runCompositionEntertainment makes $hc_comp_direct direct transport call(s) — a composition frame that skips emitGatedCompositionFrame( is a frame the ledger never measured, and .pulse @ 240 bpm is 4 Hz"
+echo "$hc_comp_body" | grep -q 'emitGatedCompositionFrame(' \
+    || fail "slice3-flash" "runCompositionEntertainment no longer streams through emitGatedCompositionFrame("
+# The ledger must be THE BRIDGE'S, shared with the uniform loops. A composition
+# holding its own would get a fresh 0.34 s budget beside a Strobe on the same
+# wire, and each could admit an onset one frame after the other's.
+echo "$hc_comp_body" | grep -q 'flashOnsetLedger(forBridge:' \
+    || fail "slice3-flash" "runCompositionEntertainment no longer resolves the per-bridge shared ledger — a private ledger measures one loop, not the wire"
+# Only a DELIVERED frame becomes the held frame. Holding a dropped one would
+# repeat something no light ever displayed.
+echo "$hc_comp_body" | grep -qE 'if[[:space:]]+gated\.outcome\.delivered[[:space:]]*\{[[:space:]]*lastEmitted' \
+    || fail "slice3-flash" "runCompositionEntertainment updates its held frame without checking delivery — a frame the transport dropped is not what the bridge is showing"
+
+# The composition gate's own body: reserve → send → commit, in that order, with
+# nothing between the send and the commit, and the reservation taken on the
+# FIELD reduction rather than on one arbitrary channel.
+hc_comp_emit=$(awk '/private func emitGatedCompositionFrame\(/,/^    }$/' "$HC_ORCH" 2>/dev/null | grep -vE '^[[:space:]]*//' || true)
+[[ -n "$hc_comp_emit" ]] \
+    || fail "slice3-flash" "emitGatedCompositionFrame is gone from $HC_ORCH"
+echo "$hc_comp_emit" | grep -q 'BeatMath.FlashSafety.fieldFrame(' \
+    || fail "slice3-flash" "emitGatedCompositionFrame no longer reserves on FlashSafety.fieldFrame( — measuring one channel is not measuring the field a viewer receives"
+echo "$hc_comp_emit" | grep -q 'BeatMath.FlashSafety.minOnsetLedgerPeriod' \
+    || fail "slice3-flash" "emitGatedCompositionFrame no longer enforces minOnsetLedgerPeriod (0.34 s, the invariant's own unit)"
+hc_ce_admit=$(echo "$hc_comp_emit" | grep -n 'ledger.admit(' | head -1 | cut -d: -f1)
+hc_ce_send=$(echo "$hc_comp_emit" | grep -n '\.send(channels:' | head -1 | cut -d: -f1)
+hc_ce_commit=$(echo "$hc_comp_emit" | grep -n 'ledger.commit(' | head -1 | cut -d: -f1)
+[[ -n "$hc_ce_admit" && -n "$hc_ce_send" && -n "$hc_ce_commit" ]] \
+    || fail "slice3-flash" "emitGatedCompositionFrame is missing one of admit/send/commit — all three, in that order, are the mechanism"
+[[ "$hc_ce_admit" -lt "$hc_ce_send" && "$hc_ce_send" -lt "$hc_ce_commit" ]] \
+    || fail "slice3-flash" "emitGatedCompositionFrame's admit/send/commit are out of order (admit=$hc_ce_admit send=$hc_ce_send commit=$hc_ce_commit) — committing before the send stamps an onset the wire may never have shown"
+# No exit between the send and the commit: bailing out there leaves the ledger
+# holding a frame the wire never saw (M-2), the same defect as a dropped send by
+# another route.
+hc_ce_between=$(echo "$hc_comp_emit" | sed -n "$((hc_ce_send + 1)),$((hc_ce_commit - 1))p" \
+    | grep -cE '(^|[^A-Za-z0-9_])(return|throw|break|continue|try|fatalError|exit)([^A-Za-z0-9_]|$)' || true)
+[[ "$hc_ce_between" == "0" ]] \
+    || fail "slice3-flash" "emitGatedCompositionFrame can exit between its send and its commit — the ledger would keep an onset the wire never showed"
+# A refusal repeats the frame ALREADY on the wire. Reconstructing one is how the
+# first pass shipped a hold frame that was itself a rise (blocker B1). Pinned
+# as the BRANCH, not the word (review round, C-4): the parameter name alone
+# satisfied `grep -q lastEmitted` with the hold branch deleted.
+echo "$hc_comp_emit" | grep -qE 'else if let lastEmitted[[:space:]]*\{' \
+    || fail "slice3-flash" "emitGatedCompositionFrame no longer holds the last emitted per-channel frame — a refusal must repeat what the bridge is showing, not a reconstruction"
+echo "$hc_comp_emit" | grep -q 'onWire = lastEmitted' \
+    || fail "slice3-flash" "emitGatedCompositionFrame's hold branch no longer puts the last emitted frame on the wire"
+# A COLD refusal (no delivered frame to repeat) sends the ledger's own hold
+# frame — black at the last KNOWN chromaticity — to every channel (D-3). Black
+# at the requested chromaticity was a chroma step against the frame the bridge
+# was still showing.
+echo "$hc_comp_emit" | grep -q 'case .hold(let held) = reservation.verdict' \
+    || fail "slice3-flash" "emitGatedCompositionFrame's cold refusal no longer sends the ledger's hold frame — black at the requested chromaticity is a chroma step on the wire"
+echo "$hc_comp_emit" | grep -q 'x: held.x, y: held.y, brightness: held.brightness' \
+    || fail "slice3-flash" "emitGatedCompositionFrame's cold hold does not spread the held frame across the channels"
+# The commit takes the transport's answer, never a literal.
+echo "$hc_comp_emit" | grep -q 'ledger.commit(reservation, delivered: delivered' \
+    || fail "slice3-flash" "emitGatedCompositionFrame no longer commits on the transport's delivery answer — a literal there stamps onsets the wire never showed"
+# Non-throwing: a `throws` signature would let `try` exit between send and commit.
+echo "$hc_comp_emit" | grep -qE 'func emitGatedCompositionFrame\(' \
+    && ! echo "$hc_comp_emit" | grep -qE '\)[[:space:]]*async[[:space:]]+throws' \
+    || fail "slice3-flash" "emitGatedCompositionFrame is throwing — a `try` between its send and its commit is an exit the ordering check cannot see"
+
+# The field reduction itself. These pin the two choices that decide whether a
+# real flash is measured: the MEAN of the channels' luminances (not the max, and
+# not the cube of the mean dimming, which understates every mixed frame), and a
+# LUMINANCE-WEIGHTED chromaticity (so a chase's dark tail cannot dilute the red
+# rule). Scoped to the function body so the prose above it cannot satisfy them.
+hc_field=$(awk '/static func fieldFrame\(/,/^        \}$/' "$HC_BEAT" 2>/dev/null | grep -vE '^[[:space:]]*//' || true)
+[[ -n "$hc_field" ]] \
+    || fail "slice3-flash" "BeatMath.FlashSafety.fieldFrame is gone from $HC_BEAT"
+echo "$hc_field" | grep -q 'relativeLuminance } / count' \
+    || fail "slice3-flash" "fieldFrame no longer averages the channels' relativeLuminance — a max reduction gates a single twinkling lamp as a room-wide flash, and averaging DIMMING instead understates every mixed frame"
+echo "$hc_field" | grep -q 'relativeLuminance } / totalWeight' \
+    || fail "slice3-flash" "fieldFrame's chromaticity is no longer luminance-weighted — an unweighted mean lets a dark tail drag a saturated-red strike off red until the red rule stops firing"
+echo "$hc_field" | grep -q 'inverseDimmingLuminance(' \
+    || fail "slice3-flash" "fieldFrame no longer inverts the dimming curve — without it the returned frame's own relativeLuminance is not the field luminance the gate was asked to measure"
+echo "$hc_field" | grep -q 'let count = Double(frames.count)' \
+    || fail "slice3-flash" "fieldFrame's `count` is no longer the channel count — a rebound divisor turns the mean into something else while the mean-shaped grep stays green"
+
+# (D-4) The transport has exactly TWO entry points in the whole orchestrator —
+# the two gates — and no other production file calls either. Body-scoped
+# counts cannot see a helper defined OUTSIDE the scanned bodies that forwards
+# to the transport; this file-wide count can.
+hc_orch_code=$(grep -vE '^[[:space:]]*//' "$HC_ORCH" | sed -E 's#[[:space:]]*//.*$##')
+hc_send_channels=$(echo "$hc_orch_code" | grep -cE '\.send[[:space:]]*\([[:space:]]*channels[[:space:]]*:' || true)
+[[ "$hc_send_channels" == "1" ]] \
+    || fail "slice3-flash" "$HC_ORCH calls .send(channels:) $hc_send_channels time(s) — exactly one, inside emitGatedCompositionFrame, is the rule; a second caller is an ungated frame path"
+hc_send_uniform=$(echo "$hc_orch_code" | grep -cE 'sendUniform[[:space:]]*\(' || true)
+[[ "$hc_send_uniform" == "1" ]] \
+    || fail "slice3-flash" "$HC_ORCH calls sendUniform( $hc_send_uniform time(s) — exactly one, inside emitGatedFrame, is the rule"
+hc_other_senders=$(grep -rlE '\.send[[:space:]]*\([[:space:]]*channels[[:space:]]*:|sendUniform[[:space:]]*\(' HueHome --include='*.swift' 2>/dev/null \
+    | grep -vE 'UnifiedOrchestrator\.swift$|HueEntertainmentClient\.swift$' || true)
+[[ -z "$hc_other_senders" ]] \
+    || fail "slice3-flash" $'a production file outside the orchestrator reaches the Entertainment transport:\n'"$hc_other_senders"
+
+# (j) (Slice 3 safety rounds 1–2) THE REST PATH IS FLASH-CLASS TOO.
+#
+#     `runCompositionScheduler` is the composition's SECOND shipping frame path
+#     — the user-selectable Room transport, the DTLS failover destination, and
+#     what a second room on an already-streaming bridge gets — and it ticked at
+#     120 ms with no ledger: `.pulse` at 240 bpm realized ~4 Hz over REST. The
+#     rule: every REST sweep reserves AT DISPATCH, inside its own closure, on
+#     the field the wire will show (`projectedField` — last delivered per light,
+#     this sweep replaced), against the BRIDGE's shared ledger; a refusal sends
+#     NOTHING and reports `cancelled 0/0`; an admission is committed on the
+#     transport's word at the terminal; the startup PRIME is gated the same
+#     way; nothing is reserved at enqueue (a serial mailbox supersedes pending
+#     work, and rolling those back forgot the wire); and every stop tells the
+#     ledger the wire is unknown, AFTER its session is deactivated, with a
+#     ledger that refuses to restore a wire model a forget predates.
+hc_orch_code=$(grep -vE '^[[:space:]]*//' "$HC_ORCH" | sed -E 's#[[:space:]]*//.*$##; s#/\*.*\*/##g')
+hc_gate=$(awk '/struct OnsetGate \{/,/^        \}$/' "$HC_BEAT" 2>/dev/null | grep -vE '^[[:space:]]*//' || true)
+[[ -n "$hc_gate" ]] || fail "slice3-flash" "OnsetGate not found in $HC_BEAT"
+hc_rest_term=$(hc_ent_loop composerWorkTerminated)
+hc_rest=$(hc_ent_loop runCompositionScheduler)
+[[ -n "$hc_rest" ]] \
+    || fail "slice3-flash" "runCompositionScheduler not found in $HC_ORCH — the REST flash rule is unenforceable"
+echo "$hc_rest" | grep -qE 'flashLedger\.admit\(|composerFlashReservations\[' \
+    && fail "slice3-flash" "runCompositionScheduler reserves at ENQUEUE again — a superseded reservation's rollback forgets the wire on every busy bridge" || true
+# Every sweep closure admits at dispatch, before any PUT, and sends nothing on refusal.
+# A batched builder (safety round 4, HIGH): after every batch that lit a lamp
+# the bridge's clock moves to THAT delivery, and the sweep stops if the clock
+# has passed to another source since the admit — the clock a co-active DTLS
+# loop is judged against is when the lamps rose, not when the sweep was
+# admitted. And every terminal (stop-probe, lost clock, completed) forwards
+# the delivered indices — a missing argument defaults to "every index".
+hc_batched_builder_pins() {
+    local builder="$1" body="$2" realized terminal_count
+    realized=$(echo "$body" | grep -n 'self?.composerBatchRealized(token: token) != true {' | head -1 | cut -d: -f1)
+    [[ -n "$realized" ]] \
+        || fail "slice3-flash" "$builder no longer moves the bridge's clock to each realized batch (round 4, HIGH)"
+    echo "$body" | sed -n "$((realized - 1)),$((realized))p" | grep -q 'if failuresThisBatch < attemptedThisBatch,' \
+        || fail "slice3-flash" "$builder's clock move is not conditioned on a lamp having actually risen in the batch"
+    echo "$body" | sed -n "$((realized + 1)),$((realized + 6))p" | grep -q 'kind: .cancelled,' \
+        || fail "slice3-flash" "$builder does not stop when the clock has passed to another source (round 4)"
+    echo "$body" | sed -n "$((realized + 1)),$((realized + 7))p" | grep -q '^ *return$' \
+        || fail "slice3-flash" "$builder's lost-clock terminal is not followed by a return — the next batch would still PUT"
+    local sleep_line
+    sleep_line=$(echo "$body" | grep -n 'Task.sleep(for: .milliseconds(80))' | head -1 | cut -d: -f1)
+    [[ -n "$sleep_line" && "$realized" -lt "$sleep_line" ]] \
+        || fail "slice3-flash" "$builder moves the clock after the inter-batch sleep, not at the delivery"
+    # Round 5 (HIGH): before a batch is DISPATCHED the sweep must still own
+    # the clock, and from that dispatch until the lamps report up the rise is
+    # in flight — inside the loop, before the task group.
+    local loop_line dispatching group_line
+    loop_line=$(echo "$body" | grep -n 'for batchStart in stride(' | head -1 | cut -d: -f1)
+    dispatching=$(echo "$body" | grep -n 'guard self?.composerBatchDispatching(token: token) == true else {' | head -1 | cut -d: -f1)
+    group_line=$(echo "$body" | grep -n 'await withTaskGroup(' | head -1 | cut -d: -f1)
+    [[ -n "$loop_line" && -n "$dispatching" && -n "$group_line" && "$loop_line" -lt "$dispatching" && "$dispatching" -lt "$group_line" ]] \
+        || fail "slice3-flash" "$builder no longer probes the clock (and opens the in-flight hold) before each batch is dispatched (round 5, HIGH)"
+    echo "$body" | sed -n "$((dispatching + 1)),$((dispatching + 6))p" | grep -q '^ *return$' \
+        || fail "slice3-flash" "$builder's pre-dispatch refusal is not followed by a return — the batch would still PUT"
+    # Every terminal from the batch loop on forwards the delivered indices —
+    # a missing argument defaults to "every index" (round 4, LOW).
+    local terms fwd
+    terms=$(echo "$body" | sed -n "$loop_line,\$p" | grep -c 'composerWorkTerminated(' || true)
+    fwd=$(echo "$body" | sed -n "$loop_line,\$p" | grep -c 'deliveredIndices: deliveredIndices)' || true)
+    [[ "$terms" -ge 4 && "$terms" == "$fwd" ]] \
+        || fail "slice3-flash" "$builder has a terminal after the batch loop starts that no longer forwards deliveredIndices ($fwd of $terms)"
+}
+for builder in makeComposerGradientWork makeComposerPerLightWork makeComposerGroupedWork; do
+    body=$(hc_ent_loop "$builder")
+    [[ -n "$body" ]] || fail "slice3-flash" "$builder not found in $HC_ORCH"
+    started=$(echo "$body" | grep -n 'composerWorkStarted(token)' | head -1 | cut -d: -f1)
+    admit=$(echo "$body" | grep -n 'admitComposerSweep(' | head -1 | cut -d: -f1)
+    refusal=$(echo "$body" | awk -v a="$admit" 'NR > a && /kind: .cancelled, attemptedOperations: 0, failures: 0/ { print NR; exit }')
+    firstput=$(echo "$body" | grep -nE 'api\.(setGroupedLightEffect|setLight|put|setGradient)' | head -1 | cut -d: -f1)
+    [[ -n "$started" && -n "$admit" && -n "$refusal" && -n "$firstput" ]] \
+        || fail "slice3-flash" "$builder is missing its dispatch-time admit / refusal terminal / PUT (started=$started admit=$admit refusal=$refusal put=$firstput)"
+    [[ "$started" -lt "$admit" && "$admit" -lt "$refusal" && "$refusal" -lt "$firstput" ]] \
+        || fail "slice3-flash" "$builder's started/admit/refusal/PUT are out of order (started=$started admit=$admit refusal=$refusal put=$firstput) — a PUT before the admit is a frame the ledger never measured"
+    # (round 3, #4) The admit is a GUARD whose else-block RETURNS, and nothing
+    # reaches the API — through any helper — before it.
+    echo "$body" | grep -qE 'guard (self\?\.)?admitComposerSweep\(' \
+        || fail "slice3-flash" "$builder's admit is not a guard — a refused sweep would fall through to its PUT"
+    ret=$(echo "$body" | sed -n "$((refusal)),$((refusal + 3))p" | grep -c 'return' || true)
+    [[ "$ret" -ge 1 ]] \
+        || fail "slice3-flash" "$builder's refusal terminal is not followed by a return — a refused sweep would still PUT"
+    early_api=$(echo "$body" | sed -n "1,$((admit - 1))p" | grep -cE 'api\.|await self\?\.[A-Za-z]+\(api' || true)
+    [[ "$early_api" == "0" ]] \
+        || fail "slice3-flash" "$builder touches the API ($early_api line(s)) before its admit"
+    # The sweep the admit reserves on is built from the frames the closure
+    # will send — a strip projects the AVERAGED brightness its PUT carries.
+    case "$builder" in
+        makeComposerGradientWork)
+            echo "$body" | grep -q 'let sweep = entries.flatMap' \
+                || fail "slice3-flash" "$builder no longer builds its sweep from its entries"
+            echo "$body" | grep -q 'brightness: entry.isGradient ? stripBrightness : frames\[\$0\].brightness' \
+                || fail "slice3-flash" "$builder's strip projection is no longer the averaged brightness the PUT carries (round 3, #2)"
+            echo "$body" | grep -q 'for o in outcomes where o.ok { deliveredIndices += o.indices }' \
+                || fail "slice3-flash" "$builder no longer reports which channels were DELIVERED"
+            hc_batched_builder_pins "$builder" "$body"
+            ;;
+        makeComposerPerLightWork)
+            echo "$body" | grep -q 'let sweep = targets.compactMap' \
+                || fail "slice3-flash" "$builder no longer builds its sweep from its targets"
+            echo "$body" | grep -q 'for o in outcomes where o.ok { deliveredIndices.append(o.index) }' \
+                || fail "slice3-flash" "$builder no longer reports which channels were DELIVERED"
+            hc_batched_builder_pins "$builder" "$body"
+            ;;
+        makeComposerGroupedWork)
+            probe=$(echo "$body" | grep -n 'guard await stillCurrent() else' | head -1 | cut -d: -f1)
+            [[ -n "$probe" && "$probe" -lt "$admit" ]] \
+                || fail "slice3-flash" "$builder no longer probes before its admit — a stale grouped write behind a stop (round 3, #5)"
+            ;;
+    esac
+done
+# The admit itself: projected field, the bridge's ledger, the invariant's period, rollback on refusal, registration on admission.
+hc_admit=$(hc_ent_loop admitComposerSweep)
+[[ -n "$hc_admit" ]] || fail "slice3-flash" "admitComposerSweep is gone from $HC_ORCH"
+echo "$hc_admit" | grep -q 'flashOnsetLedger(forBridge: runtime.restBridgeIdentity ?? "")' \
+    || fail "slice3-flash" "admitComposerSweep no longer resolves the per-bridge shared ledger keyed exactly as the loops key it"
+echo "$hc_admit" | grep -q 'BeatMath.FlashSafety.projectedField(' \
+    || fail "slice3-flash" "admitComposerSweep no longer reserves on the PROJECTED field — a stale rotation slice's real rise would reach the wire unmeasured"
+echo "$hc_admit" | grep -q 'lastDelivered: runtime.lastDeliveredFrames' \
+    || fail "slice3-flash" "admitComposerSweep projects over something other than the runtime's last DELIVERED frames"
+echo "$hc_admit" | grep -q 'BeatMath.FlashSafety.fieldFrame(channels: projected)' \
+    || fail "slice3-flash" "admitComposerSweep no longer reduces the projected field through fieldFrame"
+echo "$hc_admit" | grep -q 'BeatMath.FlashSafety.minOnsetLedgerPeriod' \
+    || fail "slice3-flash" "admitComposerSweep no longer enforces minOnsetLedgerPeriod"
+hc_ad_admit=$(echo "$hc_admit" | grep -n 'ledger.admit(' | head -1 | cut -d: -f1)
+hc_ad_refuse=$(echo "$hc_admit" | grep -n 'ledger.commit(reservation, delivered: false' | head -1 | cut -d: -f1)
+hc_ad_reg=$(echo "$hc_admit" | grep -n 'composerFlashReservations\[token\] = (ledger, reservation, sweep)' | head -1 | cut -d: -f1)
+[[ -n "$hc_ad_admit" && -n "$hc_ad_refuse" && -n "$hc_ad_reg" && "$hc_ad_admit" -lt "$hc_ad_refuse" && "$hc_ad_refuse" -lt "$hc_ad_reg" ]] \
+    || fail "slice3-flash" "admitComposerSweep's admit / refusal-rollback / registration are missing or out of order (admit=$hc_ad_admit refuse=$hc_ad_refuse register=$hc_ad_reg)"
+echo "$hc_admit" | grep -q 'runtime.generation == token.generation' \
+    || fail "slice3-flash" "admitComposerSweep no longer refuses a stale-generation token"
+echo "$hc_admit" | grep -q 'compositionGenerations\[runtimeKey\] == token.generation' \
+    || fail "slice3-flash" "admitComposerSweep no longer fences on the generation REGISTRY — the stop window would admit (round 3, #5)"
+echo "$hc_admit" | grep -q 'let runtimeKey = CompositionPlaybackKey(bridgeKey: token.bridgeKey, roomID: token.scope.roomID)' \
+    || fail "slice3-flash" "admitComposerSweep resolves its runtime by something other than the token's exact key"
+echo "$hc_admit" | grep -q 'source: BeatMath.FlashSafety.restSource(roomID: token.scope.roomID)' \
+    || fail "slice3-flash" "admitComposerSweep no longer names its room as the frame SOURCE — two rooms on one bridge would judge each other's fields (round 3, #1)"
+# The settle: commit on the transport's word; delivered frames become the per-light wire state.
+hc_settle=$(hc_ent_loop settleFlashReservation)
+[[ -n "$hc_settle" ]] || fail "slice3-flash" "settleFlashReservation is gone from $HC_ORCH"
+echo "$hc_settle" | grep -q 'if let landed, landed.count < Set(flash.sweep.map(\\.index)).count {' \
+    || fail "slice3-flash" "settleFlashReservation no longer detects a PARTIAL delivery (round 4, MEDIUM)"
+echo "$hc_settle" | grep -q 'flash.ledger.correctWire(' \
+    || fail "slice3-flash" "settleFlashReservation no longer corrects the source's wire after a partial delivery"
+echo "$hc_settle" | grep -q 'lastDelivered: runtime.lastDeliveredFrames, sweep: unknownAsBlack))' \
+    || fail "slice3-flash" "the partial-delivery correction is not the field of what actually LANDED with never-delivered lamps read as black (round 5)"
+echo "$hc_settle" | grep -q '.filter { !landed.contains($0.index) && runtime.lastDeliveredFrames\[$0.index\] == nil }' \
+    || fail "slice3-flash" "the never-delivered lamps of a partial sweep are no longer projected as black"
+echo "$hc_settle" | grep -q '.map { (index: $0.index, x: $0.x, y: $0.y, brightness: 0.0) }' \
+    || fail "slice3-flash" "the never-delivered lamps of a partial sweep are projected at something other than black"
+hc_realized=$(hc_ent_loop composerBatchRealized)
+[[ -n "$hc_realized" ]] || fail "slice3-flash" "composerBatchRealized is gone from $HC_ORCH"
+echo "$hc_realized" | grep -q 'return flash.ledger.noteRealized(flash.reservation, at: CACurrentMediaTime())' \
+    || fail "slice3-flash" "composerBatchRealized no longer moves the ledger's clock through noteRealized"
+echo "$hc_realized" | grep -q 'guard let flash = composerFlashReservations\[token\] else { return false }' \
+    || fail "slice3-flash" "composerBatchRealized answers true for a token with no reservation — unknown must stop the sweep"
+hc_dispatching=$(hc_ent_loop composerBatchDispatching)
+[[ -n "$hc_dispatching" ]] || fail "slice3-flash" "composerBatchDispatching is gone from $HC_ORCH (round 5)"
+echo "$hc_dispatching" | grep -q 'return flash.ledger.beginRealizing(flash.reservation)' \
+    || fail "slice3-flash" "composerBatchDispatching no longer opens the in-flight hold through beginRealizing"
+echo "$hc_dispatching" | grep -q 'guard let flash = composerFlashReservations\[token\] else { return false }' \
+    || fail "slice3-flash" "composerBatchDispatching answers true for a token with no reservation"
+echo "$hc_settle" | grep -q 'composerFlashReservations.removeValue(forKey: token)' \
+    || fail "slice3-flash" "settleFlashReservation no longer consumes the reservation — a second terminal would commit it twice"
+echo "$hc_settle" | grep -q 'flash.ledger.commit(flash.reservation, delivered: delivered' \
+    || fail "slice3-flash" "settleFlashReservation no longer commits on the transport's delivery answer"
+echo "$hc_settle" | grep -q 'runtime.lastDeliveredFrames\[f.index\] = (f.x, f.y, f.brightness)' \
+    || fail "slice3-flash" "settleFlashReservation no longer records the delivered sweep as the per-light wire state — the next projection would be stale"
+echo "$hc_settle" | grep -q 'for f in flash.sweep where landed?.contains(f.index) ?? true' \
+    || fail "slice3-flash" "settleFlashReservation records the whole sweep as delivered — a 1-of-20 sweep would leave the model claiming 20 (round 3, #3)"
+hc_st_merge=$(echo "$hc_settle" | grep -n 'runtime.lastDeliveredFrames\[f.index\]' | head -1 | cut -d: -f1)
+hc_st_write=$(echo "$hc_settle" | grep -n 'compositionRuntimes\[runtimeKey\] = runtime' | head -1 | cut -d: -f1)
+[[ -n "$hc_st_merge" && -n "$hc_st_write" && "$hc_st_merge" -lt "$hc_st_write" ]] \
+    || fail "slice3-flash" "settleFlashReservation merges into a copy it never writes back"
+echo "$hc_rest_term" | grep -q 'deliveredIndices: deliveredIndices)' \
+    || fail "slice3-flash" "composerWorkTerminated no longer forwards the delivered indices"
+echo "$hc_rest_term" | grep -q 'settleFlashReservation(token, delivered: attemptedOperations > failures,' \
+    || fail "slice3-flash" "composerWorkTerminated no longer commits the flash reservation on the transport's word (attemptedOperations > failures)"
+hc_rest_enq=$(hc_ent_loop enqueueComposerWork)
+echo "$hc_rest_enq" | grep -qE 'composerFlashReservations|flash:' \
+    && fail "slice3-flash" "enqueueComposerWork touches flash reservations again — pending work must hold none" || true
+echo "$hc_orch_code" | grep -q 'for token in Array(composerFlashReservations.keys)' \
+    && fail "slice3-flash" "stop-all pre-emptively rolls back EXECUTING sweeps' reservations — un-stamping a realized onset lets the next one come early" || true
+# The prime: gated, reserve before the PUT, commit on the PUT's outcome.
+hc_prime=$(hc_ent_loop performCompositionPrime)
+[[ -n "$hc_prime" ]] || fail "slice3-flash" "performCompositionPrime is gone from $HC_ORCH"
+hc_pr_admit=$(echo "$hc_prime" | grep -n 'flashLedger.admit(' | head -1 | cut -d: -f1)
+hc_pr_refuse=$(echo "$hc_prime" | grep -n 'flashLedger.commit(reservation, delivered: false' | head -1 | cut -d: -f1)
+hc_pr_put=$(echo "$hc_prime" | grep -n 'api.setGroupedLightEffect(' | head -1 | cut -d: -f1)
+hc_pr_commit=$(echo "$hc_prime" | grep -n 'flashLedger.commit(reservation, delivered: delivered' | head -1 | cut -d: -f1)
+[[ -n "$hc_pr_admit" && -n "$hc_pr_refuse" && -n "$hc_pr_put" && -n "$hc_pr_commit" ]] \
+    || fail "slice3-flash" "performCompositionPrime is not gated (admit=$hc_pr_admit refuse=$hc_pr_refuse put=$hc_pr_put commit=$hc_pr_commit) — the restart's first frame on Room transport would be an unmeasured rise"
+[[ "$hc_pr_admit" -lt "$hc_pr_refuse" && "$hc_pr_refuse" -lt "$hc_pr_put" && "$hc_pr_put" -lt "$hc_pr_commit" ]] \
+    || fail "slice3-flash" "performCompositionPrime's admit/refusal/PUT/commit are out of order"
+echo "$hc_prime" | grep -q 'flashOnsetLedger(forBridge: room.bridgeID ?? "")' \
+    || fail "slice3-flash" "performCompositionPrime keys the ledger differently from the loops"
+echo "$hc_prime" | grep -qE 'guard reservation\.verdict\.wasAdmitted else \{' \
+    || fail "slice3-flash" "performCompositionPrime no longer GUARDS on the verdict — a refused prime would still PUT"
+echo "$hc_prime" | grep -q 'source: BeatMath.FlashSafety.restSource(roomID: roomID)' \
+    || fail "slice3-flash" "performCompositionPrime no longer names its room as the frame source"
+echo "$hc_prime" | grep -q 'if runtime.lastDeliveredFrames.isEmpty {' \
+    || fail "slice3-flash" "performCompositionPrime overwrites a sweep that dispatched during its PUT (round 3, #6)"
+echo "$hc_prime" | grep -q 'runtime.gradientMap?.totalChannels ?? max(1, runtime.lightIDs.count)' \
+    || fail "slice3-flash" "performCompositionPrime records the prime over the wrong channel space"
+# (round 3, #1) The DTLS gates name the one Entertainment source; the ledger keeps per-source wire state.
+for g in emitGatedFrame emitGatedCompositionFrame; do
+    hc_ent_loop "$g" | grep -q 'source: BeatMath.FlashSafety.entertainmentSource' \
+        || fail "slice3-flash" "$g no longer names the Entertainment session as its frame source"
+done
+echo "$hc_gate" | grep -q 'private var wires: \[String: SourceWire\]' \
+    || fail "slice3-flash" "OnsetGate no longer keeps PER-SOURCE wire state — two frame sources on one bridge would judge each other's fields"
+echo "$hc_gate" | grep -q 'currentSource = source' \
+    || fail "slice3-flash" "OnsetGate.admit no longer switches to the reservation's source"
+echo "$hc_gate" | grep -q 'currentSource = reservation.source' \
+    || fail "slice3-flash" "OnsetGate.commit no longer restores into the reservation's source"
+echo "$hc_gate" | grep -q 'for key in wires.keys { wires\[key\]?.lastEmitted = nil }' \
+    || fail "slice3-flash" "OnsetGate.forgetWire no longer forgets EVERY source's wire"
+# (D-2) The wire is unknown after EVERY session stop, and after every composition stop — AFTER deactivation.
+hc_stop_sites=$(echo "$hc_orch_code" | grep -cE '\.stopSession\(\)' || true)
+hc_forget_after=$(echo "$hc_orch_code" | grep -A 3 -E '\.stopSession\(\)' | grep -c 'forgetWire()' || true)
+[[ "$hc_stop_sites" -ge 8 && "$hc_forget_after" -ge "$hc_stop_sites" ]] \
+    || fail "slice3-flash" "$hc_forget_after of $hc_stop_sites stopSession() sites are followed by forgetWire() within three lines — every one must be"
+hc_stop_comp=$(awk '/func stopCompositionMode\(/,/^    }$/' "$HC_ORCH" 2>/dev/null | grep -vE '^[[:space:]]*//' | sed -E 's#[[:space:]]*//.*$##' || true)
+hc_sc_deact=$(echo "$hc_stop_comp" | grep -n 'deactivateComposerTelemetrySession(' | head -1 | cut -d: -f1)
+hc_sc_forget=$(echo "$hc_stop_comp" | grep -n 'flashOnsetLedger(forBridge: bridgeID ?? "").forgetWire()' | tail -1 | cut -d: -f1)
+[[ -n "$hc_sc_deact" && -n "$hc_sc_forget" && "$hc_sc_deact" -lt "$hc_sc_forget" ]] \
+    || fail "slice3-flash" "stopCompositionMode does not forget the wire AFTER deactivating its session (deactivate=$hc_sc_deact forget=$hc_sc_forget) — the pending rollback would restore the bright frame the stop just turned off"
+# The ledger refuses to restore a wire model a forget predates.
+echo "$hc_gate" | grep -q 'mutating func noteRealized(_ reservation: Reservation, at t: Double) -> Bool {' \
+    || fail "slice3-flash" "OnsetGate.noteRealized is gone (round 4, HIGH)"
+hc_note=$(echo "$hc_gate" | awk '/mutating func noteRealized\(/,/^            \}$/')
+echo "$hc_note" | grep -q 'return lastOnsetOwner == reservation.sequence' \
+    || fail "slice3-flash" "noteRealized no longer tells a sweep whose clock another source has taken"
+hc_note_move=$(echo "$hc_note" | grep -n 'if t.isFinite, let last = lastOnset, t > last { lastOnset = t }' | head -1 | cut -d: -f1)
+hc_note_owner=$(echo "$hc_note" | grep -n 'return lastOnsetOwner == reservation.sequence' | head -1 | cut -d: -f1)
+[[ -n "$hc_note_move" && -n "$hc_note_owner" && "$hc_note_move" -lt "$hc_note_owner" ]] \
+    || fail "slice3-flash" "noteRealized answers ownership before recording the rise — a landed batch's rise is a fact about the wire whoever owns the clock (round 5)"
+echo "$hc_note" | grep -q 'if unrealizedStamp == reservation.sequence { unrealizedStamp = nil }' \
+    || fail "slice3-flash" "noteRealized no longer ends the in-flight hold"
+echo "$hc_gate" | grep -q 'if stampedAt != nil { lastOnsetOwner = sequence; unrealizedStamp = sequence }' \
+    || fail "slice3-flash" "a stamping reservation no longer takes ownership of the clock AND opens the in-flight hold (round 5, HIGH)"
+hc_try=$(echo "$hc_gate" | awk '/mutating func tryOnset\(/,/^            \}$/')
+echo "$hc_try" | grep -q 'guard unrealizedStamp == nil else { return false }' \
+    || fail "slice3-flash" "tryOnset no longer refuses every source while a stamped rise is in flight (round 5, HIGH)"
+hc_begin=$(echo "$hc_gate" | awk '/mutating func beginRealizing\(/,/^            \}$/')
+echo "$hc_begin" | grep -q 'guard lastOnsetOwner == reservation.sequence else { return false }' \
+    || fail "slice3-flash" "beginRealizing no longer refuses a batch whose clock another source has taken"
+echo "$hc_begin" | grep -q 'unrealizedStamp = reservation.sequence' \
+    || fail "slice3-flash" "beginRealizing no longer re-opens the in-flight hold for a further batch"
+hc_commit=$(echo "$hc_gate" | awk '/mutating func commit\(_ reservation: Reservation, delivered: Bool,/,/^            \}$/')
+[[ $(echo "$hc_commit" | grep -c 'if unrealizedStamp == reservation.sequence { unrealizedStamp = nil }') -eq 2 ]] \
+    || fail "slice3-flash" "commit no longer ends the in-flight hold on both the rollback and the delivered branch"
+echo "$hc_commit" | grep -q 'if lastOnsetOwner == reservation.sequence { lastOnsetOwner = reservation.priorOwner }' \
+    || fail "slice3-flash" "a rolled-back stamp still owns the clock — the sweep whose stamp is current again must regain it (round 5)"
+# Round 6 (HIGH): the rollback's in-flight clear sits ABOVE the interleaving
+# early exit, or a wholly failed sweep with a co-active DTLS loop leaves the
+# stamp in flight for the life of the process — every source held forever.
+hc_rb_clear=$(echo "$hc_commit" | grep -n 'if unrealizedStamp == reservation.sequence { unrealizedStamp = nil }' | head -1 | cut -d: -f1)
+hc_rb_owner=$(echo "$hc_commit" | grep -n 'if lastOnsetOwner == reservation.sequence { lastOnsetOwner = reservation.priorOwner }' | head -1 | cut -d: -f1)
+hc_rb_exit=$(echo "$hc_commit" | grep -n 'guard sequence == reservation.sequence else {' | head -1 | cut -d: -f1)
+[[ -n "$hc_rb_clear" && -n "$hc_rb_owner" && -n "$hc_rb_exit" && "$hc_rb_clear" -lt "$hc_rb_exit" && "$hc_rb_owner" -lt "$hc_rb_exit" ]] \
+    || fail "slice3-flash" "commit's rollback clears the in-flight stamp / restores the owner BELOW the interleaved-admit early exit — a leaked stamp holds every source forever (round 6, HIGH)"
+echo "$hc_gate" | grep -q 'guard var wire = wires\[source\], wire.lastEmitted != nil else { return }' \
+    || fail "slice3-flash" "correctWire would resurrect a forgotten wire"
+echo "$hc_gate" | grep -q 'wire.trough = min(wire.trough, frame.relativeLuminance)' \
+    || fail "slice3-flash" "correctWire no longer lowers the trough to what landed"
+echo "$hc_gate" | grep -q 'if reservation.sequence > forgetSequence {' \
+    || fail "slice3-flash" "OnsetGate.commit restores lastEmitted unconditionally on rollback again — a late cancelled 0/0 hands the ledger back the frame the stop turned off"
+echo "$hc_gate" | grep -q 'forgetSequence = sequence' \
+    || fail "slice3-flash" "OnsetGate.forgetWire no longer records the forget's sequence"
+
+# The REST model and its regression tests exist in the flash suite.
+for t in emitRESTComposition testPulseAtTwoFortyBpmRealizesAboveThreeHzOverUngatedREST testPulseAtTwoFortyBpmIsGatedToThreeHzOverREST testARestartInsideThePeriodCannotFlashOnceTheWireIsForgotten testAColdRefusalHoldsTheLastKnownChromaticity testALateRollbackCannotRestoreAWireAForgetPredates testAStaleSliceRiseIsMeasuredOnTheProjectedField testTheProjectedFieldIsWhatTheWireShows testTwoSourcesOnOneBridgeAreJudgedAgainstTheirOwnWires testEntertainmentAndRESTSourcesShareTheClockNotTheWire testARESTSweepsClockMovesToWhenItsLampsRose testASweepThatLostTheClockSendsNoFurtherBatch testAPartialDeliveryCorrectsTheSourceWire testAnUnrealizedStampHoldsEveryOtherSource testARollbackBehindAnInterleavedAdmitStillEndsTheInFlightHold; do
+    grep -q "$t" HueHomeTests/FlashSafetyTests.swift \
+        || fail "slice3-flash" "FlashSafetyTests no longer carries $t"
+done
+# (The suite that proves all of the above is pinned into the target's Sources
+# phase by the existing FlashSafetyTests membership check further down.)
 
 # The gate tracks the wire state it measures rises against, and RECORDS what it
 # emitted. Scoped to the struct body: a file-wide grep would be satisfied by the
@@ -1887,10 +2407,103 @@ echo "$r2_setup_body" | grep -qF 'guard interactive else { return }' \
     || fail "slice2-r2" "setupSliderRow's StageSlider setter has no interactivity floor — StageSlider's track is a raw drag surface, so the wrapper's .disabled cannot be the only gate"
 r2_applied_check "$r2_setup_body" "$R2_BROWSER:setupSliderRow"
 
+# (l) Slice 3 (S3-4): the COMPOSER resolves through the same funnel.
+#
+#     The Composer answered "may the user touch this?" with one boolean,
+#     `roomHasColorLights`, defaulting to TRUE, written once per apply into a
+#     single view-model slot shared by every running composition. Every other
+#     Composer control had no answer at all. `ComposerControlAvailability` is
+#     the adapter: catalog control ids, the resolver's own requirements,
+#     `targetSnapshot(for:)`, the board's own copy. It ALWAYS returns a
+#     resolution, so the Composer calls the non-strategy overloads
+#     (`isInteractive(_:)`, `opacity(_:)`, `note(for:isColor:)`) through
+#     nil-tolerant wrappers that FAIL CLOSED — that is not a bypass of (g),
+#     which exists because the board's `resolve` can return nil.
+R2_COMPOSER_AVAIL="HueHome/Core/ComposerControlAvailability.swift"
+R2_COMPOSER_PANEL="HueHome/UI/Composer/CompositionEditorPanel.swift"
+R2_COMPOSER_SUPPORT="HueHome/UI/Composer/ComposerLayerSheet.swift"
+R2_COMPOSER_TESTS="HueHomeTests/ComposerControlAvailabilityTests.swift"
+[[ -f "$R2_COMPOSER_AVAIL" ]] || fail "slice2-r2" "$R2_COMPOSER_AVAIL is missing — the Composer has no adapter into the availability funnel"
+grep -q 'ComposerControlAvailability.swift in Sources' HueHome.xcodeproj/project.pbxproj \
+    || fail "slice2-r2" "ComposerControlAvailability.swift exists but is not in the app target"
+[[ -f "$R2_COMPOSER_TESTS" ]] || fail "slice2-r2" "$R2_COMPOSER_TESTS is missing — the Composer adapter is unproven"
+grep -q 'ComposerControlAvailabilityTests.swift in Sources' HueHome.xcodeproj/project.pbxproj \
+    || fail "slice2-r2" "ComposerControlAvailabilityTests.swift exists but is not in the test target — it never runs"
+
+#     The two-state boolean may not return, anywhere.
+r2_bool=$(grep -rnE 'roomHasColorLights' HueHome --include='*.swift' 2>/dev/null \
+    | grep -vE '^[^:]*:[0-9]+:[[:space:]]*//' || true)
+[[ -z "$r2_bool" ]] || fail "slice2-r2" $'roomHasColorLights is back — a boolean that defaults to yes is the Composer\'s original capability lie:\n'"$r2_bool"
+
+#     The adapter's requirement table is the resolver's vocabulary — colour
+#     controls need `.color`, Warmth needs `.colorTemperature` (which is what
+#     makes a schemaless CT fixture read CHECKING instead of a fake 153…500).
+r2_avail_src=$(grep -vE '^[[:space:]]*//' "$R2_COMPOSER_AVAIL")
+echo "$r2_avail_src" | grep -qF 'if colorControlIDs.contains(controlID) { return .color }' \
+    || fail "slice2-r2" "ComposerControlAvailability no longer maps its colour controls to .color"
+echo "$r2_avail_src" | grep -qF 'if colorTemperatureControlIDs.contains(controlID) { return .colorTemperature }' \
+    || fail "slice2-r2" "ComposerControlAvailability no longer maps Warmth to .colorTemperature"
+echo "$r2_avail_src" | grep -qF 'CustomizationResolver.resolve(' \
+    || fail "slice2-r2" "ComposerControlAvailability no longer resolves through CustomizationResolver — a parallel availability system"
+echo "$r2_avail_src" | grep -qF 'guard let resolution else { return false }' \
+    || fail "slice2-r2" "ComposerControlAvailability.isInteractive no longer fails closed on a nil resolution"
+echo "$r2_avail_src" | grep -qF 'guard let resolution else { return StudioBoardAvailability.checkingCopy }' \
+    || fail "slice2-r2" "ComposerControlAvailability.note no longer reads CHECKING on a nil resolution"
+echo "$r2_avail_src" | grep -qF 'guard let range = snapshot?.mirekRange else { return nil }' \
+    || fail "slice2-r2" "ComposerControlAvailability.warmthRange no longer comes from the snapshot's mirek range"
+
+#     Every Composer control is gated: the panel and the supporting tier
+#     resolve through the context, and the gate APPLIES the verdict the
+#     15(k) way — bound to the adapter's non-nil-tolerant wrappers, never to a
+#     literal.
+R2_COMPOSER_INSTRUMENTS="HueHome/UI/Composer/ComposerInstrumentControls.swift"
+[[ -f "$R2_COMPOSER_INSTRUMENTS" ]] || fail "slice2-r2" "$R2_COMPOSER_INSTRUMENTS is missing"
+for f in "$R2_COMPOSER_PANEL" "$R2_COMPOSER_SUPPORT" "$R2_COMPOSER_INSTRUMENTS"; do
+    grep -vE '^[[:space:]]*//' "$f" | grep -qE 'availability\.resolve\(' \
+        || fail "slice2-r2" "$f no longer resolves its controls through ComposerAvailabilityContext"
+    r2_unresolved=$(grep -nE 'unresolvedIsInteractive|StudioBoardAvailability\.isInteractive\(resolution:' "$f" 2>/dev/null \
+        | grep -vE '^[0-9]+:[[:space:]]*//' || true)
+    [[ -z "$r2_unresolved" ]] || fail "slice2-r2" $''"$f"$' reaches for the strategy-qualified overloads — for compositions those fail OPEN:\n'"$r2_unresolved"
+done
+#     The instrument wrappers carry the setter-level floor too.
+grep -vE '^[[:space:]]*//' "$R2_COMPOSER_INSTRUMENTS" | grep -qF 'guard interactive else { return }' \
+    || fail "slice2-r2" "$R2_COMPOSER_INSTRUMENTS has no setter-level `guard interactive` — a knob's drag would write through a refused verdict"
+r2_gate=$(awk '/^struct ComposerControlGate</,/^}$/' "$R2_COMPOSER_SUPPORT" 2>/dev/null \
+    | grep -vE '^[[:space:]]*//' || true)
+[[ -n "$r2_gate" ]] || fail "slice2-r2" "ComposerControlGate not found in $R2_COMPOSER_SUPPORT"
+#     The same three "applied" checks as (k), with the COMPOSER adapter as the
+#     callee the bindings must read from (`r2_applied_check` pins the board's
+#     `StudioBoardAvailability.` callee, which for the Composer would be the
+#     fail-open path).
+echo "$r2_gate" | grep -qF '.disabled(!interactive)' \
+    || fail "slice2-r2" "ComposerControlGate does not disable on the funnel's verdict (.disabled(!interactive))"
+echo "$r2_gate" | grep -qF '.opacity(opacity)' \
+    || fail "slice2-r2" "ComposerControlGate does not apply the funnel's opacity (.opacity(opacity))"
+echo "$r2_gate" | grep -qF 'if let note' \
+    || fail "slice2-r2" "ComposerControlGate does not render the funnel's note (if let note)"
+r2_binding_pin "$r2_gate" "ComposerControlGate" interactive 'ComposerControlAvailability.isInteractive('
+r2_binding_pin "$r2_gate" "ComposerControlGate" opacity 'ComposerControlAvailability.opacity('
+echo "$r2_gate" | grep -qF 'ComposerControlAvailability.rendersControl(resolution)' \
+    || fail "slice2-r2" "ComposerControlGate no longer honours .hidden through rendersControl"
+#     Gestures `.disabled` does not close (the pad's drag, a chip's tap) carry
+#     the verdict at the setter.
+grep -vE '^[[:space:]]*//' "$R2_COMPOSER_PANEL" | grep -qF 'guard interactive else { return }' \
+    || fail "slice2-r2" "$R2_COMPOSER_PANEL has no setter-level `guard interactive` — the pad's drag would write through a refused verdict"
+grep -vE '^[[:space:]]*//' "$R2_COMPOSER_SUPPORT" | grep -qF 'func composerGuarded<Value>(_ interactive: Bool, _ binding: Binding<Value>) -> Binding<Value>' \
+    || fail "slice2-r2" "composerGuarded is gone from $R2_COMPOSER_SUPPORT — Composer bindings have no setter-level floor"
+#     Warmth authors the snapshot's range, never a literal one on a live control.
+r2_warmth=$(grep -nE 'range: 153\.\.\.500' "$R2_COMPOSER_PANEL" 2>/dev/null \
+    | grep -vE '^[0-9]+:[[:space:]]*//' || true)
+[[ -z "$r2_warmth" ]] || fail "slice2-r2" $'the Composer Warmth control authors a literal 153…500 again (checklist row 58):\n'"$r2_warmth"
+grep -vE '^[[:space:]]*//' "$R2_COMPOSER_PANEL" | grep -qF 'range: availability.warmthRange ?? ComposerControlAvailability.fallbackWarmthRange' \
+    || fail "slice2-r2" "the Composer Warmth control no longer reads its range from the snapshot"
+
+
 # ──────────────────────────────────────────────────────────────
 
 if [[ $FAILURES -gt 0 ]]; then
     echo "hardening_guards: $FAILURES guard(s) failed." >&2
     exit 1
 fi
+
 echo "hardening_guards: all guards passed."

@@ -44,6 +44,11 @@ struct StageKnob: View {
     /// Points of vertical travel that sweep the full range at coarse gain.
     var travel: CGFloat = 220
     var onEditingChanged: ((Bool) -> Void)? = nil
+    /// Exact-entry parser for readouts whose unit is not the value's unit
+    /// (a Kelvin readout over a mirek range — review round, B-7). Returns
+    /// the value in the RANGE's unit; the knob clamps it. Nil → the shared
+    /// `StageDraftMath` parse.
+    var parseDraft: ((String) -> Double?)? = nil
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var drag: InstrumentDragState? = nil
@@ -181,7 +186,13 @@ struct StageKnob: View {
         guard isTyping else { return }
         isTyping = false
         draftFocused = false
-        guard let parsed = StageDraftMath.parseDraft(draft, range: range) else { return }
+        let parsed: Double?
+        if let parseDraft {
+            parsed = parseDraft(draft).map { min(range.upperBound, max(range.lowerBound, $0)) }
+        } else {
+            parsed = StageDraftMath.parseDraft(draft, range: range)
+        }
+        guard let parsed else { return }
         onEditingChanged?(true)
         value = parsed
         onEditingChanged?(false)
@@ -200,6 +211,8 @@ struct StageFader: View {
     var format: (Double) -> String = { "\(Int($0.rounded()))" }
     var trackHeight: CGFloat = 148
     var onEditingChanged: ((Bool) -> Void)? = nil
+    /// See `StageKnob.parseDraft`.
+    var parseDraft: ((String) -> Double?)? = nil
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var drag: InstrumentDragState? = nil
@@ -331,7 +344,13 @@ struct StageFader: View {
         guard isTyping else { return }
         isTyping = false
         draftFocused = false
-        guard let parsed = StageDraftMath.parseDraft(draft, range: range) else { return }
+        let parsed: Double?
+        if let parseDraft {
+            parsed = parseDraft(draft).map { min(range.upperBound, max(range.lowerBound, $0)) }
+        } else {
+            parsed = StageDraftMath.parseDraft(draft, range: range)
+        }
+        guard let parsed else { return }
         onEditingChanged?(true)
         value = parsed
         onEditingChanged?(false)
@@ -342,50 +361,101 @@ struct StageFader: View {
 
 /// Discrete selector: prominent decisions render as tactile pads, quiet ones
 /// as the shared chip row — one primitive per semantic class (spec §9).
-struct StageSteppedEncoder: View {
+///
+/// Generic over the selection's type (Slice 3): the board's `.segmented`
+/// params are `Double`-valued, the Composer's are typed enums (palette mode,
+/// motion pattern, envelope shape, reaction source, harmony rule, the layer
+/// tab) — one primitive, whatever the domain calls the choice. `items` carry
+/// the chip row's icon / curve thumbnail so a pattern keeps its signature
+/// and a brightness shape keeps its waveform.
+struct StageSteppedEncoder<Value: Hashable>: View {
     enum Prominence { case pads, chips }
 
     let title: String
-    let options: [(label: String, value: Double)]
-    @Binding var selection: Double
+    let items: [ChipPickerRow<Value>.Item]
+    @Binding var selection: Value
     var prominence: Prominence = .chips
+
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    /// The board's form: label/value pairs.
+    init(title: String,
+         options: [(label: String, value: Value)],
+         selection: Binding<Value>,
+         prominence: Prominence = .chips) {
+        self.title = title
+        self.items = options.map { ChipPickerRow<Value>.Item(value: $0.value, label: $0.label) }
+        self._selection = selection
+        self.prominence = prominence
+    }
+
+    /// The Composer's form: chip items with icons / curve thumbnails.
+    init(title: String,
+         items: [ChipPickerRow<Value>.Item],
+         selection: Binding<Value>,
+         prominence: Prominence = .chips) {
+        self.title = title
+        self.items = items
+        self._selection = selection
+        self.prominence = prominence
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(title)
-                .font(HueFont.stageControl)
-                .foregroundStyle(.white.opacity(0.60))
+            // An empty title is a caption deliberately omitted (a control
+            // whose section header already names it), not a blank line.
+            if !title.isEmpty {
+                Text(title)
+                    .font(HueFont.stageControl)
+                    .foregroundStyle(.white.opacity(0.60))
+            }
             switch prominence {
             case .chips:
-                ChipPickerRow(
-                    items: options.map { ChipPickerRow<Double>.Item(value: $0.value, label: $0.label) },
-                    selection: $selection
-                )
+                ChipPickerRow(items: items, selection: $selection)
             case .pads:
-                HStack(spacing: 8) {
-                    ForEach(options, id: \.value) { option in
-                        Button {
-                            selection = option.value
-                            HapticManager.shared.selection()
-                        } label: {
-                            Text(option.label)
-                                .font(HueFont.stageControl)
-                                .foregroundStyle(selection == option.value
-                                                 ? StagePalette.stage : StagePalette.ink)
-                                .frame(maxWidth: .infinity, minHeight: 44)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                        .fill(selection == option.value
-                                              ? HuePalette.amber
-                                              : StagePalette.raised)
-                                )
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityAddTraits(selection == option.value ? .isSelected : [])
+                // Pads reflow into a column at accessibility text sizes
+                // (review round, B-6): a fixed row of five 73 pt pads wraps
+                // its labels mid-word long before the largest sizes.
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(spacing: 8) {
+                        ForEach(items, id: \.value) { item in pad(item) }
+                    }
+                } else {
+                    HStack(spacing: 8) {
+                        ForEach(items, id: \.value) { item in pad(item) }
                     }
                 }
             }
         }
+    }
+
+    private func pad(_ item: ChipPickerRow<Value>.Item) -> some View {
+        Button {
+            selection = item.value
+            HapticManager.shared.selection()
+        } label: {
+            HStack(spacing: 4) {
+                if let icon = item.icon {
+                    Image(systemName: icon).font(.caption2.weight(.semibold))
+                }
+                Text(item.label)
+                    .font(HueFont.stageControl)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+            .foregroundStyle(selection == item.value
+                             ? StagePalette.stage : StagePalette.ink)
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(selection == item.value
+                          ? HuePalette.amber
+                          : StagePalette.raised)
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(item.accessibilityLabel ?? item.label)
+        .accessibilityAddTraits(selection == item.value ? .isSelected : [])
     }
 }
 

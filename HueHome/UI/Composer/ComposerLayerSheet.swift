@@ -1,23 +1,30 @@
 // ComposerLayerSheet.swift
-// CastChroma — Composer advanced controls (adjustment-settings revamp).
+// CastChroma — Composer supporting controls (Slice 3 convergence).
 //
-// The "+N more" surface for the active composer layer tab. The editor panel
-// keeps 3-5 essential controls inline (COMPOSER_SPEC progressive-disclosure
-// model); everything else renders here — in a StageSheetScaffold sheet from
-// the more button, or inline via ComposerAdvancedControls when the tray is
-// dragged up. All bindings write the live CompositionParamBox directly, the
-// same data path the panel uses (no debounce, no API calls; the render loop
-// reads the box every frame).
+// The filename is historical (Xcode project churn is not worth a rename —
+// execution plan §25): there is no sheet here any more. `ComposerControlCatalog`
+// partitions each layer's controls into an ESSENTIAL tier and a SUPPORTING
+// tier, and `ComposerSupportingControls` renders the supporting tier INSIDE
+// the same StageCard as the essentials — quieter rows further down the one
+// column, exactly as the Studio board's `.supporting` prominence band. There
+// is no "Advanced" card, no reveal affordance and no detached destination:
+// progressive reveal is contextual gating (a swell shape reveals attack/decay,
+// a spatial pattern reveals direction), never a second surface to open.
+//
+// All bindings write the live CompositionParamBox directly, the same data
+// path the panel uses (no debounce, no API calls; the render loop reads the
+// box every frame).
 
 import SwiftUI
 import CoreGraphics
 
 // MARK: - Control Catalog
 
-/// Pure control-inventory functions: which controls are essential (inline in
-/// the tray) vs advanced (sheet / expanded tray) for a given layer state.
-/// Gating rules mirror what the engine actually consumes — controls that are
-/// no-ops for the current pattern/shape/source don't render at all.
+/// Pure control-inventory functions: which controls are essential (the top of
+/// the layer's card) vs supporting (the quieter rows below them, same card)
+/// for a given layer state. Gating rules mirror what the engine actually
+/// consumes — controls that are no-ops for the current pattern/shape/source
+/// don't render at all.
 enum ComposerControlCatalog {
 
     static func isMicSource(_ source: ReactionConfig.Source) -> Bool {
@@ -55,8 +62,19 @@ enum ComposerControlCatalog {
         switch tab {
         case .palette:
             var ids = ["mode"]
-            ids.append(paletteMode == .temperature ? "temperature" : "colorPad")
-            if paletteMode == .solid || paletteMode == .gradient { ids.append("harmony") }
+            switch paletteMode {
+            case .temperature:
+                ids.append("temperature")
+            case .spectrum:
+                // Spectrum derives its colour from hueShift + saturation and
+                // never reads color1 — the pad's hue axis was a dead control
+                // there (review round, B-2). The two fields it DOES read are
+                // its essentials.
+                ids += ["hueShift", "saturation"]
+            case .solid, .gradient:
+                ids.append("colorPad")
+                ids.append("harmony")
+            }
             return ids
         case .motion:
             var ids = ["pattern"]
@@ -82,7 +100,7 @@ enum ComposerControlCatalog {
         }
     }
 
-    static func advancedControlIDs(
+    static func supportingControlIDs(
         tab: CompositionLayerTab,
         paletteMode: PaletteConfig.Mode,
         motionPattern: MotionConfig.Pattern,
@@ -91,10 +109,7 @@ enum ComposerControlCatalog {
     ) -> [String] {
         switch tab {
         case .palette:
-            var ids: [String] = []
-            if paletteMode == .spectrum { ids += ["hueShift", "saturation"] }
-            ids += ["randomize", "dynamicSceneExport"]
-            return ids
+            return ["randomize", "dynamicSceneExport"]
         case .motion:
             guard motionPattern != .static else { return [] }
             var ids: [String] = []
@@ -121,44 +136,165 @@ enum ComposerControlCatalog {
         }
     }
 
-    /// Convenience: advanced-control count for the live box state.
-    @MainActor
-    static func advancedCount(tab: CompositionLayerTab, box: CompositionParamBox?) -> Int {
-        advancedControlIDs(
-            tab: tab,
-            paletteMode: box?.palette.mode ?? .gradient,
-            motionPattern: box?.motion.pattern ?? .cascade,
-            envelopeShape: box?.envelope.shape ?? .breathe,
-            reactionSource: box?.reaction.source ?? .none
-        ).count
+    /// Every control the layer renders for this state, essential first — the
+    /// list a migration test walks to prove nothing that used to live behind
+    /// "Advanced" silently disappeared.
+    static func renderedControlIDs(
+        tab: CompositionLayerTab,
+        paletteMode: PaletteConfig.Mode,
+        motionPattern: MotionConfig.Pattern,
+        envelopeShape: EnvelopeConfig.Shape,
+        reactionSource: ReactionConfig.Source
+    ) -> [String] {
+        essentialControlIDs(tab: tab, paletteMode: paletteMode, motionPattern: motionPattern,
+                            envelopeShape: envelopeShape, reactionSource: reactionSource)
+        + supportingControlIDs(tab: tab, paletteMode: paletteMode, motionPattern: motionPattern,
+                               envelopeShape: envelopeShape, reactionSource: reactionSource)
     }
 }
 
-// MARK: - Layer Sheet
+// MARK: - Capability truth (Slice 3, S3-4)
 
-/// StageSheetScaffold wrapper around the advanced controls — the "+N more"
-/// target from the composer editor panel.
-struct ComposerLayerSheet: View {
-    let vm: StudioViewModel
-    let tab: CompositionLayerTab
+/// One instant of capability truth for the Composer surface: the running
+/// composition's card, its exact target, and the resolver snapshot built from
+/// CACHED lights (`targetSnapshot(for:)` — no fetch, spec §27; it also reads
+/// the orchestrator's inventory generation, so the surface re-resolves when
+/// the bridge finally answers).
+///
+/// Built ONCE per panel render and handed down, so every control on the page
+/// answers against the same instant — never one control against a snapshot
+/// and its neighbour against a fresh one.
+///
+/// No running composition ⇒ no snapshot ⇒ every resolution is nil ⇒ every
+/// control reads CHECKING and is not interactive. Nil never means yes.
+@MainActor
+struct ComposerAvailabilityContext {
+    let cardID: String?
+    /// The EXACT target the running composition addresses — not the room
+    /// selector's current value re-read at each use.
+    let room: RoomDisplayItem?
+    let snapshot: CustomizationTargetSnapshot?
+    /// The edit session for this render (S3-5): the running identity and
+    /// the live box, captured once. Every write on the page commits through
+    /// it; nil when the row has no live box (one-shot, recovered mirror).
+    let session: ComposerEditSession?
+
+    init(vm: StudioViewModel) {
+        if let effect = vm.currentRoomEffect {
+            cardID = effect.card.id
+            room = effect.room
+            snapshot = vm.targetSnapshot(for: effect)
+            session = vm.composerEditSession(for: effect)
+        } else {
+            cardID = nil
+            room = vm.selectedRoom
+            snapshot = nil
+            session = nil
+        }
+    }
+
+    func resolve(_ controlID: String) -> StudioBoardResolution? {
+        guard let cardID, let snapshot else { return nil }
+        // A row with no live box — a bridge-optimized one-shot, a recovered
+        // mirror — has nothing an edit could reach: read-only (spec §20),
+        // whatever its lights can do. Answering `.active` here rendered live
+        // instruments that wrote nothing (review round, C-5).
+        guard session != nil else {
+            return StudioBoardResolution(
+                resolution: CustomizationResolution(
+                    control: CustomizationControlID(cardID: cardID, paramID: controlID),
+                    availability: .unavailable(reason: .readOnlyComposition, remediation: nil),
+                    behavior: .staged),
+                isHardwareUnverified: false,
+                totalLights: snapshot.totalLights)
+        }
+        return ComposerControlAvailability.resolve(cardID: cardID, controlID: controlID,
+                                                   snapshot: snapshot)
+    }
+
+    func isInteractive(_ controlID: String) -> Bool {
+        ComposerControlAvailability.isInteractive(resolve(controlID))
+    }
+
+    /// The Warmth control's authoring range: the target's intersected mirek
+    /// range, or nil (the control then resolves CHECKING and is disabled).
+    var warmthRange: ClosedRange<Double>? {
+        ComposerControlAvailability.warmthRange(snapshot: snapshot)
+    }
+}
+
+/// A setter that drops its write unless the funnel said the control is
+/// interactive — the setter-level floor beneath `.disabled`, which does not
+/// close raw gestures (a pad drag, a chip's tap gesture) the way it closes
+/// a `Control`.
+func composerGuarded<Value>(_ interactive: Bool, _ binding: Binding<Value>) -> Binding<Value> {
+    Binding(
+        get: { binding.wrappedValue },
+        set: { newValue in
+            guard interactive else { return }
+            binding.wrappedValue = newValue
+        }
+    )
+}
+
+/// The funnel's answer, APPLIED, around one Composer control — the shape
+/// Guard 15(k) pins for the Studio board: `.disabled` on the verdict, the
+/// verdict's opacity on the control (not on the note), and the note beside
+/// it in words a VoiceOver user hears with the control's name.
+///
+/// `.hidden` renders nothing (an orphaned control id). A nil resolution —
+/// no snapshot — renders the control DISABLED under CHECKING, because a
+/// control that vanishes while the bridge is still being asked is the silent
+/// removal the honesty rule forbids.
+struct ComposerControlGate<Content: View>: View {
+    let label: String
+    let resolution: StudioBoardResolution?
+    var isColor: Bool = false
+    @ViewBuilder let content: () -> Content
 
     var body: some View {
-        StageSheetScaffold(title: "\(tab.title) · Advanced") {
-            StageCard(icon: tab.symbolName, title: tab.title) {
-                ComposerAdvancedControls(vm: vm, tab: tab)
+        if ComposerControlAvailability.rendersControl(resolution) {
+            let interactive = ComposerControlAvailability.isInteractive(resolution)
+            let opacity = ComposerControlAvailability.opacity(resolution)
+            let note = ComposerControlAvailability.note(for: resolution, isColor: isColor)
+            VStack(alignment: .leading, spacing: 3) {
+                // Opacity belongs to the CONTROL, not the pair: a note nested
+                // inside a dimmed wrapper is the least legible thing on the
+                // page, and it is the sentence explaining why the control is
+                // dead.
+                content()
+                    .disabled(!interactive)
+                    .opacity(opacity)
+                if let note {
+                    Text(note)
+                        .font(HueFont.stageTag)
+                        .foregroundStyle(HuePalette.amber.opacity(0.65))
+                        .tracking(0.6)
+                        .lineLimit(3)
+                        .minimumScaleFactor(0.85)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityLabel("\(label): \(note)")
+                }
             }
         }
     }
 }
 
-// MARK: - Advanced Controls
+// MARK: - Supporting Controls
 
-/// The advanced control set for one layer tab. Rendered inside the sheet
-/// AND inline in the editor panel when the tray is dragged up.
-struct ComposerAdvancedControls: View {
-    @Environment(UnifiedOrchestrator.self) private var orchestrator
+/// The supporting tier of one layer tab, rendered by the editor panel INSIDE
+/// that layer's card, directly under the essentials. One column, one card,
+/// one identity lifetime — the old `.id(activeCompositionTab)` split put the
+/// essentials and the "Advanced" card on different lifetimes, so a tab switch
+/// rebuilt one half of the page and not the other.
+struct ComposerSupportingControls: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let vm: StudioViewModel
+    /// Explicit, not `@Environment`: see `CompositionEditorPanel`.
+    let orchestrator: UnifiedOrchestrator
+    /// The panel's one instant of capability truth for this render.
+    let availability: ComposerAvailabilityContext
     let tab: CompositionLayerTab
 
     @State private var showEntertainmentBuilder = false
@@ -168,10 +304,10 @@ struct ComposerAdvancedControls: View {
     var body: some View {
         VStack(spacing: HueSpacing.sm) {
             switch tab {
-            case .palette: paletteAdvanced
-            case .motion: motionAdvanced
-            case .envelope: envelopeAdvanced
-            case .reaction: reactionAdvanced
+            case .palette: paletteSupporting
+            case .motion: motionSupporting
+            case .envelope: envelopeSupporting
+            case .reaction: reactionSupporting
             }
         }
         // Whether directional motion is offered is now a room-membership
@@ -179,62 +315,41 @@ struct ComposerAdvancedControls: View {
         // opened without ever visiting Studio, which is the only other surface
         // that warms — without this the controls would hide themselves on a cold
         // launch and tell the user to create an area they already have.
-        .task(id: vm.selectedRoom?.id) {
-            await orchestrator.warmEntertainmentCaches(for: vm.selectedRoom)
+        .task(id: availability.room?.id) {
+            await orchestrator.warmEntertainmentCaches(for: availability.room)
         }
     }
 
     // ── Palette ───────────────────────────────────────────────
 
     @ViewBuilder
-    private var paletteAdvanced: some View {
-        if (vm.activeCompositionBox?.palette.mode ?? .gradient) == .spectrum {
-            StageSlider(
-                title: "Hue Shift",
-                value: Binding(
-                    get: { vm.activeCompositionBox?.palette.hueShift ?? 0 },
-                    set: { vm.activeCompositionBox?.palette.hueShift = $0 }
-                ),
-                range: -180...180,
-                format: { "\(Int($0.rounded()))°" }
-            )
-            // Spectrum consumes saturation directly; before this slider it was
-            // only settable as a side effect of the hue pad (which also wrote
-            // an ignored color1 in spectrum mode).
-            StageSlider(
-                title: "Saturation",
-                value: Binding(
-                    get: { vm.activeCompositionBox?.palette.saturation ?? 100 },
-                    set: { vm.activeCompositionBox?.palette.saturation = $0 }
-                ),
-                range: 0...100,
-                format: { "\(Int($0.rounded()))%" }
-            )
-        }
-
-        StageToggleRow(
-            title: "Randomize",
-            isOn: Binding(
-                get: { vm.activeCompositionBox?.palette.randomize ?? false },
-                set: { vm.activeCompositionBox?.palette.randomize = $0 }
-            )
-        )
+    private var paletteSupporting: some View {
+        ComposerToggleControl(
+            label: "Randomize", controlID: "randomize", vm: vm, availability: availability,
+            read: { $0.palette.randomize },
+            write: { $0.palette.randomize = $1 })
 
         // Round 3 (E): export this palette as a NATIVE Hue dynamic scene —
-        // the bridge cycles it forever with the app closed.
+        // the bridge cycles it forever with the app closed. An ACTION, not a
+        // control — it closes the card, below the last control row. Gated
+        // like the colour controls: a dynamic scene of a palette no light
+        // here can render is a bridge write with nothing to show for it.
+        let export = availability.resolve("dynamicSceneExport")
+        ComposerControlGate(label: "Save as Hue dynamic scene", resolution: export) {
         Button {
+            guard ComposerControlAvailability.isInteractive(export) else { return }
             dynamicSceneName = ""
             showDynamicScenePrompt = true
             HapticManager.shared.selection()
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "square.and.arrow.down.on.square")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.caption.weight(.semibold))
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Save as Hue dynamic scene")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.caption.weight(.semibold))
                     Text("Loops on the bridge — works with the app closed")
-                        .font(.system(size: 10))
+                        .font(.caption2)
                         .opacity(0.55)
                 }
                 Spacer()
@@ -256,15 +371,16 @@ struct ComposerAdvancedControls: View {
         } message: {
             Text("The bridge cycles this palette on its own — no phone needed. It appears in your Scenes tab.")
         }
+        }
     }
 
     /// Builds a native dynamic scene from the live palette layer and POSTs
     /// it to the room's own bridge. One POST — no loops, no session.
     private func exportDynamicScene(named name: String) async {
-        guard let room = vm.selectedRoom,
+        guard let room = availability.room,
               let groupedLightID = room.groupedLightID,
               let api = orchestrator.hueClient(for: room.bridgeID),
-              let box = vm.activeCompositionBox else {
+              let box = availability.session?.box else {
             vm.statusMessage = "⚠ Select a room and composition first"
             return
         }
@@ -327,290 +443,229 @@ struct ComposerAdvancedControls: View {
     // ── Motion ────────────────────────────────────────────────
 
     @ViewBuilder
-    private var motionAdvanced: some View {
-        let pattern = vm.activeCompositionBox?.motion.pattern ?? .cascade
+    private var motionSupporting: some View {
+        let pattern = availability.session?.box.motion.pattern ?? .cascade
 
         if ComposerControlCatalog.isSpatialPattern(pattern) {
-            // Directional motion needs the area that actually contains THIS room's
-            // lights — a different room's area on the same bridge would aim the
-            // motion at the wrong lights. The warm below is what lets the answer
-            // come from real membership rather than a cold cache.
-            if orchestrator.activeEntertainmentConfig(for: vm.selectedRoom) != nil {
-                directionControl
-            } else {
-                entertainmentAreaPrompt
+            // Directional motion needs the area that actually contains THIS
+            // target's lights — a different room's area on the same bridge
+            // would aim the motion at the wrong lights. MEMBERSHIP is the
+            // gate (not "can this bridge stream": forward/mirror work on REST
+            // index positions), answered for the exact running target. The
+            // warm below is what lets the answer come from real membership
+            // rather than a cold cache.
+            ComposerControlGate(label: "Direction", resolution: availability.resolve("direction")) {
+                if orchestrator.activeEntertainmentConfig(for: availability.room) != nil {
+                    directionControl
+                } else {
+                    entertainmentAreaPrompt
+                }
             }
         }
 
-        StageSlider(
-            title: "Spread",
-            value: Binding(
-                get: { vm.activeCompositionBox?.motion.spread ?? 70 },
-                set: { vm.activeCompositionBox?.motion.spread = $0 }
-            ),
-            range: 0...100
-        )
-
-        StageSlider(
-            title: ComposerControlCatalog.offsetLabel(for: pattern),
-            value: Binding(
-                get: { vm.activeCompositionBox?.motion.offset ?? 50 },
-                set: { vm.activeCompositionBox?.motion.offset = $0 }
-            ),
-            range: 0...100
-        )
+        HStack(alignment: .top, spacing: HueSpacing.lg) {
+            // Spread and offset/heads are CHARACTER → knobs; twinkle's
+            // "Density" is an AMOUNT → fader.
+            ComposerContinuousControl(
+                label: "Spread", controlID: "spread", vm: vm, availability: availability,
+                style: .knob, range: 0...100, defaultValue: MotionConfig().spread,
+                read: { $0.motion.spread },
+                write: { $0.motion.spread = $1 })
+            ComposerContinuousControl(
+                label: ComposerControlCatalog.offsetLabel(for: pattern), controlID: "offset",
+                vm: vm, availability: availability,
+                style: pattern == .twinkle ? .fader : .knob,
+                range: 0...100, defaultValue: MotionConfig().offset,
+                read: { $0.motion.offset },
+                write: { $0.motion.offset = $1 })
+            Spacer(minLength: 0)
+        }
 
         if ComposerControlCatalog.isSpatialPattern(pattern) {
-            StageToggleRow(
-                title: "Mirror",
-                isOn: Binding(
-                    get: { vm.activeCompositionBox?.motion.mirror ?? false },
-                    set: { vm.activeCompositionBox?.motion.mirror = $0 }
-                )
-            )
+            ComposerToggleControl(
+                label: "Mirror", controlID: "mirror", vm: vm, availability: availability,
+                read: { $0.motion.mirror },
+                write: { $0.motion.mirror = $1 })
         }
     }
 
     // ── Envelope ──────────────────────────────────────────────
 
     @ViewBuilder
-    private var envelopeAdvanced: some View {
-        let shape = vm.activeCompositionBox?.envelope.shape ?? .breathe
+    private var envelopeSupporting: some View {
+        let shape = availability.session?.box.envelope.shape ?? .breathe
 
-        // The configured curve, live — these sliders reshape it in place.
-        EnvelopeStripView(envelope: vm.activeCompositionBox?.envelope ?? EnvelopeConfig())
+        // The live curve preview renders ONCE, at the top of the card with the
+        // essentials — it used to render a second time here, when this tier
+        // lived on its own card.
 
-        // Shape-specific controls (the engine has always consumed these).
-        if shape == .swell {
-            StageSlider(
-                title: "Attack",
-                value: Binding(
-                    get: { vm.activeCompositionBox?.envelope.attack ?? 50 },
-                    set: { vm.activeCompositionBox?.envelope.attack = $0 }
-                ),
-                range: 0...100
-            )
-            StageSlider(
-                title: "Decay",
-                value: Binding(
-                    get: { vm.activeCompositionBox?.envelope.decay ?? 50 },
-                    set: { vm.activeCompositionBox?.envelope.decay = $0 }
-                ),
-                range: 0...100
-            )
-        }
-        if shape == .pulse {
-            StageSlider(
-                title: "Duty Cycle",
-                value: Binding(
-                    get: { vm.activeCompositionBox?.envelope.dutyCycle ?? 50 },
-                    set: { vm.activeCompositionBox?.envelope.dutyCycle = $0 }
-                ),
-                range: 10...90
-            )
+        // Shape-specific controls (the engine has always consumed these):
+        // attack, decay and duty cycle are RATES/character → knobs.
+        if shape == .swell || shape == .pulse {
+            HStack(alignment: .top, spacing: HueSpacing.lg) {
+                if shape == .swell {
+                    ComposerContinuousControl(
+                        label: "Attack", controlID: "attack", vm: vm, availability: availability,
+                        style: .knob, range: 0...100, defaultValue: EnvelopeConfig().attack,
+                        read: { $0.envelope.attack },
+                        write: { $0.envelope.attack = $1 })
+                    ComposerContinuousControl(
+                        label: "Decay", controlID: "decay", vm: vm, availability: availability,
+                        style: .knob, range: 0...100, defaultValue: EnvelopeConfig().decay,
+                        read: { $0.envelope.decay },
+                        write: { $0.envelope.decay = $1 })
+                }
+                if shape == .pulse {
+                    ComposerContinuousControl(
+                        label: "Duty Cycle", controlID: "dutyCycle", vm: vm, availability: availability,
+                        style: .knob, range: 10...90, defaultValue: EnvelopeConfig().dutyCycle,
+                        format: { "\(Int($0.rounded()))%" },
+                        read: { $0.envelope.dutyCycle },
+                        write: { $0.envelope.dutyCycle = $1 })
+                }
+                Spacer(minLength: 0)
+            }
         }
 
-        if shape != .steady {
-            StageSlider(
-                title: "Min Brightness",
-                value: Binding(
-                    get: { vm.activeCompositionBox?.envelope.minBrightness ?? 10 },
-                    set: { vm.activeCompositionBox?.envelope.minBrightness = $0 }
-                ),
-                range: 0...50
-            )
+        // Brightness floor and ceiling are LEVELS → faders.
+        HStack(alignment: .top, spacing: HueSpacing.lg) {
+            if shape != .steady {
+                ComposerContinuousControl(
+                    label: "Min Brightness", controlID: "minBrightness", vm: vm, availability: availability,
+                    style: .fader, range: 0...50, defaultValue: EnvelopeConfig().minBrightness,
+                    read: { $0.envelope.minBrightness },
+                    write: { $0.envelope.minBrightness = $1 })
+            }
+            ComposerContinuousControl(
+                label: "Max Brightness", controlID: "maxBrightness", vm: vm, availability: availability,
+                style: .fader, range: 50...100, defaultValue: EnvelopeConfig().maxBrightness,
+                read: { $0.envelope.maxBrightness },
+                write: { $0.envelope.maxBrightness = $1 })
+            Spacer(minLength: 0)
         }
-        StageSlider(
-            title: "Max Brightness",
-            value: Binding(
-                get: { vm.activeCompositionBox?.envelope.maxBrightness ?? 100 },
-                set: { vm.activeCompositionBox?.envelope.maxBrightness = $0 }
-            ),
-            range: 50...100
-        )
     }
 
     // ── Reaction ──────────────────────────────────────────────
 
     @ViewBuilder
-    private var reactionAdvanced: some View {
-        let source = vm.activeCompositionBox?.reaction.source ?? .none
+    private var reactionSupporting: some View {
+        let source = availability.session?.box.reaction.source ?? .none
 
-        if ComposerControlCatalog.isMicSource(source) {
-            MicLevelMeterView(threshold: vm.activeCompositionBox?.reaction.threshold)
-            // The engine has consumed smoothing (one-pole response lag) all
-            // along — this is its first slider.
-            StageSlider(
-                title: "Smoothing",
-                value: Binding(
-                    get: { vm.activeCompositionBox?.reaction.smoothing ?? 30 },
-                    set: { vm.activeCompositionBox?.reaction.smoothing = $0 }
-                ),
-                range: 0...100
-            )
-            StageSlider(
-                title: "Threshold",
-                value: Binding(
-                    get: { vm.activeCompositionBox?.reaction.threshold ?? 10 },
-                    set: { vm.activeCompositionBox?.reaction.threshold = $0 }
-                ),
-                range: 0...100
-            )
-        }
-
-        if source != .none {
-            StageSlider(
-                title: "Intensity",
-                value: Binding(
-                    get: { vm.activeCompositionBox?.reaction.intensity ?? 70 },
-                    set: { vm.activeCompositionBox?.reaction.intensity = $0 }
-                ),
-                range: 0...100
-            )
+        HStack(alignment: .top, spacing: HueSpacing.lg) {
+            if ComposerControlCatalog.isMicSource(source) {
+                // The level meter renders ONCE, with the essentials above.
+                // Smoothing (one-pole response lag) and threshold (noise gate)
+                // shape the mic drive's CHARACTER → knobs.
+                ComposerContinuousControl(
+                    label: "Smoothing", controlID: "smoothing", vm: vm, availability: availability,
+                    style: .knob, range: 0...100, defaultValue: ReactionConfig().smoothing,
+                    read: { $0.reaction.smoothing },
+                    write: { $0.reaction.smoothing = $1 })
+                // Threshold is a LEVEL — the tick on the meter bar — so it is
+                // a fader; smoothing beside it is character (review round, B-11).
+                ComposerContinuousControl(
+                    label: "Threshold", controlID: "threshold", vm: vm, availability: availability,
+                    style: .fader, range: 0...100, defaultValue: ReactionConfig().threshold,
+                    read: { $0.reaction.threshold },
+                    write: { $0.reaction.threshold = $1 })
+            }
+            if source != .none {
+                // How hard the reaction hits — an AMOUNT → fader.
+                ComposerContinuousControl(
+                    label: "Intensity", controlID: "intensity", vm: vm, availability: availability,
+                    style: .fader, range: 0...100, defaultValue: ReactionConfig().intensity,
+                    read: { $0.reaction.intensity },
+                    write: { $0.reaction.intensity = $1 })
+            }
+            Spacer(minLength: 0)
         }
     }
 
     // ── Direction cluster (moved wholesale from the editor panel) ──
 
-    private let directionPresets: [(label: String, angle: Double)] = [
-        ("→", 0), ("↗", 45), ("↑", 90), ("↖", 135),
-        ("←", 180), ("↙", 225), ("↓", 270), ("↘", 315)
-    ]
+    /// Auto (PCA, `-1`) plus the eight compass presets.
+    private static let directionPresets: [ChipPickerRow<Double>.Item] =
+        [ChipPickerRow<Double>.Item(value: -1, label: "Auto",
+                                    accessibilityLabel: "Automatic direction, from the area's layout")]
+        + [("→", 0.0, "east"), ("↗", 45.0, "north-east"), ("↑", 90.0, "north"), ("↖", 135.0, "north-west"),
+           ("←", 180.0, "west"), ("↙", 225.0, "south-west"), ("↓", 270.0, "south"), ("↘", 315.0, "south-east")].map {
+            ChipPickerRow<Double>.Item(value: $0.1, label: $0.0,
+                                       accessibilityLabel: "\(Int($0.1)) degrees, \($0.2)")
+        }
 
-    private var directionControl: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("DIRECTION")
-                .font(HueFont.stageTag)
-                .foregroundStyle(.white.opacity(0.38))
-                .tracking(0.6)
-
-            HStack(spacing: 16) {
-                // Mini-map
-                spatialMiniMap
-
-                Spacer()
-
-                // Angle dial
-                motionAngleDial
-            }
-
-            // Direction presets
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(0..<directionPresets.count, id: \.self) { i in
-                        let preset = directionPresets[i]
-                        let currentAngle = max(0, vm.activeCompositionBox?.motion.motionAngle ?? 0)
-                        let isSelected = abs(currentAngle - preset.angle) < 5 || abs(currentAngle - preset.angle - 360) < 5
-                        Button {
-                            recomputeSpatialPositions(angle: preset.angle)
-                            HapticManager.shared.medium()
-                        } label: {
-                            Text(preset.label)
-                                .font(.system(size: 16, weight: .medium))
-                                .frame(width: 36, height: 36)
-                                .foregroundStyle(isSelected ? .black : .white.opacity(0.7))
-                                .background(
-                                    Circle().fill(isSelected ? HuePalette.amber : Color.white.opacity(0.08))
-                                )
-                                .overlay(
-                                    Circle().strokeBorder(isSelected ? .clear : .white.opacity(0.08), lineWidth: 1)
-                                )
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Direction \(Int(preset.angle)) degrees")
-                    }
-                }
+    /// Which preset the current angle sits on (within the 5° snap), or the
+    /// exact angle itself when it is not a preset.
+    private static func presetSelection(for angle: Double) -> Double {
+        guard angle >= 0 else { return -1 }
+        for preset in directionPresets where preset.value >= 0 {
+            if abs(angle - preset.value) < 5 || abs(angle - preset.value - 360) < 5 {
+                return preset.value
             }
         }
+        return angle
     }
 
-    private var motionAngleDial: some View {
-        let currentAngle = max(0, vm.activeCompositionBox?.motion.motionAngle ?? 0)
-        let size: CGFloat = 80
-        let indicatorRad: CGFloat = (CGFloat(currentAngle) - 90) * .pi / 180
+    private var directionControl: some View {
+        let angle = availability.session?.box.motion.motionAngle ?? -1
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: HueSpacing.lg) {
+                // Mini-map: a PREVIEW of where the lights sit and which way
+                // the motion travels — not a control.
+                spatialMiniMap
 
-        return ZStack {
-            Circle()
-                .fill(Color.white.opacity(0.04))
-                .overlay(
-                    Circle()
-                        .strokeBorder(.white.opacity(0.12), lineWidth: 1.5)
-                )
-
-            ForEach(0..<8, id: \.self) { i in
-                let tickAngle: CGFloat = CGFloat(i) * 45
-                let rad: CGFloat = (tickAngle - 90) * .pi / 180
-                let inner: CGFloat = size / 2 - 10
-                let outer: CGFloat = size / 2 - 4
-                let cosRad: CGFloat = CoreGraphics.cos(rad)
-                let sinRad: CGFloat = CoreGraphics.sin(rad)
-
-                Path { path in
-                    path.move(to: CGPoint(
-                        x: size / 2 + cosRad * inner,
-                        y: size / 2 + sinRad * inner
-                    ))
-                    path.addLine(to: CGPoint(
-                        x: size / 2 + cosRad * outer,
-                        y: size / 2 + sinRad * outer
-                    ))
-                }
-                .stroke(.white.opacity(0.2), lineWidth: 1.5)
+                // The angle is CHARACTER → the shared knob (exact entry,
+                // double-tap, adjustable accessibility), replacing the
+                // hand-rolled dial. `Auto` (-1) reads as 0° on the knob; the
+                // pads below are where Auto is chosen.
+                // 0…355 in 5° steps: 360 and 0 are one direction, and a range
+                // that ends at 360 put them at opposite ends of the arc. No
+                // `defaultValue`: a double-tap "reset" cannot mean 0° when the
+                // model's default is Auto (-1) — Auto is the preset chip's job
+                // (review round, B-3).
+                StageKnob(
+                    title: "Direction",
+                    value: Binding(
+                        get: { max(0, angle) },
+                        set: { newAngle in
+                            let snapped = ((newAngle / 5).rounded() * 5).truncatingRemainder(dividingBy: 360)
+                            recomputeSpatialPositions(angle: snapped)
+                        }
+                    ),
+                    range: 0...355,
+                    defaultValue: nil,
+                    format: { shown in angle < 0 && shown == 0 ? "Auto" : "\(Int(shown.rounded()))°" },
+                    diameter: 60)
+                Spacer(minLength: 0)
             }
 
-            let indicatorCos: CGFloat = CoreGraphics.cos(indicatorRad)
-            let indicatorSin: CGFloat = CoreGraphics.sin(indicatorRad)
-
-            Path { path in
-                path.move(to: CGPoint(x: size / 2, y: size / 2))
-                path.addLine(to: CGPoint(
-                    x: size / 2 + indicatorCos * (size / 2 - 14),
-                    y: size / 2 + indicatorSin * (size / 2 - 14)
-                ))
-            }
-            .stroke(
-                HuePalette.amber,
-                style: StrokeStyle(lineWidth: 2.5, lineCap: .round)
-            )
-
-            Circle()
-                .fill(HuePalette.amber)
-                .frame(width: 6, height: 6)
-
-            Text("\(Int(currentAngle))°")
-                .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.45))
-                .offset(y: size / 2 + 10)
-        }
-        .frame(width: size, height: size)
-        .contentShape(Circle())
-        .gesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged { gesture in
-                    let center = CGPoint(x: size / 2, y: size / 2)
-                    let dx = gesture.location.x - center.x
-                    let dy = gesture.location.y - center.y
-                    var angle = atan2(dy, dx) * 180 / .pi + 90
-                    if angle < 0 { angle += 360 }
-                    let snapped = (angle / 5).rounded() * 5
-                    let final = snapped.truncatingRemainder(dividingBy: 360)
-
-                    let prev = vm.activeCompositionBox?.motion.motionAngle ?? 0
-                    let prevSlot = Int(prev / 45)
-                    let newSlot = Int(final / 45)
-                    if prevSlot != newSlot {
-                        HapticManager.shared.selection()
+            // Direction presets — discrete decisions → chips (nine of them,
+            // so the scrollable row rather than pads).
+            StageSteppedEncoder(
+                title: "Preset",
+                items: Self.directionPresets,
+                selection: Binding(
+                    get: { Self.presetSelection(for: angle) },
+                    set: { preset in
+                        if preset < 0 {
+                            guard let session = availability.session else { return }
+                            vm.commitComposerEdit(session) { box in
+                                box.motion.motionAngle = -1
+                                box.triggerRESTBurst()
+                            }
+                        } else {
+                            recomputeSpatialPositions(angle: preset)
+                        }
+                        HapticManager.shared.medium()
                     }
-
-                    recomputeSpatialPositions(angle: final)
-                }
-        )
-        .animation(.interactiveSpring(response: 0.2), value: currentAngle)
+                ),
+                prominence: .chips)
+        }
     }
 
     private var spatialMiniMap: some View {
         let mapSize: CGFloat = 80
-        let currentAngle = max(0, vm.activeCompositionBox?.motion.motionAngle ?? 0)
+        let rawAngle = availability.session?.box.motion.motionAngle ?? -1
+        let currentAngle = max(0, rawAngle)
 
         return ZStack {
             // Background
@@ -621,10 +676,14 @@ struct ComposerAdvancedControls: View {
                         .strokeBorder(.white.opacity(0.10), lineWidth: 1)
                 )
 
-            // Direction arrow through center
+            // Direction arrow through center — drawn only for an AUTHORED
+            // angle. Under Auto the runtime derives the direction from the
+            // area's principal axis at start; drawing 0° here said "east"
+            // beside a readout that said "Auto" (review round, B-3).
             let arrowRad: CGFloat = (CGFloat(currentAngle) - 90) * .pi / 180
             let arrowCos: CGFloat = CoreGraphics.cos(arrowRad)
             let arrowSin: CGFloat = CoreGraphics.sin(arrowRad)
+            if rawAngle >= 0 {
             Path { path in
                 let cx = mapSize / 2, cy = mapSize / 2
                 let len: CGFloat = mapSize / 2 - 8
@@ -641,9 +700,10 @@ struct ComposerAdvancedControls: View {
                 HuePalette.amber.opacity(0.35),
                 style: StrokeStyle(lineWidth: 1.5, lineCap: .round, dash: [4, 3])
             )
+            }
 
             // Light position dots
-            if let config = orchestrator.activeEntertainmentConfig(for: vm.selectedRoom) {
+            if let config = orchestrator.activeEntertainmentConfig(for: availability.room) {
                 let channels = config.channels
                 // Normalize positions to fit in map
                 let xs = channels.map { $0.position.x }
@@ -675,11 +735,12 @@ struct ComposerAdvancedControls: View {
             }
         }
         .frame(width: mapSize, height: mapSize)
-        .animation(.interactiveSpring(response: 0.3), value: currentAngle)
+        .animation(reduceMotion ? nil : .interactiveSpring(response: 0.3), value: currentAngle)
+        .accessibilityHidden(true)   // a preview; the knob and the presets carry the semantics
     }
 
     private func paletteSwatchColor(at index: Int) -> Color {
-        guard let box = vm.activeCompositionBox else { return .gray }
+        guard let box = availability.session?.box else { return .gray }
         let c: CodableColor
         switch index {
         case 0: c = box.palette.color1
@@ -696,17 +757,17 @@ struct ComposerAdvancedControls: View {
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: "plus.circle")
-                    .font(.system(size: 14))
+                    .font(.subheadline)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Create Entertainment Area")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.caption.weight(.semibold))
                     Text("Unlock directional motion across your room")
-                        .font(.system(size: 10))
+                        .font(.caption2)
                         .foregroundStyle(.white.opacity(0.4))
                 }
                 Spacer()
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 11))
+                    .font(.caption)
                     .foregroundStyle(.white.opacity(0.3))
             }
             .foregroundStyle(HuePalette.amber.opacity(0.85))
@@ -728,10 +789,10 @@ struct ComposerAdvancedControls: View {
                 // enough: whether it belongs to THIS room is decided by the
                 // entertainment-service → device → light map, which only the
                 // bridge can answer. Re-warm, then recompute from the selection.
-                let room = vm.selectedRoom
+                let room = availability.room
                 Task {
                     await orchestrator.warmEntertainmentCaches(for: room, force: true)
-                    recomputeSpatialPositions(angle: max(0, vm.activeCompositionBox?.motion.motionAngle ?? 0))
+                    recomputeSpatialPositions(angle: max(0, availability.session?.box.motion.motionAngle ?? 0))
                 }
             }
             .environment(orchestrator)
@@ -743,17 +804,19 @@ struct ComposerAdvancedControls: View {
     /// exactly once per user edit (CompositionParamBox is @Observable, but an
     /// onChange would also fire on programmatic writes like preset loads).
     private func recomputeSpatialPositions(angle: Double) {
-        guard let config = orchestrator.activeEntertainmentConfig(for: vm.selectedRoom),
-              let box = vm.activeCompositionBox else { return }
-        box.motion.motionAngle = angle
+        guard let config = orchestrator.activeEntertainmentConfig(for: availability.room),
+              let session = availability.session else { return }
         let newPositions = CompositionEngine.computeSpatialPositionsForEntertainment(
             channels: config.channels,
             motionAngle: angle
         )
-        guard !newPositions.isEmpty else { return }
-        // Start smooth lerp transition
-        box.targetSpatialPositions = newPositions
-        box.spatialLerpProgress = 0.0
-        box.triggerRESTBurst()
+        vm.commitComposerEdit(session) { box in
+            box.motion.motionAngle = angle
+            guard !newPositions.isEmpty else { return }
+            // Start smooth lerp transition
+            box.targetSpatialPositions = newPositions
+            box.spatialLerpProgress = 0.0
+            box.triggerRESTBurst()
+        }
     }
 }

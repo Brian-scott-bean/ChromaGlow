@@ -200,7 +200,7 @@ struct StudioMusicWiring: ViewModifier {
     }
 
     private var paletteAction: (() -> Void)? {
-        guard vm.activeCompositionBox != nil else { return nil }
+        guard vm.composerEditSession() != nil else { return nil }
         // A bridge-stored room has no live loop reading the box — the
         // paint badge there would invite a tap that does nothing (the
         // schedule plays on the bridge hardware). Audit R9, F10.
@@ -212,10 +212,11 @@ struct StudioMusicWiring: ViewModifier {
     }
 
     /// The one sanctioned palette write path: through the live editor box,
-    /// exactly like the harmony onChange (never a parallel bridge write).
+    /// via the edit session and its fence (Slice 3) — never a parallel
+    /// bridge write, never a box re-resolved from the selection.
     private func applyAlbumPalette() {
         guard let palette = music.artworkPalette,
-              let box = vm.activeCompositionBox else { return }
+              let session = vm.composerEditSession() else { return }
         // commitSwatchEdit's clamp discipline: the extractor emits gamut-C
         // points; the running room may be gamut A/B (audit R9, F7).
         let gamut = vm.activeCompositionGamut
@@ -223,25 +224,20 @@ struct StudioMusicWiring: ViewModifier {
             let xy = HueColorUtils.clampXYToGamut(x: c.x, y: c.y, gamut: gamut)
             return CodableColor(x: xy.x, y: xy.y)
         }
-        if box.palette.mode != palette.mode { box.palette.mode = palette.mode }
-        box.palette.color1 = clamped(palette.color1)
-        box.palette.color2 = clamped(palette.color2)
-        box.palette.color3 = palette.color3.map(clamped)
-        box.palette.harmonyRule = nil
-        // Clear the harmony CHIP too — a lit rule re-imposes itself on the
-        // next pad drag and overwrites these colors (audit R9, F6). The
-        // `.none` sentinel rides the existing restoredHarmonyRule chain;
-        // StudioView's onChange arms the echo guard so its destructive
-        // `.none` branch can't fire on the fresh palette.
-        if vm.restoredHarmonyRule != HarmonyRule.none {
-            // The CASE, not Optional.none — bare `.none` on the optional
-            // assigned nil, and from an already-nil state (rule picked by
-            // hand, then album tapped) nil→nil never fired the onChange,
-            // so the chip stayed lit and the next pad drag re-imposed the
-            // rule over the album colors.
-            vm.restoredHarmonyRule = HarmonyRule.none
+        let verdict = vm.commitComposerEdit(session) { box in
+            if box.palette.mode != palette.mode { box.palette.mode = palette.mode }
+            box.palette.color1 = clamped(palette.color1)
+            box.palette.color2 = clamped(palette.color2)
+            box.palette.color3 = palette.color3.map(clamped)
+            box.palette.harmonyRule = nil
+            box.triggerRESTBurst()
         }
-        box.triggerRESTBurst()
+        guard verdict.isCommit else { return }
+        // Clear the harmony CHIP too — a lit rule re-imposes itself on the
+        // next pad drag and overwrites these colors (audit R9, F6). A
+        // programmatic clear, so no palette echo: the chip for THIS target
+        // simply goes dark (Slice 3 review round, A-1).
+        vm.clearHarmonyRuleWithoutEcho()
     }
 }
 

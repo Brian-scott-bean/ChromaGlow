@@ -10,7 +10,7 @@ alwaysApply: false
 ## After Every Code Change
 Run this build check before saying you're done:
 ```bash
-PROJ=/Users/brianbean/Desktop/huehome-pro-v0.3.0
+PROJ=/Users/brianbean/Developer/huehome-pro-v0.3.0
 xcodebuild -project "$PROJ/HueHome.xcodeproj" -scheme "HueHome 1" -destination 'generic/platform=iOS' build 2>&1 | grep -E 'error:|BUILD SUCCEEDED|BUILD FAILED'
 ```
 The scheme is `HueHome 1`, not `HueHome`. To build or test against a simulator,

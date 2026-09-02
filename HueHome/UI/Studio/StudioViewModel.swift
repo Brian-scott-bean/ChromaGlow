@@ -901,7 +901,10 @@ final class StudioViewModel {
             studioNotice = StudioNotice(message: "Select a room first.")
             return
         }
-        guard let box = activeCompositionBox else { return }
+        // The exact running instance, through the edit session (Slice 3):
+        // the bridge copy is of the composition the user is looking at.
+        guard let session = composerEditSession() else { return }
+        let box = session.box
         guard canSaveActiveLookToBridge else {
             studioNotice = StudioNotice(message:
                 "Looks that react to sound can't be stored on the bridge — the bridge has no microphone. This one keeps running from ChromaGlow instead.")
@@ -913,7 +916,7 @@ final class StudioViewModel {
         // recovered under, so it is created first and reported separately: the
         // user is told whether a copy landed in My Creations or not.
         let preset = compositionStore.presets.first { $0.id == runningPresetID(for: card) }
-            ?? saveActiveComposition(name: card.name, icon: card.icon,
+            ?? saveActiveComposition(session: session, name: card.name, icon: card.icon,
                                      preferredTransport: nil)
         guard let preset else {
             studioNotice = StudioNotice(message: BridgeSaveCopy.saveFailedNothingRecorded)
@@ -924,7 +927,8 @@ final class StudioViewModel {
         // save that did not happen.
         let outcome = await orchestrator.saveLookToBridge(
             room: room, paramBox: box,
-            gamutOverride: activeCompositionGamut, preset: preset)
+            gamutOverride: activeCompositionGamuts[StudioSelectionKey(room: room)] ?? .c,
+            preset: preset)
 
         applyBridgeSaveOutcome(
             outcome, room: room, presetName: preset.name,
@@ -995,7 +999,7 @@ final class StudioViewModel {
                     notePreviewRowRemoved(rowKey: key)
                     runningEffects.removeValue(forKey: key)
                 }
-                activeCompositionBoxes.removeValue(forKey: key)
+                evictCompositionState(at: key)
             }
             let headline: String
             if !previousLookRemoved {
@@ -1050,7 +1054,7 @@ final class StudioViewModel {
                     notePreviewRowRemoved(rowKey: key)
                     runningEffects.removeValue(forKey: key)
                 }
-                activeCompositionBoxes.removeValue(forKey: key)
+                evictCompositionState(at: key)
             }
             studioNotice = StudioNotice(message: fenceValid
                 ? BridgeSaveCopy.previousLookRemovedSaveFailed
@@ -1129,9 +1133,9 @@ final class StudioViewModel {
                         notePreviewRowRemoved(rowKey: key)
                         runningEffects.removeValue(forKey: key)
                     }
-                    activeCompositionBoxes.removeValue(forKey: key)
+                    evictCompositionState(at: key)
                 } else if let boxKey = activeCompositionBoxKey(bridgeID: bridgeID, groupID: roomID) {
-                    activeCompositionBoxes.removeValue(forKey: boxKey)
+                    evictCompositionState(at: boxKey)
                 }
             }
             bridgeSaveResult = nil
@@ -1520,16 +1524,32 @@ final class StudioViewModel {
     private let aiGenerator = AICompositionGenerator()
     var isGeneratingAIComposition = false
     var aiGenerationErrorMessage: String?
-    var activeCompositionGamut: HueColorUtils.Gamut = .c
-    var roomHasColorLights: Bool = true
-    var restoredHarmonyRule: HarmonyRule? = nil
-    /// One-shot guard for programmatic harmony-chip clears (album colors,
-    /// a rule-less preset restore): StudioView's activeHarmonyRule onChange
-    /// has a DESTRUCTIVE `.none` branch (nils color3, resets color2) meant
-    /// for the user turning harmony off — a programmatic clear must reset
-    /// the chip without that echo. Armed by the restoredHarmonyRule
-    /// onChange, consumed by the activeHarmonyRule one. (Audit R9, F6.)
-    @ObservationIgnored var harmonyEchoSuppressed = false
+    /// The dominant Hue gamut of each running composition's target, keyed by
+    /// the EXACT place (Slice 3): one slot per target, not one global slot
+    /// that the last apply overwrote for every composition on screen. The
+    /// engine starts with this value and the editor clamps to it — one truth
+    /// per target.
+    private var activeCompositionGamuts: [StudioSelectionKey: HueColorUtils.Gamut] = [:]
+    /// The gamut for the SELECTED target's composition (`.c`, the widest
+    /// authoring gamut, when nothing is known).
+    var activeCompositionGamut: HueColorUtils.Gamut {
+        guard let room = selectedRoom else { return .c }
+        return activeCompositionGamuts[StudioSelectionKey(room: room)] ?? .c
+    }
+    // `roomHasColorLights` is GONE (Slice 3, S3-4). It was a two-state answer
+    // to a three-state question — a default of `true` collapsed "not read yet"
+    // into "yes" — held in ONE slot for every running composition. Composer
+    // colour controls now resolve per target through
+    // `ComposerControlAvailability` against `targetSnapshot(for:)`, the same
+    // funnel the Studio board uses.
+    // `restoredHarmonyRule` / `harmonyEchoSuppressed` are GONE (Slice 3
+    // review round, A-1): the harmony rule is per-target session memory
+    // (`TargetWorkingState.activeHarmonyRule`), seeded by `seedHarmonyRule`
+    // at apply and at Revert and changed by the user through
+    // `setHarmonyRule`, which rewrites the palette through the edit fence.
+    // A StudioView-scoped chip fed by a global restore slot let composition
+    // P2's saved rule, applied to room A from the transport prompt while the
+    // rolodex sat on room B, rewrite room B's palette.
     let suggestedAIPrompts: [String] = [
         "Static Warm Sunset",
         "Cozy Reading Corner",
@@ -1572,6 +1592,127 @@ final class StudioViewModel {
     var activeCompositionBox: CompositionParamBox? {
         guard let room = selectedRoom else { return nil }
         return activeCompositionBoxes[StudioSelectionKey(room: room)]
+    }
+
+    // ── Composer edit session (Slice 3, S3-5: exact-state fencing) ──
+    //
+    // Every Composer write used to be `activeCompositionBox?.field = value`,
+    // which RE-RESOLVES the box from `selectedRoom` at the moment of the
+    // write. After a stop the write no-opped (safe by accident, silently);
+    // after a same-room replacement, or a room change under a live keyboard,
+    // an edit authored against composition A landed in composition B's box.
+    // `StudioParam` writes have been fenced since Slice 1; these are the
+    // Composer's equivalent, on the Composer's own domain model — the fence
+    // guards the IDENTITY, the four config structs stay in the box.
+
+    /// The session for a running composition: its exact identity and its
+    /// live box, captured NOW and never re-resolved. Nil when the row has no
+    /// live box (a bridge-optimized one-shot, a recovered mirror).
+    func composerEditSession(for effect: RunningEffect) -> ComposerEditSession? {
+        guard case .composition = effect.card.strategy,
+              effect.recovered == nil,
+              let box = activeCompositionBoxes[StudioSelectionKey(room: effect.room)]
+        else { return nil }
+        return ComposerEditSession(identity: effect.identity, box: box)
+    }
+
+    /// The session for the SELECTED target's running composition.
+    func composerEditSession() -> ComposerEditSession? {
+        currentRoomEffect.flatMap { composerEditSession(for: $0) }
+    }
+
+    /// Forget one target's live composition state — the editor box AND its
+    /// gamut (review round, A-7): one funnel for every removal path, so the
+    /// two can never disagree about which targets are live.
+    private func evictCompositionState(at key: StudioSelectionKey) {
+        activeCompositionBoxes.removeValue(forKey: key)
+        activeCompositionGamuts.removeValue(forKey: key)
+    }
+
+    // ── Harmony rule (Slice 3 review round, A-1 / A-2 / A-3) ──
+    //
+    // The rule the chip row shows is PER-TARGET session memory. The document
+    // truth is `box.palette.harmonyRule`; the chip is seeded from it at apply
+    // and at Revert, and only the user's tap rewrites the palette — through
+    // the edit fence, on the captured box. A programmatic clear (album
+    // colours) resets the chip WITHOUT the destructive palette echo.
+
+    /// The chip state for a target — seeded from the preset's saved rule.
+    func seedHarmonyRule(for identity: RunningLookIdentity, from preset: CompositionPreset) {
+        let rule = preset.palette.harmonyRule.flatMap(HarmonyRule.init(rawValue:)) ?? .none
+        sessionMemory.update(identity.targetKey) { $0.activeHarmonyRule = rule }
+    }
+
+    /// The chip state the Composer renders for a running target.
+    func harmonyRule(for effect: RunningEffect) -> HarmonyRule {
+        sessionMemory.state(for: effect.identity.targetKey).activeHarmonyRule
+    }
+
+    /// The USER chose a rule for the selected target's running composition:
+    /// `.none` clears the derived slots (the destructive echo the user asked
+    /// for); any other rule forces gradient mode, records the rule in the
+    /// document and re-derives color1/2/3 from color1 — all on the captured
+    /// box through the fence.
+    func setHarmonyRule(_ rule: HarmonyRule) {
+        guard let effect = currentRoomEffect,
+              let session = composerEditSession(for: effect) else { return }
+        let key = effect.identity.targetKey
+        let previous = sessionMemory.state(for: key).activeHarmonyRule
+        guard rule != previous else { return }
+        let gamut = activeCompositionGamuts[StudioSelectionKey(room: effect.room)] ?? .c
+        let verdict = commitComposerEdit(session) { box in
+            if rule == .none {
+                box.palette.color3 = nil
+                box.palette.color2 = CodableColor(x: 0.6400, y: 0.3300)
+                box.palette.harmonyRule = nil
+            } else {
+                if box.palette.mode != .gradient { box.palette.mode = .gradient }
+                box.palette.harmonyRule = rule.rawValue
+                Self.applyHarmony(rule, to: box, gamut: gamut)
+            }
+            box.triggerRESTBurst()
+        }
+        guard verdict.isCommit else { return }
+        sessionMemory.update(key) { $0.activeHarmonyRule = rule }
+    }
+
+    /// A programmatic clear (album colours wrote their own palette): the chip
+    /// goes dark for the selected target with NO palette echo.
+    func clearHarmonyRuleWithoutEcho() {
+        guard let effect = currentRoomEffect else { return }
+        sessionMemory.update(effect.identity.targetKey) { $0.activeHarmonyRule = .none }
+    }
+
+    /// Re-derive color1/2/3 from color1 under `rule` (the harmony engine).
+    static func applyHarmony(_ rule: HarmonyRule, to box: CompositionParamBox,
+                             gamut: HueColorUtils.Gamut) {
+        guard rule != .none else { return }
+        let current = box.palette.color1
+        let hsb = HueColorUtils.hsb(fromX: current.x, y: current.y, brightness: 100)
+        let paletteColors = HarmonyEngine.palette(
+            rule: rule, rootHue: hsb.h, saturation: hsb.s, brightness: 1.0, count: 3)
+        box.palette.color1 = HueColorUtils.codableColor(from: paletteColors[0], gamut: gamut)
+        box.palette.color2 = HueColorUtils.codableColor(from: paletteColors[1], gamut: gamut)
+        if paletteColors.count >= 3 {
+            box.palette.color3 = HueColorUtils.codableColor(from: paletteColors[2], gamut: gamut)
+        } else {
+            box.palette.color3 = nil
+        }
+    }
+
+    /// Commit one Composer edit through the fence. `mutate` runs against the
+    /// CAPTURED box only when the captured identity is still the live one on
+    /// its target; a stop, a replacement, a restart, a transport failover or
+    /// a Revert in between drops it with the reason a test can assert on.
+    @discardableResult
+    func commitComposerEdit(_ session: ComposerEditSession,
+                            _ mutate: (CompositionParamBox) -> Void) -> CustomizationFenceVerdict {
+        let verdict = CustomizationFence.verdict(
+            captured: session.identity,
+            live: valueScopes.liveIdentity(for: session.identity))
+        guard verdict.isCommit else { return verdict }
+        mutate(session.box)
+        return .commit
     }
 
     // ── Status ────────────────────────────────────────────────
@@ -1961,18 +2102,59 @@ final class StudioViewModel {
     }
 
     /// Copy the backing preset's four layer configs back into the live box —
-    /// the composer's "revert to saved".
+    /// the composer's "revert to saved". REVERT, not reset: the destination is
+    /// the user's saved document, never factory defaults (spec §22).
+    ///
+    /// Slice 3: the copy-back goes through the edit session, and the running
+    /// instance is REKEYED afterwards — the same fence a transport failover
+    /// applies — so an edit still in flight against the pre-revert run (a
+    /// typed draft committing on focus loss, a pad sample, the export task)
+    /// drops as `.staleGeneration` instead of landing on top of the revert.
+    /// `rekey`, not `reset`: the look never stopped, and the new identity is
+    /// written back into the row so the next gesture captures it. Session
+    /// memory is keyed without the generation, so the layer tab, expansions
+    /// and scroll position survive.
     func revertActiveComposition() {
-        guard let box = activeCompositionBox,
-              let effect = currentRoomEffect,
+        guard let effect = currentRoomEffect,
+              let session = composerEditSession(for: effect),
               case .composition(let pid) = effect.card.strategy,
               pid != Self.composerStarterDraftPresetID,
               let preset = compositionStore.presets.first(where: { $0.id == pid }) else { return }
-        box.palette = preset.palette
-        box.motion = preset.motion
-        box.envelope = preset.envelope
-        box.reaction = preset.reaction
-        box.triggerRESTBurst()
+        // The spatial positions the runtime chases are DERIVED from the
+        // motion angle at start and on each direction edit; a Revert that
+        // copies the angle back without them leaves the lights chasing the
+        // un-reverted direction under a reverted dial (review round, A-5).
+        let entChannels = orchestrator?.activeEntertainmentConfig(for: effect.room)?.channels
+        let verdict = commitComposerEdit(session) { box in
+            box.palette = preset.palette
+            box.motion = preset.motion
+            box.envelope = preset.envelope
+            box.reaction = preset.reaction
+            if let entChannels, !entChannels.isEmpty {
+                // Same rule as the start path: Auto (-1) resolves to the
+                // area's principal angle, an authored angle is used as is.
+                if box.motion.motionAngle < 0 {
+                    box.motion.motionAngle = CompositionEngine.principalAngle(channels: entChannels)
+                }
+                let positions = CompositionEngine.computeSpatialPositionsForEntertainment(
+                    channels: entChannels, motionAngle: box.motion.motionAngle)
+                if !positions.isEmpty {
+                    box.targetSpatialPositions = positions
+                    box.spatialLerpProgress = 0.0
+                }
+            }
+            box.triggerRESTBurst()
+        }
+        guard verdict.isCommit else { return }
+        // The chip follows the document too (A-3): a rule the user set after
+        // the save is gone with the values it produced.
+        seedHarmonyRule(for: effect.identity, from: preset)
+        retirePendingSends(for: effect.identity.targetKey)
+        if let newIdentity = valueScopes.rekey(
+            effect.identity, to: generationCounter.bump(.reset)) {
+            runningEffects[StudioSelectionKey(room: effect.room)]?.identity = newIdentity
+        }
+        bumpLiveValuesTick()
         statusMessage = "Reverted to saved '\(preset.name)'"
     }
 
@@ -2364,18 +2546,13 @@ final class StudioViewModel {
             }
         }
 
-        guard !roomLights.isEmpty else {
-            await MainActor.run { roomHasColorLights = false }
-            return .c
-        }
+        guard !roomLights.isEmpty else { return .c }
         var counts: [HueColorUtils.Gamut: Int] = [.a: 0, .b: 0, .c: 0]
         for light in roomLights {
             guard let raw = light.color?.gamut_type?.uppercased(),
                   let gamut = HueColorUtils.Gamut(rawValue: raw) else { continue }
             counts[gamut, default: 0] += 1
         }
-        let totalColorLights = counts.values.reduce(0, +)
-        await MainActor.run { roomHasColorLights = totalColorLights > 0 }
         return counts.max(by: { $0.value < $1.value })?.key ?? .c
     }
 
@@ -3193,16 +3370,10 @@ final class StudioViewModel {
                 }()
                 // Prefer completing mic handoff before blocking on gamut result — bridge fetch still runs in parallel.
                 await micHeadStart
-                activeCompositionGamut = await gamutTask
+                let dominantGamut = await gamutTask
+                activeCompositionGamuts[StudioSelectionKey(room: room)] = dominantGamut
                 let box = CompositionParamBox(preset: preset)
                 activeCompositionBoxes[StudioSelectionKey(room: room)] = box
-                // Restore persisted harmony rule for re-edit
-                if let savedRule = preset.palette.harmonyRule,
-                   let rule = HarmonyRule(rawValue: savedRule) {
-                    restoredHarmonyRule = rule
-                } else {
-                    restoredHarmonyRule = nil
-                }
                 let presetPreferEntertainment: Bool?
                 switch preset.preferredTransport {
                 case .roomOnly:
@@ -3221,7 +3392,7 @@ final class StudioViewModel {
                     await orchestrator.startCompositionMode(
                         room: room,
                         paramBox: box,
-                        gamutOverride: activeCompositionGamut,
+                        gamutOverride: dominantGamut,
                         preferEntertainment: requestedEntertainment,
                         tier: tier,
                         preset: preset,
@@ -3233,6 +3404,11 @@ final class StudioViewModel {
                 if await handleStartOutcome(outcome, card: card, room: room,
                                       preferEntertainmentOverride: preferEntertainmentOverride,
                                       hadConsent: foreignConsent != nil) {
+                    // A refused or deferred start has no row: the box and
+                    // gamut installed above would otherwise outlive it as a
+                    // phantom "live" editor for nothing (review round, A-6).
+                    // A consent re-apply installs fresh ones.
+                    evictCompositionState(at: StudioSelectionKey(room: room))
                     return
                 }
                 // Same rule as the app-driven arm above: the transport comes
@@ -3241,6 +3417,9 @@ final class StudioViewModel {
                 let identity = installRunningIdentity(
                     room: room, card: card,
                     execution: .composition(presetID: presetID))
+                // The saved rule is the document's; the chip for THIS target
+                // starts from it (A-1) — never from a global restore slot.
+                seedHarmonyRule(for: identity, from: preset)
                 runningEffects[StudioSelectionKey(room: room)] = RunningEffect(
                     cardID: card.id, card: card, room: room,
                     lightIDs: newLightIDs, isEntertainment: isEnt,
@@ -3383,7 +3562,7 @@ final class StudioViewModel {
                                                    bridgeID: effect.room.bridgeID)
             // Keyed by the STOPPING row's EXACT bridge + room (round 4e) — the
             // room-id removal used to evict another bridge's same-room-id box.
-            activeCompositionBoxes.removeValue(forKey: rowKey)
+            evictCompositionState(at: rowKey)
             if isExplicitStop, let api, let groupedLightID {
                 // Ensure composition cards (including bridge one-shot tier)
                 // fully release control and don't appear "stuck on".
@@ -3468,7 +3647,7 @@ final class StudioViewModel {
                                                    bridgeID: prompt.owningBridgeID)
             if let boxKey = activeCompositionBoxKey(bridgeID: prompt.owningBridgeID,
                                                     groupID: prompt.owningRoomID) {
-                activeCompositionBoxes.removeValue(forKey: boxKey)
+                evictCompositionState(at: boxKey)
             }
             if let owningBridgeID = prompt.owningBridgeID {
                 orchestrator.removeActiveEffect(
@@ -4219,15 +4398,21 @@ final class StudioViewModel {
             disposition: applied ? .applied : .refused)
     }
 
-    /// Persist the currently running composition params as a new user preset.
+    /// Persist a running composition's params as a new user preset (save-as).
+    ///
+    /// `session` is the edit session captured when the save sheet OPENED
+    /// (review round, C-2): the sheet is a presentation the user can leave up
+    /// while rotating the rolodex, and reading `activeCompositionBox` at
+    /// confirm time saved whichever room was selected by then.
     func saveActiveComposition(
+        session: ComposerEditSession,
         name rawName: String,
         icon: String,
         accentColorHex: String = "#FFB340",
         preferredTransport: CompositionPreferredTransport?,
         category: PresetCategory = .myCreations
     ) -> CompositionPreset? {
-        guard let box = activeCompositionBox else { return nil }
+        let box = session.box
         let trimmed = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
         let safeIcon = sanitizedSymbolName(icon)
         let now = Date()

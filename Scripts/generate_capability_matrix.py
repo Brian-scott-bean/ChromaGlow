@@ -97,10 +97,10 @@ ENGINE_READS_PROOF = ("HueHomeTests/StudioParamCatalogTests.swift",
 # the line numbers; run `--refresh-citations` after touching the run* loops.
 # BEGIN CITED_CONSUMERS
 CITED_CONSUMERS = {
-    ("strobe", "flash_color"): "UnifiedOrchestrator.swift:8331",
-    ("party", "color"): "UnifiedOrchestrator.swift:8492,8588",
-    ("thunderstorm", "ambient_color"): "UnifiedOrchestrator.swift:8684,8725,8834",
-    ("thunderstorm", "flash_color"): "UnifiedOrchestrator.swift:8748,8835",
+    ("strobe", "flash_color"): "UnifiedOrchestrator.swift:8730",
+    ("party", "color"): "UnifiedOrchestrator.swift:8891,8987",
+    ("thunderstorm", "ambient_color"): "UnifiedOrchestrator.swift:9083,9124,9233",
+    ("thunderstorm", "flash_color"): "UnifiedOrchestrator.swift:9147,9234",
 }
 # END CITED_CONSUMERS
 
@@ -883,7 +883,12 @@ def render(cards):
 
     A("\n## Not covered by this matrix\n")
     A("\n- Composer controls: Composer keeps its own semantic model and is outside generic "
-      "`StudioParam` ownership (spec §20). Slice 3 covers convergence.\n")
+      "`StudioParam` ownership (spec §20), so it declares no rows here. Since Slice 3 its "
+      "controls resolve through the SAME funnel via `ComposerControlAvailability` "
+      "(`HueHome/Core/ComposerControlAvailability.swift`): catalog control ids, the resolver's "
+      "requirements (`.color` for the palette's colour writes, `.colorTemperature` for Warmth, "
+      "`.none` otherwise), `targetSnapshot(for:)`, the board's copy. Pinned by Guard 15(l) and "
+      "`ComposerControlAvailabilityTests`.\n")
     A("- Beat: no Live card declares a Beat param; Beat reaches engines through the orchestrator. "
       "Per-engine consumption must be proven before any inline Beat control (spec §21).\n")
     A("- Per-effect differences in a bridge-native parameter: the profile table is keyed by "

@@ -37,12 +37,10 @@ import SwiftUI
 
 struct StudioCustomizationHost: View {
     @Environment(UnifiedOrchestrator.self) private var orchestrator
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let vm: StudioViewModel
     @Binding var performVM: PerformanceViewModel?
-    @Binding var activeCompositionTab: CompositionLayerTab
-    @Binding var activeHarmonyRule: HarmonyRule
-    @Binding var editingSwatch: SwatchEditItem?
     /// Return to the card decks. Owned by StudioView (it also owns the
     /// "Live Controls" pill that comes back here).
     let onBackToDecks: () -> Void
@@ -80,11 +78,11 @@ struct StudioCustomizationHost: View {
             .scrollDismissesKeyboard(.interactively)
             // Auto-anchor: enabling a beat source scrolls the beat controls
             // into view. It now scrolls the REAL surface, not an inner box.
-            .onChange(of: vm.activeCompositionBox?.reaction.source) { _, newSource in
+            .onChange(of: vm.composerEditSession()?.box.reaction.source) { _, newSource in
                 guard let newSource,
                       newSource == .beat || newSource == .onset || newSource == .tapTempo
                 else { return }
-                withAnimation(HueAnimation.fast) {
+                withAnimation(reduceMotion ? nil : HueAnimation.fast) {
                     proxy.scrollTo("reactionBeatControls", anchor: .center)
                 }
             }
@@ -103,7 +101,14 @@ struct StudioCustomizationHost: View {
         // Hue room id produced the SAME view identity, so SwiftUI reused this
         // subtree across a real room change and carried the previous bridge's
         // state into it.
-        .id(vm.currentRoomEffect?.cardID
+        //
+        // Slice 3: the running branch used to key on the bare `cardID`, so the
+        // SAME look on two targets (one preset on two rooms, or on a room and
+        // a zone sharing an id) shared one view identity and carried the
+        // first target's gesture/focus state into the second. The target key
+        // (bridge + kind + group + card + execution, no generation) is the
+        // identity the comment above always claimed.
+        .id(vm.currentRoomEffect.map { $0.identity.targetKey.stableID }
             ?? vm.selectedRoom.map { StudioSelectionKey(room: $0).stableID })
     }
 
@@ -270,6 +275,10 @@ struct StudioCustomizationHost: View {
                     // Revert live edits back to the saved preset.
                     // (One-shots have no live box — nothing to revert.)
                     Button {
+                        // A typed draft commits on focus loss; resigning the
+                        // keyboard FIRST makes the order deterministic — the
+                        // draft lands, then the Revert wins (review round, A-4).
+                        hideMixerKeyboard()
                         vm.revertActiveComposition()
                         HapticManager.shared.light()
                     } label: {
@@ -283,6 +292,7 @@ struct StudioCustomizationHost: View {
                     .stageTapTarget(visual: 40)
                     .fixedSize()
                     .accessibilityLabel("Revert to saved")
+                    .accessibilityHint("Restores the saved composition on this room")
                 }
 
                 if case .composition = card.strategy,
@@ -290,7 +300,9 @@ struct StudioCustomizationHost: View {
                     // Perform + Save need the live box and render loop a
                     // bridge-optimized one-shot never has.
                     Button {
-                        guard let box = vm.activeCompositionBox else { return }
+                        // The session's box — the exact running instance this
+                        // header belongs to — never the selection's (A-9).
+                        guard let box = vm.composerEditSession(for: effect)?.box else { return }
                         // R4-7: thread the backing preset so sequences can
                         // persist. The "+ Create" draft sentinel counts as
                         // unsaved.
@@ -395,7 +407,7 @@ struct StudioCustomizationHost: View {
                     // Shortcut to the in-page Beat instrument — scrolls the
                     // one real surface; never a popover-only path (spec §19).
                     Button {
-                        withAnimation(HueAnimation.fast) {
+                        withAnimation(reduceMotion ? nil : HueAnimation.fast) {
                             proxy.scrollTo("reactionBeatControls", anchor: .center)
                         }
                         HapticManager.shared.light()
@@ -461,11 +473,21 @@ struct StudioCustomizationHost: View {
                     // a fixed-height box; inline they would be a second vertical
                     // scroller fighting the parent. The ScrollViewReader and the
                     // beat auto-anchor moved up to the host's single surface.
+                    // The layer tab is this TARGET's working memory, not a
+                    // StudioView-wide slot: keyed by the exact running
+                    // identity (bridge + group + kind + card), so the same
+                    // preset on two rooms edits two layers.
                     CompositionEditorPanel(
                         vm: vm,
-                        activeCompositionTab: $activeCompositionTab,
-                        activeHarmonyRule: $activeHarmonyRule,
-                        editingSwatch: $editingSwatch
+                        orchestrator: orchestrator,
+                        activeCompositionTab: vm.sessionMemory.binding(
+                            for: effect.identity.targetKey, \.activeCompositionTab),
+                        // The chip is THIS target's memory; a user tap rewrites
+                        // the palette through the fence (A-1 / A-2).
+                        activeHarmonyRule: Binding(
+                            get: { vm.harmonyRule(for: effect) },
+                            set: { vm.setHarmonyRule($0) }),
+                        onDismissKeyboard: hideMixerKeyboard
                     )
                     .padding(.horizontal, HueSpacing.screenH)
                     .padding(.top, HueSpacing.md)

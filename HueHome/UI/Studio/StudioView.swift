@@ -130,7 +130,6 @@ struct StudioView: View {
     @State private var performVM: PerformanceViewModel? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.isTabActive) private var isTabActive
-    @State private var activeCompositionTab: CompositionLayerTab = .palette
     @State private var showCompositionSaveSheet = false
     @State private var compositionSaveName = ""
     @State private var compositionSaveIcon = "sparkles"
@@ -146,9 +145,11 @@ struct StudioView: View {
         )
     }
 
-    // ── Harmony Engine ────────────────────────────────────────
-    @State private var activeHarmonyRule: HarmonyRule = .none
-    @State private var editingSwatch: SwatchEditItem? = nil
+    // ── Composer save (Slice 3 review round, C-2) ─────────────
+    /// The edit session captured when the save sheet OPENED, so the sheet
+    /// saves the composition the user was editing even if the rolodex moved
+    /// while it was up.
+    @State private var pendingComposerSaveSession: ComposerEditSession? = nil
     /// Which region is showing below the rolodex. Exactly the bit the old
     /// `isMixerCollapsed` carried (`.decks` == collapsed), under an honest name.
     /// C4 renames it and nothing else — the tray is still a bottom-anchored
@@ -383,38 +384,6 @@ struct StudioView: View {
         .task(id: vm.selectedRoom?.bridgeID) {
             orchestrator.refreshEntertainmentAvailability(reason: .userInitiated)
             await orchestrator.refreshEntertainmentConfigs(for: vm.selectedRoom)
-        }
-        .onChange(of: vm.restoredHarmonyRule) { _, rule in
-            // `.none` is the programmatic-clear sentinel (album colors);
-            // nil means the restored preset has no rule. Both must clear
-            // the chip WITHOUT the destructive `.none` echo below — it
-            // would nil color3 / reset color2 on the fresh palette
-            // (audit R9, F6 + the old non-nil-only asymmetry).
-            if let rule, rule != .none {
-                if activeHarmonyRule != rule { activeHarmonyRule = rule }
-            } else if activeHarmonyRule != .none {
-                vm.harmonyEchoSuppressed = true
-                activeHarmonyRule = .none
-            } else {
-                vm.harmonyEchoSuppressed = false   // nothing will fire; don't stay armed
-            }
-        }
-        .onChange(of: activeHarmonyRule) { _, newRule in
-            if vm.harmonyEchoSuppressed {
-                vm.harmonyEchoSuppressed = false
-                return
-            }
-            guard let box = vm.activeCompositionBox else { return }
-            if newRule == .none {
-                box.palette.color3 = nil
-                box.palette.color2 = CodableColor(x: 0.6400, y: 0.3300)
-                box.palette.harmonyRule = nil
-            } else {
-                if box.palette.mode != .gradient { box.palette.mode = .gradient }
-                box.palette.harmonyRule = newRule.rawValue
-                applyHarmonyToComposition()
-            }
-            box.triggerRESTBurst()
         }
         .animation(HueAnimation.slow, value: vm.currentRoomEffect != nil)
         .animation(HueAnimation.card, value: vm.runningCardID)
@@ -656,14 +625,12 @@ struct StudioView: View {
             StudioCustomizationHost(
                 vm: vm,
                 performVM: $performVM,
-                activeCompositionTab: $activeCompositionTab,
-                activeHarmonyRule: $activeHarmonyRule,
-                editingSwatch: $editingSwatch,
                 onBackToDecks: {
                     hideKeyboard()
                     collapseMixer()
                 },
                 onSaveComposition: { card in
+                    pendingComposerSaveSession = vm.composerEditSession()
                     compositionSaveName = card.name == "New Composition" ? "" : card.name
                     compositionSaveIcon = card.icon
                     compositionSaveTransport = vm.compositionTransportPreference == .roomOnly ? .roomOnly : .entertainmentArea
@@ -963,7 +930,14 @@ struct StudioView: View {
                 .opacity(0.5)
                 .allowsHitTesting(false)
 
+            // Slice 3 reassessment after the idle-card quieting (1533d04): with
+            // every idle Composer card now static, this 20 fps full-saturation
+            // sweep was the one continuous motion left on the deck and read
+            // louder than any Effects/Live card's static border. Damped here
+            // only — the AI composer panel's sweep marks an active generation
+            // and keeps its full strength.
             AIHeroBorderSweep(paused: !visible || !isTabActive || reduceMotion)
+                .opacity(0.55)
 
             HStack(spacing: HueSpacing.md) {
                 Button {
@@ -1867,29 +1841,6 @@ struct StudioView: View {
     // MARK: - Harmony Apply Helper
     // ──────────────────────────────────────────────
 
-    private func applyHarmonyToComposition() {
-        guard activeHarmonyRule != .none,
-              let box = vm.activeCompositionBox else { return }
-        let current = box.palette.color1
-        let hsb = HueColorUtils.hsb(fromX: current.x, y: current.y, brightness: 100)
-        let paletteColors = HarmonyEngine.palette(
-            rule: activeHarmonyRule,
-            rootHue: hsb.h,
-            saturation: hsb.s,
-            brightness: 1.0,
-            count: 3
-        )
-        let gamut = vm.activeCompositionGamut
-        box.palette.color1 = HueColorUtils.codableColor(from: paletteColors[0], gamut: gamut)
-        box.palette.color2 = HueColorUtils.codableColor(from: paletteColors[1], gamut: gamut)
-        if paletteColors.count >= 3 {
-            box.palette.color3 = HueColorUtils.codableColor(from: paletteColors[2], gamut: gamut)
-        } else {
-            box.palette.color3 = nil
-        }
-        box.triggerRESTBurst()
-    }
-
     private var compositionSaveSheet: some View {
         NavigationStack {
             Form {
@@ -1992,13 +1943,17 @@ struct StudioView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
-                        _ = vm.saveActiveComposition(
-                            name: compositionSaveName,
+                        if let session = pendingComposerSaveSession {
+                            _ = vm.saveActiveComposition(
+                                session: session,
+                                name: compositionSaveName,
                             icon: compositionSaveIcon,
                             accentColorHex: compositionSaveAccent,
-                            preferredTransport: compositionSaveTransport.presetValue,
-                            category: compositionSaveCategory
-                        )
+                                preferredTransport: compositionSaveTransport.presetValue,
+                                category: compositionSaveCategory
+                            )
+                        }
+                        pendingComposerSaveSession = nil
                         showCompositionSaveSheet = false
                         HapticManager.shared.medium()
                     }

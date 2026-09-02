@@ -181,6 +181,17 @@ struct RunningLookTargetKey: Hashable, Sendable {
     let kind: RoomDisplayItem.Kind
     let cardID: String
     let execution: CustomizationExecution
+
+    /// A stable string for SwiftUI view identity: the exact target and look,
+    /// WITHOUT the generation. The customization host keys its subtree on
+    /// this (Slice 3): a room switch, a room-vs-zone switch, a different
+    /// bridge, or a different look tears the surface down; a same-look
+    /// restart, a transport failover or a Revert — which only bump the
+    /// generation — do not, so the user's scroll position and in-flight
+    /// gesture survive while the fence handles the write side.
+    var stableID: String {
+        "\(bridgeID ?? "legacy")|\(kind.rawValue)|\(groupID)|\(cardID)|\(execution.kindLabel)"
+    }
 }
 
 // ──────────────────────────────────────────────────────────────

@@ -31,7 +31,7 @@ final class ComposerControlCatalogTests: XCTestCase {
                           pattern: MotionConfig.Pattern = .cascade,
                           shape: EnvelopeConfig.Shape = .breathe,
                           source: ReactionConfig.Source = .none) -> [String] {
-        ComposerControlCatalog.advancedControlIDs(
+        ComposerControlCatalog.supportingControlIDs(
             tab: tab, paletteMode: mode, motionPattern: pattern,
             envelopeShape: shape, reactionSource: source)
     }
@@ -120,13 +120,17 @@ final class ComposerControlCatalogTests: XCTestCase {
         XCTAssertFalse(essentials(.reaction, source: .micBass).contains("smoothing"))
         XCTAssertFalse(advanced(.reaction, source: .beat).contains("smoothing"))
 
-        // Spectrum saturation: advanced in spectrum mode only.
-        XCTAssertTrue(advanced(.palette, mode: .spectrum).contains("saturation"))
+        // Spectrum reads hueShift + saturation and never color1: those two are
+        // its ESSENTIALS and the pad is not on its page (review round, B-2).
+        XCTAssertEqual(essentials(.palette, mode: .spectrum), ["mode", "hueShift", "saturation"])
+        XCTAssertFalse(essentials(.palette, mode: .spectrum).contains("colorPad"))
+        XCTAssertFalse(advanced(.palette, mode: .spectrum).contains("saturation"))
         XCTAssertFalse(advanced(.palette, mode: .gradient).contains("saturation"))
+        XCTAssertFalse(essentials(.palette, mode: .gradient).contains("hueShift"))
     }
 
-    /// Essential and advanced sets never overlap for any state.
-    func testEssentialAndAdvancedAreDisjoint() {
+    /// Essential and supporting sets never overlap for any state.
+    func testEssentialAndSupportingAreDisjoint() {
         for tab in CompositionLayerTab.allCases {
             for mode in allModes {
                 for pattern in allPatterns {

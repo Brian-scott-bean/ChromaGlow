@@ -4,7 +4,7 @@
 
 ---
 
-## Current Status Snapshot (updated 2026-09-01)
+## Current Status Snapshot (updated 2026-09-02)
 
 ### Pointers
 - Canonical agent context: `AGENTS.md`. Claude Code entry point: `CLAUDE.md` points there.
@@ -13,6 +13,26 @@
 ### iOS — where we are RIGHT NOW
 - **`main` is the current production anchor and the branch Brian installs from**
   (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **1.0.0**, build **52** per `main`'s pbxproj).
+- **The repository moved out of iCloud (2026-09-02):** canonical path is now
+  `~/Developer/huehome-pro-v0.3.0`; the Desktop path is obsolete (`ef806bd` fixed the three
+  binding rule files that hardcoded it). Desktop & Documents iCloud sync is off.
+- **UNIFIED CUSTOMIZATION SLICE 3 — COMPOSER CONVERGENCE, PR-READY AND UNMERGED (2026-09-02).**
+  Branch `feat/composer-convergence-slice3` (base `main` @ `104f779`, PR #64 merged there), rollback tag
+  `checkpoint/pre-slice3-composer-convergence-2026-09-01`. Composer now speaks the Studio instrument
+  language while keeping its document model: the "Advanced" card is gone (one card per layer,
+  supporting tier below a hairline), every control resolves through the shared capability funnel via
+  `ComposerControlAvailability` (supported / partial / known-no disabled with refusal copy / unknown =
+  CHECKING / hidden only for orphans), every Composer write commits through `ComposerEditSession` +
+  `CustomizationFence`, Revert to Saved stays Revert and rekeys the run, the harmony rule is per-target
+  session memory written through the fence, the instruments are `StageKnob`/`StageFader`/pads/chips by
+  meaning, per-swatch colour is the shared `StageColorEditor` inline (the Guard 13 popover carve-out is
+  deleted), the host is keyed by the exact target key, and the composition's BOTH frame paths — DTLS
+  (`b43d863`) and the REST scheduler + prime (`ae9c7f1`, `c65a353`) — are under the realized-frame
+  ≤3 Hz gate on the per-bridge ledger. Four-role adversarial review + three independent safety rounds:
+  every BLOCKER/HIGH closed, mutation-tested. **Hardware: none run, none claimed** — master checklist
+  §V-C rows 66–83 are all UNPROVEN, rows 66–71 being the ONLY evidence the REST/DTLS composition gates
+  hold on a real bridge. **`main` untouched; nothing merges without Brian's explicit approval.**
+  Full record: the 2026-09-02 `[Claude] Slice 3` entry below.
 - **UNIFIED CUSTOMIZATION SLICE 2 — REMEDIATED, PR #64 OPEN AND UNMERGED (2026-09-01).**
   Branch `feat/unified-customization-studio-instrument` (base `main` @ `ca074b85`), final code head `b06df67` (the docs commit on top of it is the PR head).
   The Slice 2 delivery (`89de143`) was blocked in review; **nine** remediation commits answer it,
@@ -644,6 +664,230 @@
 ### Gotchas
 - ...
 ```
+
+---
+
+## 2026-09-02 - [Claude] Slice 3 — Composer Convergence: one surface, shared truth, fenced writes, gated REST
+
+**Branch:** `feat/composer-convergence-slice3` (base `main` @ `104f779` — DO NOT MERGE without Brian's explicit approval).
+**Rollback:** `git switch main` — nothing touched `main`; checkpoint tag `checkpoint/pre-slice3-composer-convergence-2026-09-01` (at `104f779`).
+**Repo path:** `~/Developer/huehome-pro-v0.3.0` (moved out of iCloud on 2026-09-02; verified byte-identical, `git fsck` clean).
+
+**Did.** Composer converged onto the ChromaGlow instrument language (spec §12.2, §20, §22/§23; plan §22–§26) while
+keeping its saved-document model, layers, domains, Perform, transport honesty and runtime ownership. Commits, in order:
+
+1. `b43d863` fix(composer) — the composition **DTLS** loop under the realized-frame gate: `FlashSafety.fieldFrame`
+   (mean of channel luminances, luminance-weighted chromaticity, inverted dimming; identity on a uniform frame) so the
+   composition shares the bridge's `OnsetLedger` with Strobe/Party; `emitGatedCompositionFrame` reserve → send →
+   commit; Guard 14(i); 15 FlashSafety tests graded by an independent field reduction.
+2. `ef806bd` chore(rules) — the three binding rule files that hardcoded the Desktop path.
+3. `20bbea7` refactor(composer) — **S3-1** the literal `StageCard(title: "Advanced")` retired: each layer is ONE card,
+   essentials on top, the supporting tier (`ComposerSupportingControls`) below a hairline; `.id(activeCompositionTab)`
+   gone; the layer tab is per-target session memory (`TargetWorkingState.activeCompositionTab`, plan §24); dead
+   `ComposerLayerSheet` struct and `StageMoreButton` deleted; Guard 13 covers `ComposerLayerSheet.swift` with ONE
+   fixed-string carve-out for the Entertainment-area BUILDER sheet (a creation workflow) and new 13(e).
+   `ComposerConvergenceTests` (new): the panel takes its orchestrator explicitly so its body evaluates outside a graph,
+   and a reflective walker (`ComposerViewTree`) proves every catalog control per layer × gating state — SwiftUI vends
+   NO accessibility elements in-process, so the a11y tree cannot be the proof.
+4. `f8089f5` feat(composer) — **S3-4** `ComposerControlAvailability`, a SIBLING of `StudioBoardAvailability` (never a
+   StudioParam flattening): catalog ids → the resolver's own requirements (`.color` for the palette's colour writes and
+   the Targets `.color` pad, `.colorTemperature` for Warmth, `.none` otherwise) → `CustomizationResolver` against
+   `targetSnapshot(for:)`; nil-tolerant wrappers FAIL CLOSED. `ComposerAvailabilityContext` (one instant of truth per
+   render) + `ComposerControlGate` (the 15(k) shape). `roomHasColorLights` deleted. Warmth range = the snapshot's
+   intersected mirek range (checklist row 58, Composer half). Guard 15(l) — placed BEFORE the script's exit check after
+   a first draft landed after it and its failures were not counted (caught by mutation). Matrix line + citations refreshed.
+5. `1533d04` fix(studio) — Brian's idle-card quieting patch, cherry-picked unchanged at a clean boundary (both files
+   verified untouched by Slice 3).
+6. `5e44477` fix(composer) — **S3-5** `ComposerEditSession` (identity + the live box, captured by reference) and
+   `commitComposerEdit` through `CustomizationFence` — stop → `.nothingRunning`, replacement/restart/failover/Revert →
+   `.staleGeneration`; Revert to Saved keeps its name and REKEYS the run (`valueScopes.rekey` + identity write-back);
+   per-target gamut (`activeCompositionGamuts`); host `.id` = `identity.targetKey.stableID` (Guard 13(f)).
+7. `a29daca` refactor(composer) — **S3-2** the semantic vocabulary: knobs for rates/character, faders for levels,
+   pads/chips for choices, `StageToggleRow`, the CT-aware warmth knob; `ComposerInstrumentControls.swift` wrappers
+   (funnel + session + row-local value); `StageSteppedEncoder<Value: Hashable>`; the Beat panel's Composer section on
+   knob/fader/pads; the direction dial replaced by a `StageKnob` + preset chips; `onDismissKeyboard` before programmatic
+   layer changes; Guard 13(g) (no `StageSlider`/raw `Toggle`, NO `activeCompositionBox` reference in Composer files).
+8. `9422693` feat(composer) — **S3-3** per-swatch colour is the shared `StageColorEditor` inline
+   (`ComposerColorSection.swift`; expansion in `expandedColorControlID`, one slot at a time, per target); the Guard 13
+   `.popover(item: $editingSwatch)` carve-out DELETED; 13(h).
+9. `cde1fca` test(composer) — the row-55 analogue: the host stays mounted and still across a live edit, a Revert and a
+   same-look restart.
+10. `61f5073` fix(studio) — after the idle-card quieting, the "+ Create" hero border sweep was the one continuous
+    motion left on the deck: damped to 0.55 at the Composer hero only (chips/badges are static house style — left).
+11. `ae9c7f1` fix(composer) — safety round 1 (Reviewer D, BLOCKER): the **REST scheduler** (Room transport, the DTLS
+    failover destination) was a second ungated frame path realizing ~4 Hz for `.pulse @ 240`; gated; `forgetWire()`
+    after every session stop; cold refusal holds black at the last KNOWN chromaticity; Guard 14 tightened + 14(j).
+12. `35a80e2` fix(composer) — Reviewer A (HIGH): the harmony chain re-resolved the box from the selection and was
+    reachable cross-target (apply P2 to room A from the transport prompt with the rolodex on B → B's palette rewritten).
+    The rule is per-target session memory, seeded from the document and written only through `setHarmonyRule` on the
+    captured box; `restoredHarmonyRule` / `harmonyEchoSuppressed` gone. Save captures its session at sheet-open (a room
+    switch while the sheet was up saved the other room); Perform, the auto-anchor and album colours address the session;
+    phantom box/gamut evicted on a refused start; one eviction funnel; Revert dismisses the keyboard first and
+    recomputes spatial positions; Guard 13(g) widened to the host, StudioView and the Now Playing bar.
+13. `c2a7ddc` fix(composer) — Reviewer B (HIGH ×2): partial coverage is captioned on the pad and harmony row
+    (`isColor: true` had suppressed the note with no badge to replace it); Spectrum's pad — whose hue axis wrote a field
+    the engine never reads — replaced by Hue Shift (hero knob) + Saturation essentials; plus direction-knob Auto/range/
+    readout, Reduce Motion on the colour editor/mini-map/host scrolls, Dynamic Type pad reflow and dynamic text styles,
+    Kelvin-aware warmth entry (`parseDraft` hook on `StageKnob`/`StageFader`), `HueSaturationPad` accessibility
+    (element + adjustable hue + saturation actions), swatch/chip spoken labels, Threshold as a fader, Revert hint.
+14. `c65a353` fix(composer) — safety round 2 (fresh review of 11; 2 BLOCKER + 1 HIGH): the REST **prime** was outside
+    the gate; the pending-token rollback restored the wire model `stopCompositionMode` had just forgotten; the
+    reservation was on the whole render while a rotation sweep dispatches a slice. Reservations now taken at DISPATCH
+    inside each sweep closure on the **projected field** (`FlashSafety.projectedField` over the runtime's
+    `lastDeliveredFrames`); the prime is gated; the ledger is forget-aware (`forgetSequence`); forget after
+    deactivation; every `stopSession()` forgets; no enqueue-time reservation, no stop-all un-stamping; Guard 14(j)
+    re-pinned; the packet-4/5 REST fixture stages a runtime.
+15. `2934f09` test(composer) — Reviewer C: negative tests through the refused gestures, nil-session rows (and a
+    finding: a boxless row resolved `.active` → now `.unavailable(.readOnlyComposition)`), the bridge boundary,
+    the editor's `onApply`, the knob's gesture bracket, zone-scoped Revert, moving-wire floors on the flash tests,
+    guard regex tightenings.
+16. `587d789` fix(composer) — safety round 3 (fresh review of 14; 1 BLOCKER + 1 HIGH + 3 MEDIUM + 1 LOW): two
+    sources on ONE bridge (the Entertainment loop and a REST room, or two REST rooms) shared one wire MODEL, so each
+    was judged against the other's last frame. `OnsetGate` now keeps a wire per source (`SourceWire`;
+    `entertainmentSource`, `restSource(roomID:)`) and ONE clock per bridge — sources share the period, never the
+    comparison frame. The gradient sweep projects a strip's AVERAGE brightness (not its first channel); a partial
+    delivery merges only the DELIVERED indices into `lastDeliveredFrames`; the grouped closure probes `stillCurrent`
+    before it admits; `admitComposerSweep` also fences the generation registry; the prime records into the gradient
+    channel space and only when nothing has been delivered. Guard 14(j) re-pinned (13 new pins, every one mutation-
+    caught); two two-source `FlashSafetyTests`; the packet-5 fixture's second room moved to its own bridge (the shared
+    clock holds a second bright room inside 0.34 s BY DESIGN).
+17. `ee14b19` fix(composer) — safety round 4 (fresh review of 16; 0 BLOCKER, 1 HIGH inherited from round 2, 2 MEDIUM,
+    3 LOW): a REST sweep's onset stamp sat at its ADMIT time until its terminal, while its lamps rose batch by batch
+    over ~0.4 s — a Strobe on the same bridge admitted 0.34 s after the admit landed 0.28 s after the first lamps rose.
+    `OnsetGate.noteRealized` moves the bridge's clock to each realized batch (forward only, owner-checked:
+    `lastOnsetOwner`) and the batched builders call it after every batch that lit a lamp, stopping — `cancelled` with
+    their delivered indices — if another source has taken the clock since the admit. MEDIUM taken: a partial delivery
+    now corrects the source's wire to what LANDED (`correctWire`; the retry of a half-landed rise is a rise). LOW
+    taken: every builder terminal is pinned to forward `deliveredIndices`. Recorded, not taken (below): the bridge-wide
+    `sequence` in `commit`'s rollback/lastKnown tests (safe direction), the per-bridge silence clock, and the
+    bridge-stored save prime. Three `FlashSafetyTests` on the production ledger; Guard 14(j) +15 pins.
+18. `5e4719d` fix(composer) — safety round 5 (focused verification of 17; 0 BLOCKER, 1 HIGH residual, 3 MEDIUM,
+    3 LOW): the round-4 fix moved the clock when a batch LANDED, so the window between a sweep's admit (or a further
+    batch's dispatch) and its lamps rising was still measured from the admit — with REST latency past the period a
+    Strobe on the same bridge was admitted BEFORE the REST lamps rose. A stamped rise is now IN FLIGHT
+    (`unrealizedStamp`) from its admit, and again from each further batch's dispatch (`beginRealizing`, called before
+    the task group), until `noteRealized` reports the lamps up or `commit` settles it; `tryOnset` refuses every source
+    while one is in flight — the DTLS loop clears its own at commit, so it costs that loop nothing, and a REST PUT's
+    round trip becomes a hold for the Strobe (the safe direction; unbounded by design — a hung PUT holds the Strobe on
+    its last frame until the request times out, recorded below). MEDIUMs taken: `noteRealized` records the rise BEFORE
+    answering ownership (a landed batch is a fact about the wire whoever owns the clock); a wholly failed batch no
+    longer dispatches the next one blind (the pre-dispatch probe); the partial-delivery correction reads a never-
+    delivered lamp as black, not as absent. LOWs taken: a rolled-back stamp owns nothing; every terminal after the
+    batch loop is pinned to forward its indices; the lost-clock test's narrative. One more `FlashSafetyTests`; Guard
+    14(j) +14 pins.
+19. `eae2821` fix(composer) — safety round 6 (focused verification of 18; 1 HIGH, 1 LOW): `commit`'s rollback cleared
+    the in-flight stamp BELOW its interleaved-admit early exit — with a co-active DTLS loop every REST rollback is
+    interleaved, so a wholly failed sweep (or a dropped DTLS send, or a failed prime) left the stamp in flight for the
+    life of the process: every source on the bridge refused every onset, the Strobe held black. The two clears now run
+    first (keyed on the reservation's own sequence, right whatever was admitted meanwhile); Guard 14(j) pins the
+    ordering positionally; a `FlashSafetyTests` case models the interleaved rollback. LOW: the lost-clock test's
+    narrative names the reachable case (a lost response).
+
+**Decisions Brian made for this slice (binding):** no opportunistic debt cleanup (`EffectEngine.swift`, the Studio
+board's row-58 warmth range and `OrchestratorTests` registration stay recorded, below); the Entertainment-area builder
+sheet is the ONE permitted Composer presentation, carved out by fixed string; the capability contract is
+supported/partial interactable, known-no rendered DISABLED with refusal copy, unknown = CHECKING never unsupported,
+hidden only where the spec calls for it; no viewport dwell preview.
+
+**Validation** — iPhone 17 Pro / iOS 26.5 simulator (UDID `005EBEC4-ECF0-4E2C-8A9C-5389006C2A36`), scheme `HueHome 1`,
+`xcrun xcresulttool get test-results summary` on every bundle:
+
+| Gate | Result |
+| --- | --- |
+| Per-commit focused suites | green at every commit (see each message; 155–673 tests per run) |
+| Full registered suite, informational, tree `cde1fca` | 2045 passed / 0 failed / 0 skipped |
+| Full registered suite, informational, tree `587d789` | 2070 passed / 0 failed / 0 skipped |
+| Full registered suite, informational, tree `ee14b19` (×2) | 2073 passed / 0 failed / 0 skipped, both |
+| Full registered suite, informational, tree `5e4719d` (×2) | 2074 passed / 0 failed / 0 skipped, both |
+| Full registered suite, FINAL tree, run 1 | 2075 passed / 0 failed / 0 skipped (tree `eae2821`, 2026-09-02 11:59–12:03 UTC) |
+| Full registered suite, FINAL tree, run 2 | 2075 passed / 0 failed / 0 skipped (tree `eae2821`, 12:03–12:05 UTC; identical) |
+| `./Scripts/hardening_guards.sh` (15 guards; 13(e)–(h), 14(i)–(j), 15(l) new) | all guards passed, exit 0 |
+| `python3 Scripts/generate_capability_matrix.py --check` | 4 citation(s) verified, doc up to date |
+| Guard mutations across the slice | 76 applied, 76 caught (every miss was tightened and re-run) |
+| Production mutations across the slice | 34 applied, 34 caught |
+| `git diff --check` | clean at every commit |
+
+Guard changes (deliberate, strengthening): 13(a) gains the builder-sheet carve-out and LOSES the popover carve-out;
+13(e)–(h) new; 13(g)'s `activeCompositionBox` ban covers the Composer files, the host, StudioView and the Now Playing
+bar; 14's transport regex tolerates whitespace and the orchestrator's file-wide `.send(channels:)`/`sendUniform(`
+counts are pinned to one each; 14(i) pins the hold BRANCH, the cold hold, `commit(… delivered: delivered`, a
+non-throwing signature and `try`/`fatalError`/`exit` between send and commit; 14(j) pins the dispatch-time REST gate
+end to end; 15(l) pins the Composer adapter; Guard 12's fence-before-mutation check learns the eviction funnel's
+spelling (rule unchanged). No guard was weakened.
+
+**Adversarial review.** Four fresh read-only reviewers on `104f779..cde1fca` (A architecture/state, B UX/a11y/
+capability, C tests, D safety) then six more independent safety rounds on the REST gate. Totals before remediation:
+BLOCKER 1 (REST scheduler ungated) + 2 (round 2: REST prime ungated; forget undone by the pending rollback) + 1 (round 3: two sources on one bridge shared one wire model);
+HIGH 13 (harmony cross-target; Save reads the selection; coverage not captioned on the pad; Spectrum's dead pad; the gradient strip's first-channel projection; the REST stamp at admit time instead of the lamps' rise; the in-flight window before the lamps rise; the in-flight stamp leaked past an interleaved rollback;
+stale-slice projection; five proof-strength gaps). All BLOCKER/HIGH closed in commits 11–19 and mutation-tested;
+MEDIUM/LOW closed where cheap, the rest recorded below. Round 7's verdict on the final safety commit (`eae2821`): **SOUND-WITH-FINDINGS — 0 BLOCKER / 0 HIGH / 0 MEDIUM**; one accepted-debt item (below: a sweep whose PUTs all REPORTED failure but whose lamps rose is un-stamped on rollback — the ledger takes the transport's word).
+
+**Hardware: none run, none claimed.** Master checklist §V-C rows 66–85 (all UNPROVEN). Rows 66–71 and 84–85 are the ONLY
+evidence that the composition flash gates — DTLS field reduction, the REST dispatch-time reservation, the gated prime,
+the forget-on-stop — hold on a real bridge; film at 60 fps and count frames between onsets. Row 80 is the Composer's
+row-55 (keyboard). Row 83 is the deck-quieting check.
+
+**Boundaries.** Composer is not flattened into `StudioParam` (the adapter names controls by catalog id and resolves them;
+the four config structs stay in the box); Revert to Saved is still Revert; no parallel runtime (Perform performs THE live
+box); Composer 2 stays inert; the DTLS gate from `b43d863` was found sound by every later review and its code is
+unchanged since.
+
+**Remaining / accepted debt (recorded, not fixed here — Brian's no-opportunistic-cleanup rule):**
+- `HueHome/Core/Effects/EffectEngine.swift` — dead, still declares unsafe ranges; delete in a housekeeping PR.
+- Studio board Warmth params author a literal `153…500` (row 58's Studio half); `StudioContinuousControl.range` reads
+  `param.kind`, not the snapshot's `MirekRange`. Composer's half is closed (`f8089f5`).
+- `HueHomeTests/OrchestratorTests.swift` (27 tests) is not in the pbxproj — one missing `await` (`turnAllOff()` at
+  :270) plus `@MainActor` and `StubURLProtocol` isolation away from compiling; the repair inventory doc is stale (says 14).
+- `StudioCardCanvas` does not honour Reduce Motion for Effects/Live cards (its only gate is visible/tab/keyboard,
+  `StudioCardCanvas.swift:49`) while every peer preview component does; a static fallback at `time: 0` would freeze every
+  card at its brightest frame, so pick a frozen time when fixing.
+- `fieldFrame` uses channel COUNT as the WCAG area proxy: a single lamp among ≥10 channels can flash unmeasured
+  (Reviewer D, accepted; a max reduction would over-gate every twinkle). The luminance-weighted chromaticity is not the
+  CIE mixture weighting (Y/y); affects only the red rule.
+- `OnsetGate.commit`'s "touched since" tests (`sequence == reservation.sequence`) use the BRIDGE sequence while the
+  wires are per source (round 4, MEDIUM): with a co-active DTLS loop, a REST `delivered: false` terminal forgets EVERY
+  source's wire (the Strobe's next ON frame takes the cold path and may be held black for ≤0.34 s — safe direction,
+  availability cost), and a REST source's `lastKnownFrame` is never set, so after a forget a sub-threshold first frame
+  re-bases its trough upward (needs a dim ramp inside 0.10…0.19 luminance). Fix when taken: a per-source sequence in
+  `SourceWire` for those two tests; the bridge sequence stays for `forgetSequence` and the clock.
+- A sweep whose PUTs all REPORTED failure (lost responses) but whose lamps actually rose is rolled back as never sent
+  (round 7, accepted): the ledger takes the transport's word; a second source's onset one period after the PRIOR
+  realized onset could land ~0.1 s after those lamps. Mitigation when taken: the terminal distinguishes "never sent"
+  (attempted == 0 → full rollback) from "sent, all reported failure" (keep the stamp); costs one period of liveness.
+- The in-flight hold is unbounded (round 5): a REST PUT that never answers holds every other source's ONSETS on that
+  bridge (the Strobe stays on its last frame — non-rise frames still pass) until URLSession's request timeout settles
+  the sweep. Safe direction; a bound of `period + REST latency budget` would trade it for a hole in the pathological
+  case, so it was not taken.
+- A Strobe at exactly 3 Hz can hold a co-located REST room's RISES to partial batches indefinitely (round 5, accepted):
+  one bridge, one 3 Hz budget; the room's non-rise frames pass, and the invariant is the point.
+- The silence-forget clock (`lastDeliveredAt`) is per bridge while `lastEmitted` is per source (round 4, LOW): a REST
+  room delivering every 120 ms keeps the Entertainment wire from being forgotten by silence through a DTLS outage; bites
+  only if the lights revert during the outage (≥10 s bridge inactivity vs the client's ~4.5 s reconnect budget).
+- `sendBridgeStoredPrimeFrame` (the bridge-stored SAVE path) is one ungated grouped PUT after a registry bump with no
+  `forgetWire()` (round 4, LOW; outside the Composer runtime paths).
+- Two sources on one bridge share the bridge's clock: a REST room brightening from dark within 0.34 s of the
+  Entertainment loop's onset (or of another REST room's) is HELD, not merged — the invariant is per bridge, so the
+  second room's rise waits one period (accepted; per-room clocks would let one bridge realize 6 Hz across two rooms).
+- Multi-bridge rooms are gated per bridge; two bridges lighting one room at 3 Hz each with a phase offset present 6 Hz
+  across alternating lamp sets (structural).
+- Two `PatternStripView`/`LookPreviewStrip` details: the strip's `animated: isVisible` doubles as a swatch-mode flag.
+- `Composer2RESTCharacterizationTests` are source-text assertions; the REST scheduler, the dispatch-time admit and
+  the prime are proven by a hand-mirrored model + Guard 14(j), the same footing as Slice 2's uniform loops.
+- Earlier recorded Slice 3 debt still open: per-effect bridge-native profiles, `StudioEffectsV2Tests` polling,
+  deck `effectCoverage` card-keying and the `""`/`"legacy"` sentinel, `flashHz` cosmetic label.
+
+**Gotchas for the next session.**
+- New guard blocks go BEFORE `if [[ $FAILURES -gt 0 ]]` near the script's tail or their failures are printed and
+  never counted. Mutation-test every new guard.
+- SwiftUI vends no accessibility elements in-process (even in a key window); prove rendering by walking the evaluated
+  view tree (`ComposerViewTree`), which needs views to take their environment objects as explicit parameters.
+- `RestSender` is SERIAL; anything reserved at enqueue will be superseded and rolled back constantly — reserve at dispatch.
+- `hc_ent_loop` strips whole-line AND trailing comments; a pin must be satisfied by code. A guard variable
+  (`hc_gate`, `hc_rest_term`) must be assigned ABOVE every pin that reads it — an empty variable fails every pin
+  silently-looking (it happened in round 3; the fix was ordering, never the pin).
+- The REST dispatch gate reads `CACurrentMediaTime()`: a fixture that brightens two rooms on one bridge inside 0.34 s
+  real time is refused by design — stage the second room on its own bridge.
+- The board's `LookPreview` idle-card patch lives in worktree `~/Desktop/chromaglow-card-idle-quiet` (`5ed5cf0`).
 
 ---
 
