@@ -11,7 +11,9 @@ android {
         applicationId = "com.chromaglow.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
+        // versionCode increments every device round so a stale APK is distinguishable at install
+        // (audit M-19 / D-020). versionName stays the approved product version.
+        versionCode = 2
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
