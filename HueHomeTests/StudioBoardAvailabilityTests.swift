@@ -72,6 +72,7 @@ final class StudioBoardAvailabilityTests: XCTestCase {
                         lights: Int = 3,
                         color: CapabilityCoverage? = nil,
                         colorTemperature: CapabilityCoverage? = nil,
+                        effectsV2: CapabilityCoverage? = nil,
                         transport: CustomizationTransport = .entertainment,
                         running: Bool = true) -> CustomizationTargetSnapshot {
         CustomizationTargetSnapshot(
@@ -83,7 +84,7 @@ final class StudioBoardAvailabilityTests: XCTestCase {
             colorTemperature: colorTemperature ?? .all(total: lights),
             mirekRange: MirekRange(minMirek: 153, maxMirek: 500),
             gradient: .all(total: lights),
-            effectsV2: .all(total: lights),
+            effectsV2: effectsV2 ?? .all(total: lights),
             verifiedEffectParameters: [:],
             entertainmentAvailable: .known,
             transport: transport,
@@ -219,8 +220,11 @@ final class StudioBoardAvailabilityTests: XCTestCase {
         XCTAssertEqual(remediation, .retryCapabilityFetch)
         XCTAssertFalse(StudioBoardAvailability.isInteractive(resolution!.availability))
         XCTAssertEqual(StudioBoardAvailability.note(for: resolution!, isColor: true),
-                       "CHECKING WHAT THESE LIGHTS SUPPORT — REFRESHES WHEN THE BRIDGE ANSWERS",
-                       "the note must say what happens next, not name a dead end")
+                       StudioBoardAvailability.checkingCopy,
+                       "unknown must read as still-checking, never as a hardware refusal")
+        XCTAssertEqual(StudioBoardAvailability.checkingCopy,
+                       "CHECKING WHAT THESE LIGHTS SUPPORT",
+                       "the caption must fit two lines under a knob in a three-column grid")
     }
 
     // ──────────────────────────────────────────────────────────
@@ -529,5 +533,434 @@ final class StudioBoardAvailabilityTests: XCTestCase {
 
         XCTAssertNil(StudioBoardAvailability.descriptor(card: composition,
                                                         param: composition.params[0]))
+    }
+
+    // ──────────────────────────────────────────────────────────
+    // MARK: - 11. Unknown is never a refusal (B1)
+    // ──────────────────────────────────────────────────────────
+
+    /// THE regression this section exists for. `speed` requires `.effectsV2`,
+    /// and the resolver used to map an UNKNOWN `.effectsV2` to the SAME reason
+    /// as an unsupported one — so on a cold or unreadable snapshot the Speed
+    /// knob asserted "THESE LIGHTS CAN'T CHANGE THIS WHILE RUNNING" (a
+    /// hardware refusal we had read nothing to justify) while
+    /// brightness/base_color/warmth beside it, on the very same snapshot,
+    /// correctly said we were still checking. One snapshot must tell one story.
+    func testUnreadableSnapshotSpeedSaysCheckingNotARefusal() {
+        let card = effectCard("opal")
+        let snapshot = CustomizationSnapshotBuilder.unreadable(
+            identity: identity(for: card), totalLights: 3,
+            transport: .bridgeEffectV2, running: true)
+
+        let resolution = StudioBoardAvailability.resolve(
+            card: card, param: param(card, "speed"), snapshot: snapshot)
+
+        guard case .unavailable(let reason, let remediation)? = resolution?.availability else {
+            return XCTFail("expected unavailable, got \(String(describing: resolution?.availability))")
+        }
+        XCTAssertTrue(reason == .capabilityUnknown || reason == .capabilityUnreadable,
+                      "an unread effects_v2 must stay in the unknown family, got \(reason)")
+        XCTAssertNotEqual(reason, .effectsV2Unavailable,
+                          "effectsV2Unavailable is the UNSUPPORTED answer — it may not be reached from unknown")
+        XCTAssertEqual(remediation, .retryCapabilityFetch)
+        XCTAssertEqual(StudioBoardAvailability.note(for: resolution!, isColor: false),
+                       StudioBoardAvailability.checkingCopy)
+    }
+
+    /// Every control on that same cold snapshot tells the same story. This is
+    /// the assertion the old mapping broke: three siblings saying CHECKING and
+    /// one saying the lights refuse.
+    func testEveryBridgeNativeParamOnAnUnreadableSnapshotSaysChecking() {
+        let card = effectCard("opal")
+        let snapshot = CustomizationSnapshotBuilder.unreadable(
+            identity: identity(for: card), totalLights: 3,
+            transport: .bridgeEffectV2, running: true)
+
+        for p in card.params where p.id != "transition" {
+            guard let resolution = StudioBoardAvailability.resolve(
+                card: card, param: p, snapshot: snapshot) else { continue }
+            XCTAssertEqual(StudioBoardAvailability.note(for: resolution, isColor: false),
+                           StudioBoardAvailability.checkingCopy,
+                           "\(card.id).\(p.id) breaks ranks on a snapshot nobody could read")
+        }
+    }
+
+    /// `.effectParameter` keeps its own reason, and the board must render the
+    /// UNKNOWN flavour of it as checking too. The unsupported flavour — the
+    /// effect really has no such parameter — carries no remediation and stays
+    /// a plain "not available".
+    func testUnverifiedEffectParameterReadsAsCheckingNotAsARefusal() {
+        let unknown = StudioBoardResolution(
+            resolution: CustomizationResolution(
+                control: CustomizationControlID(cardID: "opal", paramID: "tint"),
+                availability: .unavailable(reason: .effectParameterUnverified,
+                                           remediation: .retryCapabilityFetch),
+                behavior: .staged),
+            isHardwareUnverified: false, totalLights: 3)
+        let unsupported = StudioBoardResolution(
+            resolution: CustomizationResolution(
+                control: CustomizationControlID(cardID: "opal", paramID: "tint"),
+                availability: .unavailable(reason: .effectParameterUnverified,
+                                           remediation: nil),
+                behavior: .staged),
+            isHardwareUnverified: false, totalLights: 3)
+
+        XCTAssertEqual(StudioBoardAvailability.note(for: unknown, isColor: false),
+                       StudioBoardAvailability.checkingCopy)
+        XCTAssertEqual(StudioBoardAvailability.note(for: unsupported, isColor: false),
+                       "NOT AVAILABLE FOR THESE LIGHTS")
+    }
+
+    /// The refusal copy is still reachable — from the UNSUPPORTED branch only.
+    func testUnsupportedEffectsV2StillSaysTheLightsRefuse() {
+        let card = effectCard("opal")
+        let resolution = StudioBoardAvailability.resolve(
+            card: card, param: param(card, "speed"),
+            snapshot: target(card: card, effectsV2: .none(total: 3),
+                             transport: .legacy))
+
+        XCTAssertEqual(resolution?.availability,
+                       .unavailable(reason: .effectsV2Unavailable,
+                                    remediation: .addCapableLights))
+        XCTAssertEqual(StudioBoardAvailability.note(for: resolution!, isColor: false),
+                       "THESE LIGHTS CAN'T CHANGE THIS WHILE RUNNING")
+    }
+
+    // ──────────────────────────────────────────────────────────
+    // MARK: - 12. Mixed v2/v1 rooms state their real reach (H2)
+    // ──────────────────────────────────────────────────────────
+
+    /// One v2-capable light and two legacy ones, all colour-capable, running
+    /// Opal. `performBridgeSend` writes the per-light `effects_v2` body only
+    /// to the capable ids, so exactly ONE light moves — but the snapshot calls
+    /// the whole target `.bridgeEffectV2` (one capable light is enough), and
+    /// the resolver measured full COLOUR coverage, so the control claimed the
+    /// room. The legacy-only caveat could not catch it either: the room is not
+    /// `.legacy`. Coverage is the honest answer.
+    func testBaseColorInAMixedV2RoomStatesItsRealCoverage() {
+        let card = effectCard("opal")
+        let snapshot = target(card: card, lights: 3,
+                              effectsV2: CapabilityCoverage(supported: 1, total: 3,
+                                                            evidence: .known),
+                              transport: .bridgeEffectV2)
+
+        let resolution = StudioBoardAvailability.resolve(
+            card: card, param: param(card, "base_color"), snapshot: snapshot)
+
+        XCTAssertEqual(resolution?.availability,
+                       .partial(supported: 1, total: 3, reason: .partialHardwareCoverage))
+        XCTAssertTrue(StudioBoardAvailability.isInteractive(
+            resolution: resolution, strategy: card.strategy),
+                      "partial stays editable — the one capable light really does respond")
+        XCTAssertEqual(StudioBoardAvailability.note(for: resolution!, isColor: false),
+                       "1 OF 3 LIGHTS RESPOND")
+    }
+
+    /// `warmth` reaches the same lights by the same path, so it gets the same
+    /// answer even though its requirement is CT, not colour.
+    func testWarmthInAMixedV2RoomStatesItsRealCoverage() {
+        let card = effectCard("opal")
+        let snapshot = target(card: card, lights: 3,
+                              effectsV2: CapabilityCoverage(supported: 1, total: 3,
+                                                            evidence: .known),
+                              transport: .bridgeEffectV2)
+
+        let resolution = StudioBoardAvailability.resolve(
+            card: card, param: param(card, "warmth"), snapshot: snapshot)
+
+        XCTAssertEqual(resolution?.availability,
+                       .partial(supported: 1, total: 3, reason: .partialHardwareCoverage))
+    }
+
+    /// The narrowing only ever NARROWS. A capability that is itself scarcer
+    /// than the v2 subset keeps its own smaller count.
+    func testNarrowerCapabilityCoverageOutranksTheV2Subset() {
+        let card = effectCard("opal")
+        let snapshot = target(card: card, lights: 4,
+                              color: CapabilityCoverage(supported: 1, total: 4,
+                                                        evidence: .known),
+                              effectsV2: CapabilityCoverage(supported: 3, total: 4,
+                                                            evidence: .known),
+                              transport: .bridgeEffectV2)
+
+        let resolution = StudioBoardAvailability.resolve(
+            card: card, param: param(card, "base_color"), snapshot: snapshot)
+
+        XCTAssertEqual(resolution?.availability,
+                       .partial(supported: 1, total: 4, reason: .partialHardwareCoverage))
+    }
+
+    /// `brightness` is a GROUPED write — it reaches the whole room whatever
+    /// the v2 split is, so it must NOT be narrowed.
+    func testGroupedBrightnessIsNotNarrowedByTheV2Subset() {
+        let card = effectCard("opal")
+        let snapshot = target(card: card, lights: 3,
+                              effectsV2: CapabilityCoverage(supported: 1, total: 3,
+                                                            evidence: .known),
+                              transport: .bridgeEffectV2)
+
+        let resolution = StudioBoardAvailability.resolve(
+            card: card, param: param(card, "brightness"), snapshot: snapshot)
+
+        XCTAssertEqual(resolution?.availability, .active,
+                       "the grouped light-state write reaches every light in the room")
+    }
+
+    /// A v1-only room is still the legacy caveat's business, not coverage's:
+    /// `isPartial` is false there (nothing is v2-capable), so the control
+    /// stays active-but-unverified rather than "0 of 3".
+    func testFullyLegacyRoomKeepsTheGroupedFallbackCaveat() {
+        let card = effectCard("opal")
+        let resolution = StudioBoardAvailability.resolve(
+            card: card, param: param(card, "base_color"),
+            snapshot: target(card: card, effectsV2: .none(total: 3),
+                             transport: .legacy))
+
+        XCTAssertEqual(resolution?.availability, .active)
+        XCTAssertEqual(resolution?.isHardwareUnverified, true)
+        XCTAssertEqual(StudioBoardAvailability.note(for: resolution!, isColor: false),
+                       "UNVERIFIED ON THESE LIGHTS")
+    }
+
+    // ──────────────────────────────────────────────────────────
+    // MARK: - 13. The pending-check list is the single source (M4/M5)
+    // ──────────────────────────────────────────────────────────
+
+    /// `speed` owes a per-effect, per-model firmware-response check — it is in
+    /// `pendingHardwareChecks` and always has been — but the funnel's own
+    /// hardcoded rule ("`.hardwarePending` evidence, or the grouped fallback
+    /// pair") silently omitted it, so the HERO knob of every bridge-native
+    /// board rendered as fully vouched-for.
+    func testSpeedIsLabelledUnverifiedOnEveryTransport() {
+        let card = effectCard("opal")
+        for transport in [CustomizationTransport.bridgeEffectV2, .legacy] {
+            let effectsV2: CapabilityCoverage =
+                transport == .legacy ? .none(total: 3) : .all(total: 3)
+            let resolution = StudioBoardAvailability.resolve(
+                card: card, param: param(card, "speed"),
+                snapshot: target(card: card, effectsV2: effectsV2, transport: transport))
+            guard let resolution else { return XCTFail("speed must resolve") }
+            guard case .active = resolution.availability else {
+                // On legacy there is no v2 path at all — that is the refusal
+                // case, already covered above.
+                XCTAssertEqual(transport, .legacy)
+                continue
+            }
+            XCTAssertTrue(resolution.isHardwareUnverified,
+                          "speed owes a hardware check on \(transport)")
+        }
+    }
+
+    /// The membership question has ONE answer, and it lives in
+    /// `EffectParameterProfiles`. If a check is added or retired there, the
+    /// board's label follows without a second edit.
+    func testUnverifiedLabelTracksThePendingHardwareCheckList() {
+        let card = effectCard("opal")
+        let pending = EffectParameterProfiles.pendingHardwareCheckParamIDs
+        let snapshot = target(card: card, transport: .bridgeEffectV2)
+
+        for p in card.params {
+            guard let resolution = StudioBoardAvailability.resolve(
+                card: card, param: p, snapshot: snapshot),
+                  case .active = resolution.availability else { continue }
+            let owedHere = pending.contains(p.id)
+                && !EffectParameterProfiles.groupedFallbackOnlyChecks.contains(p.id)
+            XCTAssertEqual(resolution.isHardwareUnverified, owedHere,
+                           "\(card.id).\(p.id) disagrees with pendingHardwareChecks")
+        }
+    }
+
+    /// The two lists in `EffectParameterProfiles` must agree: a scope entry
+    /// naming a param that owes no check is a rule about nothing.
+    func testGroupedFallbackScopeIsASubsetOfThePendingChecks() {
+        XCTAssertTrue(EffectParameterProfiles.groupedFallbackOnlyChecks
+            .isSubset(of: EffectParameterProfiles.pendingHardwareCheckParamIDs),
+                      "a grouped-fallback scope entry must name a param that owes a check")
+        XCTAssertEqual(EffectParameterProfiles.pendingHardwareCheckParamIDs,
+                       ["brightness", "base_color", "warmth", "speed"],
+                       "the checklist changed — the board's labels move with it, on purpose")
+    }
+
+    /// Coverage and the evidence caveat are DIFFERENT facts: which lights, and
+    /// whether. The first cut returned the caveat and dropped the count, so a
+    /// mixed room's `speed` lost the far more actionable "1 OF 3 LIGHTS
+    /// RESPOND".
+    func testCoverageAndTheUnverifiedCaveatCoexist() {
+        let card = effectCard("opal")
+        let snapshot = target(card: card, lights: 3,
+                              effectsV2: CapabilityCoverage(supported: 1, total: 3,
+                                                            evidence: .known),
+                              transport: .bridgeEffectV2)
+
+        let resolution = StudioBoardAvailability.resolve(
+            card: card, param: param(card, "speed"), snapshot: snapshot)
+
+        XCTAssertEqual(resolution?.availability,
+                       .partial(supported: 1, total: 3, reason: .partialHardwareCoverage))
+        XCTAssertEqual(resolution?.isHardwareUnverified, true)
+        XCTAssertEqual(StudioBoardAvailability.note(for: resolution!, isColor: false),
+                       "1 OF 3 LIGHTS RESPOND · UNVERIFIED ON THESE LIGHTS")
+        // The colour section suppresses COVERAGE only; the caveat survives,
+        // because nothing else on screen is saying it.
+        XCTAssertEqual(StudioBoardAvailability.note(for: resolution!, isColor: true),
+                       "UNVERIFIED ON THESE LIGHTS")
+    }
+
+    // ──────────────────────────────────────────────────────────
+    // MARK: - 14. An empty room outranks every availability (L9)
+    // ──────────────────────────────────────────────────────────
+
+    /// "NO LIGHTS HERE" used to live inside the `.unavailable` branch only, so
+    /// a STAGED control on an empty room still promised that streaming would
+    /// make it work. There is nothing here for streaming to reach.
+    func testEmptyRoomOutranksAStagedTransportNote() {
+        let card = liveCard("strobe")
+        let duty = param(card, "duty_cycle")
+        let snapshot = target(card: card, lights: 0, transport: .roomREST)
+
+        let resolution = StudioBoardAvailability.resolve(card: card, param: duty,
+                                                         snapshot: snapshot)
+
+        XCTAssertEqual(resolution?.availability,
+                       .staged(reason: .requiresEntertainment, remediation: .enableStreaming))
+        XCTAssertEqual(StudioBoardAvailability.note(for: resolution!, isColor: false),
+                       "NO LIGHTS HERE")
+    }
+
+    /// …and over a partial count, which on an empty room can only ever read
+    /// as "0 OF 0 LIGHTS RESPOND".
+    func testEmptyRoomOutranksAPartialCount() {
+        let empty = StudioBoardResolution(
+            resolution: CustomizationResolution(
+                control: CustomizationControlID(cardID: "party", paramID: "color"),
+                availability: .partial(supported: 0, total: 0,
+                                       reason: .partialHardwareCoverage),
+                behavior: .immediate),
+            isHardwareUnverified: true, totalLights: 0)
+
+        XCTAssertEqual(StudioBoardAvailability.note(for: empty, isColor: false),
+                       "NO LIGHTS HERE")
+    }
+
+    // ──────────────────────────────────────────────────────────
+    // MARK: - 15. The strategy-qualified note on real resolutions (L10)
+    // ──────────────────────────────────────────────────────────
+
+    /// The 3-arg overload is what both renderers actually call. Its nil branch
+    /// is well covered; its NON-nil branch — the one every live control takes
+    /// — was only ever exercised through the 2-arg form.
+    func testStrategyQualifiedNoteDelegatesForEveryRealResolution() {
+        let cases: [(StudioCard, String, CustomizationTargetSnapshot)] = [
+            (liveCard("strobe"), "duty_cycle",
+             target(card: liveCard("strobe"), transport: .roomREST)),
+            (liveCard("party"), "color",
+             target(card: liveCard("party"), color: .none(total: 3))),
+            (effectCard("opal"), "brightness",
+             target(card: effectCard("opal"), transport: .bridgeEffectV2)),
+            (effectCard("opal"), "base_color",
+             target(card: effectCard("opal"), lights: 3,
+                    effectsV2: CapabilityCoverage(supported: 1, total: 3, evidence: .known),
+                    transport: .bridgeEffectV2)),
+        ]
+        for (card, paramID, snapshot) in cases {
+            let resolution = StudioBoardAvailability.resolve(
+                card: card, param: param(card, paramID), snapshot: snapshot)
+            XCTAssertNotNil(resolution, "\(card.id).\(paramID)")
+            for isColor in [true, false] {
+                XCTAssertEqual(
+                    StudioBoardAvailability.note(for: resolution,
+                                                 strategy: card.strategy, isColor: isColor),
+                    StudioBoardAvailability.note(for: resolution!, isColor: isColor),
+                    "\(card.id).\(paramID) isColor=\(isColor): the strategy overload must "
+                    + "delegate, not answer for itself, once there IS a resolution")
+            }
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────
+    // MARK: - 16. Colour context reads the board's snapshot (L11)
+    // ──────────────────────────────────────────────────────────
+
+    /// The colour chip's coverage must come from the SAME snapshot the board
+    /// resolved against — including its evidence. A chip that rebuilt `.known`
+    /// coverage for itself could not tell "we could not read these lights"
+    /// apart from "all of them do colour".
+    func testColorCapabilityContextTakesCoverageFromThePassedSnapshot() {
+        let card = liveCard("party")
+        let effect = runningEffect(for: card)
+
+        let partial = target(card: card,
+                             color: CapabilityCoverage(supported: 1, total: 3,
+                                                       evidence: .known))
+        XCTAssertEqual(vm.colorCapabilityContext(for: effect, snapshot: partial).coverage,
+                       partial.color)
+
+        let unreadable = CustomizationSnapshotBuilder.unreadable(
+            identity: identity(for: card), totalLights: 3,
+            transport: .roomREST, running: true)
+        let context = vm.colorCapabilityContext(for: effect, snapshot: unreadable)
+        XCTAssertEqual(context.coverage, unreadable.color)
+        XCTAssertEqual(context.coverage?.evidence, .unreadable,
+                       "the evidence must survive — .known coverage on unread lights is the lie")
+    }
+
+    private func runningEffect(for card: StudioCard) -> RunningEffect {
+        let room = RoomDisplayItem(
+            kind: .room, id: "room-1", name: "Living Room", archetype: nil,
+            isOn: true, brightness: 50, groupedLightID: "gl-1", lightCount: 3,
+            bridgeID: "bridge-A",
+            childResourceRefs: [(rid: "L1", rtype: "light"),
+                                (rid: "L2", rtype: "light"),
+                                (rid: "L3", rtype: "light")])
+        return RunningEffect(cardID: card.id, card: card, room: room,
+                             lightIDs: ["L1", "L2", "L3"],
+                             isEntertainment: false, requestedTransport: nil,
+                             transportFallback: false, identity: identity(for: card))
+    }
+
+    // ──────────────────────────────────────────────────────────
+    // MARK: - 17. `.hidden` is reachable again (M6)
+    // ──────────────────────────────────────────────────────────
+
+    /// Descriptors used to leave `appliesToExecution` empty, which made the
+    /// resolver's no-orphan check — and therefore its whole `.hidden` state —
+    /// dead code. Every descriptor now claims its own card, so a control
+    /// resolved against ANOTHER card's target hides instead of answering as
+    /// if it were at home.
+    func testDescriptorsClaimTheirOwnCardSoHiddenIsReachable() {
+        let party = liveCard("party")
+        let strobe = liveCard("strobe")
+        let descriptor = StudioBoardAvailability.descriptor(card: strobe,
+                                                            param: param(strobe, "duty_cycle"))
+        XCTAssertEqual(descriptor?.appliesToExecution, ["strobe"])
+
+        // Strobe's control measured against a target running PARTY.
+        let foreign = CustomizationResolver.resolve(control: descriptor!,
+                                                    on: target(card: party))
+        XCTAssertEqual(foreign.availability, .hidden)
+        XCTAssertFalse(foreign.availability.rendersControl)
+    }
+
+    /// …and the bridge-native side of the same rule.
+    func testBridgeNativeDescriptorsClaimTheirOwnCard() {
+        let card = effectCard("opal")
+        let descriptor = StudioBoardAvailability.descriptor(card: card,
+                                                            param: param(card, "speed"))
+        XCTAssertEqual(descriptor?.appliesToExecution, ["opal"])
+    }
+
+    /// Nothing on screen changes: both renderers hand the funnel the card's
+    /// own params against that card's own running row, so every shipping
+    /// control still resolves to a real, rendering answer.
+    func testNoShippingControlBecomesHidden() {
+        for card in vm.liveModeCards + vm.effectCards {
+            let snapshot = target(card: card, transport: .bridgeEffectV2)
+            for p in card.params {
+                guard let resolution = StudioBoardAvailability.resolve(
+                    card: card, param: p, snapshot: snapshot) else { continue }
+                XCTAssertNotEqual(resolution.availability, .hidden,
+                                  "\(card.id).\(p.id) went hidden on its OWN target")
+            }
+        }
     }
 }

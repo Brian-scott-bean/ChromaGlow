@@ -25,7 +25,7 @@ globs:
 
 ## Orchestrator
 - `startStudioMode(key:room:params:colors:capturedPlan:consent:preparedEntertainment:)` — existing effect engines (the last three have defaults)
-- `startCompositionMode(room:paramBox:)` — composition render loops
+- `startCompositionMode(room:paramBox:gamutOverride:preferEntertainment:tier:preset:capturedPlan:consent:preparedEntertainment:)` — composition render loops (everything after `paramBox:` has a default)
 - `stopStudioMode()` — cancels task + stops entertainment + clears state
 - `StudioParamBox` — live param relay for existing engines
 - `CompositionParamBox` — live param relay for compositions

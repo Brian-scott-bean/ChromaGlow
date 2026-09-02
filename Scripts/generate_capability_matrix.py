@@ -43,6 +43,14 @@ Verification alone is one-directional, though: it can only ask about the
 citations already written down. `--check` therefore also runs DISCOVERY in the
 opposite direction and fails on any disagreement, so a newly added consumer
 cannot ship uncited and an allowlist cannot quietly fall behind the loops.
+
+The bridge-native half used to be exempt from all of that. Its rows carry a
+PROSE citation — "performBridgeSend speed branch" — and prose is not checked by
+anything: deleting the speed branch, or renaming `performBridgeSend`, left
+`--check` green while 34 matrix rows went on claiming a code-proven SEND PATH
+for a send that no longer exists. `verify_send_path` closes that hole by
+reading the function's real span out of the wiring file and requiring the
+parameter's own literal inside it.
 """
 
 import argparse
@@ -87,10 +95,10 @@ ENGINE_READS_PROOF = ("HueHomeTests/StudioParamCatalogTests.swift",
 # the line numbers; run `--refresh-citations` after touching the run* loops.
 # BEGIN CITED_CONSUMERS
 CITED_CONSUMERS = {
-    ("strobe", "flash_color"): "UnifiedOrchestrator.swift:8194",
-    ("party", "color"): "UnifiedOrchestrator.swift:8362,8486",
-    ("thunderstorm", "ambient_color"): "UnifiedOrchestrator.swift:8579,8596,8630,8677,8718",
-    ("thunderstorm", "flash_color"): "UnifiedOrchestrator.swift:8650,8719",
+    ("strobe", "flash_color"): "UnifiedOrchestrator.swift:8278",
+    ("party", "color"): "UnifiedOrchestrator.swift:8439,8535",
+    ("thunderstorm", "ambient_color"): "UnifiedOrchestrator.swift:8631,8672,8777",
+    ("thunderstorm", "flash_color"): "UnifiedOrchestrator.swift:8695,8778",
 }
 # END CITED_CONSUMERS
 
@@ -115,30 +123,35 @@ DEAD_SENTINELS = {("thunderstorm", "brightness"), ("party", "saturation"),
 # totals split — "codeProven" cites the shipping send path, "hardwarePending"
 # names the exact physical check still owed.
 PROFILE_SOURCE = "HueHome/Core/EffectParameterProfiles.swift"
+# The shipping send path the bridge-native rows cite in prose. Every row whose
+# consumer text names `performBridgeSend` — and every `codeProven` row — is
+# verified against the real function span below (see verify_send_path).
+SEND_SOURCE = "HueHome/UI/Studio/StudioViewModel+CustomizationWiring.swift"
+SEND_FUNC = "performBridgeSend"
 EFFECT_PROFILES = {
     "speed": (
-        "performBridgeSend speed case (code-proven, v2-only — no legacy branch)",
+        "performBridgeSend speed branch (code-proven, v2-only — no legacy branch)",
         "per-light effects_v2",
         "debounced",
         "active on effects_v2 lights / unavailable on legacy-only",
         "codeProven",
     ),
     "base_color": (
-        "performBridgeSend base_color case (code-proven per-light v2; grouped xy fallback preserved)",
+        "performBridgeSend base_color branch (code-proven per-light v2; grouped xy fallback preserved)",
         "per-light effects_v2 / grouped xy fallback",
         "debounced",
         "active on effects_v2 lights / approximation on legacy (hardware-pending: fallback vs running effect)",
         "codeProven",
     ),
     "warmth": (
-        "performBridgeSend warmth case (code-proven per-light v2 mirek; grouped fallback preserved)",
+        "performBridgeSend warmth branch (code-proven per-light v2 mirek; grouped fallback preserved)",
         "per-light effects_v2 / grouped mirek fallback",
         "debounced",
         "active on effects_v2 lights with readable mirek range / approximation on legacy (hardware-pending)",
         "codeProven",
     ),
     "brightness": (
-        "performBridgeSend brightness case (grouped light-state write, not an effect parameter)",
+        "performBridgeSend brightness branch (grouped light-state write, not an effect parameter)",
         "grouped Room REST",
         "debounced",
         "active send (hardware-pending: visible scaling during an active firmware effect)",
@@ -370,6 +383,114 @@ def verify_discovery():
         if CITED_CONSUMERS[key] != discovered[key]:
             errors.append("%s.%s cites %s but the loops now read at %s"
                           % (key[0], key[1], CITED_CONSUMERS[key], discovered[key]))
+    return errors
+
+
+# ── Send-path verification (bridge-native prose citations) ───────────
+def _code_only(line):
+    """(code, code_without_string_literals) — a `//` comment is truncated.
+
+    String state is tracked so a `//` INSIDE a Swift string literal is not
+    mistaken for a comment, and so braces inside literals cannot skew the
+    brace balance used to find the function's end.
+    """
+    code, bare = [], []
+    in_str = False
+    i, n = 0, len(line)
+    while i < n:
+        ch = line[i]
+        if in_str:
+            if ch == "\\" and i + 1 < n:
+                code.append(line[i:i + 2])
+                i += 2
+                continue
+            code.append(ch)
+            if ch == '"':
+                in_str = False
+            i += 1
+            continue
+        if ch == '"':
+            in_str = True
+            code.append(ch)
+            i += 1
+            continue
+        if ch == "/" and i + 1 < n and line[i + 1] == "/":
+            break
+        code.append(ch)
+        bare.append(ch)
+        i += 1
+    return "".join(code), "".join(bare)
+
+
+def _swift_function_body(text, name):
+    """(first_line, last_line, [code lines]) for `func <name>(`, else None.
+
+    The span is found by BRACE BALANCE from the declaration, with comments and
+    string literals removed first, so the body cannot be over- or under-read by
+    a brace in prose. Doc comments ABOVE the declaration are deliberately
+    excluded: the whole point is that prose is not evidence.
+    """
+    lines = text.splitlines()
+    decl = re.compile(r"\bfunc\s+%s\s*[(<]" % re.escape(name))
+    start = None
+    for i, line in enumerate(lines, start=1):
+        if decl.search(_code_only(line)[0]):
+            start = i
+            break
+    if start is None:
+        return None
+    depth, opened, body = 0, False, []
+    for j in range(start, len(lines) + 1):
+        code, bare = _code_only(lines[j - 1])
+        body.append(code)
+        if "{" in bare:
+            opened = True
+        depth += bare.count("{") - bare.count("}")
+        if opened and depth <= 0:
+            return (start, j, body)
+    return None
+
+
+def verify_send_path():
+    """[] when every bridge-native prose citation still names a live branch.
+
+    The bridge-native rows say "performBridgeSend <param> branch". Nothing
+    checked that. Renaming the function, or deleting one branch, left `--check`
+    green while every bridge-native row went on printing "code-proven SEND
+    PATH" for a send that had stopped existing — 34 rows of confident fiction.
+
+    So: the function must exist, and the parameter's own literal (`"speed"`,
+    `"base_color"`, …) must appear inside its real body on a line that is not a
+    comment. `transition` is checked the same way — it sends nothing itself,
+    but it only shapes later sends while the body still READS it.
+    """
+    errors = []
+    path = ROOT / SEND_SOURCE
+    if not path.exists():
+        return ["EFFECT_PROFILES cites %s(), but %s does not exist — every "
+                "bridge-native row is claiming a send path from a missing file"
+                % (SEND_FUNC, SEND_SOURCE)]
+    span = _swift_function_body(path.read_text(), SEND_FUNC)
+    if span is None:
+        return ["EFFECT_PROFILES cites `%s` in %d row(s), but %s declares no "
+                "`func %s(` — the cited send path was renamed or deleted and "
+                "every bridge-native row would still print \"code-proven\""
+                % (SEND_FUNC, len(EFFECT_PROFILES), SEND_SOURCE, SEND_FUNC)]
+    _, _, body = span
+    haystack = "\n".join(body)
+    for param in sorted(EFFECT_PROFILES):
+        consumer, _, _, _, evidence = EFFECT_PROFILES[param]
+        # Anything that CLAIMS the send path, plus every code-proven row: a
+        # row is exempt only when it neither names the function nor asserts a
+        # proven send.
+        if evidence != "codeProven" and SEND_FUNC not in consumer:
+            continue
+        if '"%s"' % param not in haystack:
+            errors.append(
+                'EFFECT_PROFILES row %r says %r, but %s() never reads "%s" — '
+                "the branch is gone and the row would print a code-proven send "
+                "path for a parameter the send path ignores"
+                % (param, consumer, SEND_FUNC, param))
     return errors
 
 
@@ -672,7 +793,7 @@ def main():
             return 1
         globals()["CITED_CONSUMERS"] = citations
 
-    errors = verify_citations() + verify_allowlist_sources()
+    errors = verify_citations() + verify_allowlist_sources() + verify_send_path()
     # --check is the CI gate, so it also runs discovery: the citations being
     # individually intact says nothing about whether they are COMPLETE.
     if args.check:

@@ -116,6 +116,29 @@ final class CustomizationValueScopes<ColorValue: Hashable & Sendable> {
     private var runningValues: [RunningLookTargetKey: CustomizationValueSet<ColorValue>] = [:]
     private var runningGenerations: [RunningLookTargetKey: CustomizationGeneration] = [:]
 
+    /// SCOPE 2's FLOOR — the card's persisted defaults FROZEN at the instant
+    /// this instance started, one snapshot per running target.
+    ///
+    /// THE LEAK THIS CLOSES, and why it is a frozen base rather than a
+    /// complete seed. `live(for:)` layers an instance's own values over a
+    /// base, and scope 1 tracks LAST-USED values — so when the base was read
+    /// live, a param this instance had never written resolved against whatever
+    /// ANOTHER instance had since pushed into the defaults. Two rooms running
+    /// one card, edit room A's speed, and room B's live speed moved with it.
+    ///
+    /// Materializing every catalog parameter into `runningValues` at start
+    /// would also close it, but at a price that is worse than the leak: the
+    /// running set is what `seedApplyCurrentLook` and the Preview Live restore
+    /// copy into the card's PERSISTED defaults, so a complete set writes a
+    /// value for every control the user never touched — and the apply-time
+    /// sentinel "a stored warmth default exists ⇒ the user set it" becomes
+    /// permanently true, shipping a mirek with every bridge-native start.
+    ///
+    /// Freezing the base keeps the running set SPARSE (it holds exactly what
+    /// this instance was given) while still answering for every control from
+    /// the first frame, out of a base that later default writes cannot move.
+    private var frozenBases: [RunningLookTargetKey: CustomizationValueSet<ColorValue>] = [:]
+
     /// SCOPE 3 — "what is the finger doing right now?"
     private(set) var draft: CustomizationDraft<ColorValue>?
 
@@ -140,38 +163,30 @@ final class CustomizationValueScopes<ColorValue: Hashable & Sendable> {
 
     // ── Scope 2: live running-instance values ───────────────────
 
-    /// Register a look as running, seeding its live values from the card's
-    /// persisted defaults.
+    /// Register a look as running: an EMPTY own-value set, over a base frozen
+    /// from the card's persisted defaults as they are at this instant.
+    ///
+    /// Sparse by design — see `frozenBases`. The instance owns only what is
+    /// written to it, and everything else reads out of a snapshot that a later
+    /// default write (another instance's edit, an Apply Current Look, a
+    /// Preview Live restore) cannot move underneath it.
     func startRunning(_ identity: RunningLookIdentity) {
-        startRunning(identity, seed: defaults(forCard: identity.cardID))
-    }
-
-    /// Register a look as running with an EXPLICIT seed.
-    ///
-    /// THE LEAK THIS CLOSES. `live(for:)` layers the instance's own set over
-    /// the card's CURRENT defaults, and defaults track last-used values. So an
-    /// instance started while `defaults` was empty (or merely missing a param)
-    /// held no entry for that param — and every later read of it fell through
-    /// to whatever ANOTHER instance had since written into the defaults. Two
-    /// rooms running one card, edit room A's speed, and room B's live speed
-    /// moved with it.
-    ///
-    /// The fix is to make the seed COMPLETE at start: the caller materializes
-    /// every parameter the card declares (catalog default) with the persisted
-    /// overrides layered on top, so `runningValues[key]` answers for every
-    /// control from the first frame and the layering in `live(for:)` can never
-    /// reach past it.
-    func startRunning(_ identity: RunningLookIdentity,
-                      seed: CustomizationValueSet<ColorValue>) {
         let key = identity.targetKey
-        runningValues[key] = seed
+        runningValues[key] = CustomizationValueSet()
+        frozenBases[key] = defaults(forCard: identity.cardID)
         runningGenerations[key] = identity.generation
     }
 
-    /// Live values for an exact running instance, layered over the card
-    /// defaults so a newly-added param still has a value.
+    /// Live values for an exact running instance: its own writes layered over
+    /// the base frozen at start, so a param it never touched still answers —
+    /// with the value the card had when this run began, never with one another
+    /// instance has since written into the shared defaults.
+    ///
+    /// An identity that is NOT running has no frozen base, and falls back to
+    /// the card's current defaults: nothing is running, so there is no run for
+    /// a snapshot to describe.
     func live(for identity: RunningLookIdentity) -> CustomizationValueSet<ColorValue> {
-        let base = defaults(forCard: identity.cardID)
+        let base = frozenBases[identity.targetKey] ?? defaults(forCard: identity.cardID)
         guard let own = runningValues[identity.targetKey] else { return base }
         return own.layered(over: base)
     }
@@ -199,7 +214,8 @@ final class CustomizationValueScopes<ColorValue: Hashable & Sendable> {
     /// world changed enough that writes authored before now are untrustworthy,
     /// but the look never stopped and the user is still looking at its real
     /// values — reseeding from defaults here would blank the screen for a
-    /// reason the user cannot see.
+    /// reason the user cannot see. The frozen base is kept for the same
+    /// reason: the run did not restart, so its floor did not move.
     @discardableResult
     func rekey(_ identity: RunningLookIdentity,
                to newGeneration: CustomizationGeneration) -> RunningLookIdentity? {
@@ -222,6 +238,7 @@ final class CustomizationValueScopes<ColorValue: Hashable & Sendable> {
     func stopRunning(_ identity: RunningLookIdentity) {
         runningValues[identity.targetKey] = nil
         runningGenerations[identity.targetKey] = nil
+        frozenBases[identity.targetKey] = nil
         if draft?.identity.targetKey == identity.targetKey { draft = nil }
     }
 
@@ -251,6 +268,7 @@ final class CustomizationValueScopes<ColorValue: Hashable & Sendable> {
         for key in matches {
             runningValues[key] = nil
             runningGenerations[key] = nil
+            frozenBases[key] = nil
         }
         if let draft, matches.contains(draft.identity.targetKey) { self.draft = nil }
         return Array(matches)
@@ -260,6 +278,7 @@ final class CustomizationValueScopes<ColorValue: Hashable & Sendable> {
     func stopAll() {
         runningValues.removeAll()
         runningGenerations.removeAll()
+        frozenBases.removeAll()
         draft = nil
     }
 
@@ -268,11 +287,19 @@ final class CustomizationValueScopes<ColorValue: Hashable & Sendable> {
     ///
     /// Contrast with today's `resetParams`, which nils the card-global dict and
     /// therefore resets every bridge at once.
+    ///
+    /// The own-value set is EMPTIED and the base RE-FROZEN from the defaults as
+    /// they are now — which, on the production reset path, is immediately after
+    /// `clearDefaults`, so reads fall through to the catalog. Writing
+    /// `defaults(forCard:)` into the running set instead is what left a reset
+    /// instance tracking the shared dictionary again: the very leak reset was
+    /// supposed to end, re-opened by the reset itself.
     @discardableResult
     func reset(_ identity: RunningLookIdentity,
                newGeneration: CustomizationGeneration) -> RunningLookIdentity {
         let key = identity.targetKey
-        runningValues[key] = defaults(forCard: identity.cardID)
+        runningValues[key] = CustomizationValueSet()
+        frozenBases[key] = defaults(forCard: identity.cardID)
         runningGenerations[key] = newGeneration
         if draft?.identity.targetKey == key { draft = nil }
         return RunningLookIdentity(bridgeID: identity.bridgeID,
@@ -340,12 +367,17 @@ final class CustomizationValueScopes<ColorValue: Hashable & Sendable> {
         }
 
         let key = captured.targetKey
-        var set = runningValues[key] ?? defaults(forCard: captured.cardID)
+        // Sparse: a commit adds ONE field to what this instance owns. Seeding
+        // from the card's defaults here would smuggle the whole shared
+        // dictionary into the running set — and from there into the persisted
+        // defaults, via every path that copies a live set back out.
+        var set = runningValues[key] ?? CustomizationValueSet()
         if let number { set.numbers[control.paramID] = number }
         if let color { set.colors[control.paramID] = color }
         runningValues[key] = set
 
-        return .committed(captured, set.layered(over: defaults(forCard: captured.cardID)))
+        let base = frozenBases[key] ?? defaults(forCard: captured.cardID)
+        return .committed(captured, set.layered(over: base))
     }
 
     // ── Introspection (tests, and the matrix generator) ─────────

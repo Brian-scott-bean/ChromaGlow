@@ -123,6 +123,14 @@ enum StudioBoardAvailability {
     static func descriptor(card: StudioCard,
                            param: StudioParam) -> CustomizationControlDescriptor? {
         let id = CustomizationControlID(cardID: card.id, paramID: param.id)
+        // The control belongs to THIS card and no other. Descriptors used to
+        // leave `appliesToExecution` empty, which made the resolver's
+        // no-orphan check (and therefore its entire `.hidden` state) dead
+        // code: a control resolved against another card's target answered as
+        // if it were at home. Both renderers hand the funnel the card's own
+        // params against that card's own running row, so nothing on screen
+        // changes — but the check is now live, and `.hidden` is reachable.
+        let ownCard: Set<String> = [card.id]
         switch card.strategy {
         case .bridgeNative(let effectName):
             guard let profile = EffectParameterProfiles.profile(effect: effectName,
@@ -131,13 +139,15 @@ enum StudioBoardAvailability {
             }
             return CustomizationControlDescriptor(id: id,
                                                   requirement: profile.requirement,
-                                                  liveBehavior: profile.liveBehavior)
+                                                  liveBehavior: profile.liveBehavior,
+                                                  appliesToExecution: ownCard)
 
         case .appDriven:
             return CustomizationControlDescriptor(id: id,
                                                   requirement: requirement(for: param),
                                                   liveBehavior: .immediate,
-                                                  idleBehavior: .staged)
+                                                  idleBehavior: .staged,
+                                                  appliesToExecution: ownCard)
 
         case .composition:
             return nil
@@ -185,7 +195,9 @@ enum StudioBoardAvailability {
                         param: StudioParam,
                         snapshot: CustomizationTargetSnapshot) -> StudioBoardResolution? {
         guard let descriptor = descriptor(card: card, param: param) else { return nil }
-        let resolution = CustomizationResolver.resolve(control: descriptor, on: snapshot)
+        let resolved = CustomizationResolver.resolve(control: descriptor, on: snapshot)
+        let resolution = narrowedToEffectsV2Coverage(resolved, card: card,
+                                                     param: param, snapshot: snapshot)
         return StudioBoardResolution(
             resolution: resolution,
             isHardwareUnverified: isHardwareUnverified(card: card,
@@ -195,17 +207,74 @@ enum StudioBoardAvailability {
             totalLights: snapshot.totalLights)
     }
 
-    /// Params whose code-proven path is the PER-LIGHT `effects_v2` write, and
-    /// whose v1-only story is the preserved grouped light-state fallback —
-    /// which `EffectParameterProfiles` classifies as an approximation, never
-    /// as full live mutation.
-    private static let groupedFallbackParamIDs: Set<String> = ["base_color", "warmth"]
+    /// Bridge-native params whose live send is the PER-LIGHT `effects_v2`
+    /// write — so their real reach is the v2-capable subset of the room, not
+    /// the room.
+    ///
+    /// THE DEFECT THIS CLOSES. `performBridgeSend` issues the per-light v2
+    /// body only for the ids that took `effects_v2`; the rest of the room gets
+    /// nothing from these three. But `targetSnapshot(for:)` calls the whole
+    /// target `.bridgeEffectV2` as soon as ONE light is v2-capable, so in a
+    /// mixed room (1 v2 + 2 legacy) `base_color`/`warmth` resolved `.active`
+    /// against full COLOUR coverage and claimed the whole room — while two of
+    /// the three lights never moved. The transport-shaped caveat could not
+    /// catch it either: the room is not `.legacy`.
+    ///
+    /// Coverage is the honest answer, and the resolver cannot reach it — it
+    /// measured `.color`/`.colorTemperature`, which really are full here. So
+    /// the funnel narrows the answer afterwards, at exactly the level that
+    /// knows both facts.
+    private static let perLightEffectsV2ParamIDs: Set<String> =
+        ["base_color", "warmth", "speed"]
+
+    /// Narrow a satisfied bridge-native answer to the `effects_v2` subset.
+    ///
+    /// Only ever narrows: an already-`.partial` answer keeps whichever
+    /// coverage is smaller, and staged/unavailable/hidden are left alone —
+    /// they are being honest about a bigger problem already. `speed` already
+    /// requires `.effectsV2`, so it passes through unchanged; it is listed
+    /// because the rule is about the SEND PATH, not about which requirement
+    /// happens to imply it today.
+    private static func narrowedToEffectsV2Coverage(
+        _ resolution: CustomizationResolution,
+        card: StudioCard,
+        param: StudioParam,
+        snapshot: CustomizationTargetSnapshot
+    ) -> CustomizationResolution {
+        guard case .bridgeNative = card.strategy,
+              perLightEffectsV2ParamIDs.contains(param.id),
+              snapshot.effectsV2.isPartial else { return resolution }
+
+        let v2 = snapshot.effectsV2
+        let narrowed: CustomizationAvailability
+        switch resolution.availability {
+        case .active:
+            narrowed = .partial(supported: v2.supported, total: v2.total,
+                                reason: .partialHardwareCoverage)
+        case .partial(let supported, _, let reason):
+            guard v2.supported < supported else { return resolution }
+            narrowed = .partial(supported: v2.supported, total: v2.total, reason: reason)
+        case .staged, .unavailable, .hidden:
+            return resolution
+        }
+        return CustomizationResolution(control: resolution.control,
+                                       availability: narrowed,
+                                       behavior: resolution.behavior)
+    }
 
     /// Does this control's send path still owe a hardware check?
     ///
     /// Asked only where the resolver already said yes. A staged or unavailable
     /// control is being honest already, and stacking "…and we are not sure it
     /// works" on top of it would read as two separate problems.
+    ///
+    /// The MEMBERSHIP question — which params owe a check — is answered by
+    /// `EffectParameterProfiles.pendingHardwareChecks`, the same list the
+    /// on-device checklist and the capability matrix are generated from. This
+    /// used to be a local rule (`.hardwarePending` evidence, plus a hardcoded
+    /// grouped-fallback pair) that silently disagreed with it: `speed` owes a
+    /// per-effect, per-model firmware-response check and was labelled as
+    /// proven on every board.
     private static func isHardwareUnverified(
         card: StudioCard,
         param: StudioParam,
@@ -217,17 +286,18 @@ enum StudioBoardAvailability {
         case .staged, .unavailable, .hidden:    return false
         }
         guard case .bridgeNative(let effectName) = card.strategy,
-              let profile = EffectParameterProfiles.profile(effect: effectName,
-                                                            paramID: param.id) else {
+              EffectParameterProfiles.profile(effect: effectName,
+                                              paramID: param.id) != nil,
+              EffectParameterProfiles.pendingHardwareCheckParamIDs.contains(param.id) else {
             return false
         }
-        // `brightness` everywhere: the grouped write is code-proven, its
-        // visible scaling of a running firmware effect is not.
-        if case .hardwarePending = profile.evidence { return true }
-        // `base_color`/`warmth` on a room whose lights rejected `effects_v2`:
-        // the per-light proof does not apply there, only the approximation.
-        return snapshot.transport == .legacy
-            && groupedFallbackParamIDs.contains(param.id)
+        // `base_color`/`warmth` owe their check only where the v1-only grouped
+        // approximation stands in for the proven per-light v2 write.
+        if EffectParameterProfiles.groupedFallbackOnlyChecks.contains(param.id) {
+            return snapshot.transport == .legacy
+        }
+        // `brightness` and `speed`: owed everywhere.
+        return true
     }
 
     // ── Interactivity (spec §17) ────────────────────────────────
@@ -305,20 +375,47 @@ enum StudioBoardAvailability {
     /// `isColor` suppresses the partial-coverage line: the inline colour
     /// editor already badges "n OF m LIGHTS" beside its own chip, and saying
     /// it twice reads as two different problems.
+    /// "We are still asking the bridge."
+    ///
+    /// The board refreshes itself when the inventory lands (Guard 15(j) pins
+    /// the observable fact that wakes it), so the copy no longer promises a
+    /// refresh — it just names the state. The long form wrapped to four-plus
+    /// lines under a knob in a three-column grid, which made the amber caption
+    /// the largest thing on the board.
+    static let checkingCopy = "CHECKING WHAT THESE LIGHTS SUPPORT"
+    /// Coverage and the evidence caveat, when a control owes both.
+    static let noteSeparator = " · "
+
     static func note(for resolution: StudioBoardResolution,
                      isColor: Bool) -> String? {
-        // Evidence first. A control the resolver calls active or partial can
-        // still be one whose visible behaviour on these lights nobody has
-        // confirmed; that is the one caveat that outranks coverage, because
-        // coverage is about WHICH lights and this is about WHETHER.
-        if resolution.isHardwareUnverified { return "UNVERIFIED ON THESE LIGHTS" }
+        // Nothing to render, nothing to say.
+        guard resolution.availability.rendersControl else { return nil }
+
+        // A target with no lights at all is not "still checking", and it is
+        // not partially covered either — nothing is ever going to answer.
+        // This outranks EVERY availability: the old placement inside the
+        // `.unavailable` branch let a `.staged` or `.partial` answer on an
+        // empty room say "STREAMING ONLY" or "0 OF 0 LIGHTS RESPOND".
+        if resolution.totalLights == 0 { return "NO LIGHTS HERE" }
+
+        // The evidence caveat COEXISTS with coverage — it does not replace it.
+        // Swallowing the count made a mixed room's `base_color` say only
+        // "UNVERIFIED ON THESE LIGHTS" and drop the far more actionable "1 OF
+        // 3 LIGHTS RESPOND". Coverage is about WHICH lights, evidence is about
+        // WHETHER; both are true, so both are said.
+        let unverified = resolution.isHardwareUnverified ? "UNVERIFIED ON THESE LIGHTS" : nil
 
         switch resolution.availability {
         case .active, .hidden:
-            return nil
+            return unverified
 
         case .partial(let supported, let total, _):
-            return isColor ? nil : "\(supported) OF \(total) LIGHTS RESPOND"
+            // The colour editor already badges "n OF m LIGHTS" beside its own
+            // chip; saying it twice reads as two problems. The caveat is not
+            // badged anywhere, so it survives.
+            let coverage = isColor ? nil : "\(supported) OF \(total) LIGHTS RESPOND"
+            let parts = [coverage, unverified].compactMap { $0 }
+            return parts.isEmpty ? nil : parts.joined(separator: noteSeparator)
 
         case .staged(let reason, _):
             // The transport-shaped stage is the one the user can act on, so
@@ -328,23 +425,30 @@ enum StudioBoardAvailability {
                 ? "STREAMING ONLY — INACTIVE IN ROOM MODE"
                 : "SAVED — APPLIES WHEN SUPPORT ARRIVES"
 
-        case .unavailable(let reason, _):
-            // A target with no lights at all is not "still checking" — nothing
-            // is ever going to answer. Saying CHECKING there is a spinner that
-            // never resolves, which is the dishonesty this funnel exists to
-            // remove.
-            if resolution.totalLights == 0 { return "NO LIGHTS HERE" }
+        case .unavailable(let reason, let remediation):
             switch reason {
             case .effectsV2Unavailable:
+                // Reachable only from the UNSUPPORTED branch of the resolver
+                // now — the bridge answered and said no. An UNKNOWN
+                // `effects_v2` used to land here too, which is how a cold
+                // snapshot's Speed knob asserted a hardware refusal beside
+                // three siblings that correctly said we were still checking.
                 return "THESE LIGHTS CAN'T CHANGE THIS WHILE RUNNING"
             case .noCTCapableLights:
                 return "NO WHITE-TONE LIGHTS HERE"
             case .noColorCapableLights:
                 return "NO COLOR LIGHTS HERE"
             case .capabilityUnknown, .capabilityUnreadable:
-                // Say what happens next. The first cut stated the problem and
-                // stopped, which reads as a dead end the user must fix.
-                return "CHECKING WHAT THESE LIGHTS SUPPORT — REFRESHES WHEN THE BRIDGE ANSWERS"
+                return checkingCopy
+            case .effectParameterUnverified:
+                // One reason, two outcomes. The resolver offers a retry only
+                // for the UNKNOWN pair ("never verified"); the unsupported
+                // flavour — the effect really has no such parameter — carries
+                // no remediation. Unknown must read as checking, never as a
+                // refusal.
+                return remediation == .retryCapabilityFetch
+                    ? checkingCopy
+                    : "NOT AVAILABLE FOR THESE LIGHTS"
             default:
                 return "NOT AVAILABLE FOR THESE LIGHTS"
             }

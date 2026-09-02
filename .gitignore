@@ -61,3 +61,10 @@ Config/Secrets.xcconfig
 # The live project is HueHome.xcodeproj.
 ChromaGlow/
 ChromaGlow.xcodeproj/
+
+# Developer-local / generated — never committed.
+# `.cursor/rules/*.mdc` ARE tracked (they are project rules); only the local
+# MCP server config beside them is not.
+.cursor/mcp.json
+.cnvs/
+Scripts/__pycache__/

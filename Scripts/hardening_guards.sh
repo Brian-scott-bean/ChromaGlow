@@ -716,8 +716,30 @@ fi
 # BOTH hold on the branch that opens customization. The body is joined and
 # comment-stripped first, so a wrapped expression still matches and a commented
 # copy of the right shape cannot stand in for the real one.
-hc_room_expr=$(echo "$hc_room_rule" | grep -vE '^[[:space:]]*//' | tr '\n' ' ' | tr -s ' ')
-if ! echo "$hc_room_expr" | grep -qE 'current == \.customization &&[^?]*\? \.customization : \.decks'; then
+#
+# Two corrections to the first version of this check:
+#   * it pinned ONE operand ORDER (`current == .customization && …`), so the
+#     equivalent `(newTargetRunsALook && current == .customization)` failed a
+#     guard it satisfies. A guard that rejects a correct refactor gets deleted,
+#     and then nothing pins the conjunction at all. The condition is now
+#     extracted and asked three order-free questions instead.
+#   * `grep -vE '^[[:space:]]*//'` drops only comment-ONLY lines, so a TRAILING
+#     `// … && …` comment could still smuggle the required shape onto a line
+#     whose real code is a disjunction. Comments are now truncated, not just
+#     whole-line filtered.
+hc_room_expr=$(echo "$hc_room_rule" | sed -E 's@//.*$@@' | tr '\n' ' ' | tr -s ' ')
+# The condition is what stands in front of the ternary that decides the mode —
+# the operands the customization branch actually rests on. ERE has no lazy
+# quantifier, so the prefix is taken greedily and then trimmed back past the
+# last `{` / `return`, which keeps an unrelated earlier statement's operators
+# out of the disjunction check below.
+hc_room_cond=$(echo "$hc_room_expr" | sed -nE 's@^(.*)[?] \.customization : \.decks.*$@\1@p')
+hc_room_cond="${hc_room_cond##*\{}"
+hc_room_cond="${hc_room_cond##*return }"
+if [[ -z "${hc_room_cond//[[:space:]]/}" ]] \
+    || ! echo "$hc_room_cond" | grep -qF 'current == .customization' \
+    || ! echo "$hc_room_cond" | grep -qF '&&' \
+    || echo "$hc_room_cond" | grep -qF '||'; then
     fail "composer-hardware-convergence" "modeOnRoomChange no longer opens customization only when the CURRENT mode is customization AND the new target runs a look — a disjunction there re-opens the tray over the wheel on arrival"
 fi
 # The anchor tracks the handler, not one spelling of its key: Track A C1
@@ -1191,8 +1213,16 @@ done
 
 # (b) The disclosure state may not return. Either spelling reintroduces a gate
 # in front of controls that are supposed to be on the page already.
+#
+# The comment filter is ANCHORED, as in (a) and 14(d): the unanchored
+# `:[[:space:]]*//` form discarded every line whose CODE happened to contain
+# `: //` — a URL in a trailing comment, a dictionary literal — so a real
+# disclosure gate could hide behind one. Two files are grepped here, so grep
+# prefixes each hit with `<file>:<line>:` and the anchor has to spell both
+# fields; `^[0-9]+:` (the single-file form) would have matched nothing and
+# filtered nothing.
 r36_state=$(grep -nE 'showAdvanced|showParamSheet|showLayerSheet|isExpanded' "$R36_HOST" "$R36_PANEL" 2>/dev/null \
-    | grep -vE ':[[:space:]]*//' || true)
+    | grep -vE '^[^:]*:[0-9]+:[[:space:]]*//' || true)
 if [[ -n "$r36_state" ]]; then
     fail "studio-one-surface" $'a disclosure gate is back in the customization host — the advanced controls are meant to be scrolled to, not revealed:\n'"$r36_state"
 fi
@@ -1201,8 +1231,16 @@ fi
 # and the composer chip scroller are explicitly permitted and excluded by their
 # `.horizontal` axis; a second VERTICAL scroller is the nested-scrolling defect
 # C5 flattened away.
-r36_vertical=$(grep -nE 'ScrollView\(' "$R36_HOST" 2>/dev/null \
-    | grep -vE '\.horizontal' | grep -vE ':[[:space:]]*//' || true)
+#
+# BOTH spellings count. The pattern used to be `ScrollView\(` alone, which sees
+# only the axis-taking form — the trailing-closure `ScrollView { … }` (the
+# default vertical axis, and the shorter spelling of the two) was invisible, so
+# a second vertical scroller could be nested back in with the count still
+# reading 1. `ScrollViewReader {` is not a scroll surface and does not match:
+# `[({]` has to follow the word `ScrollView` itself.
+# The comment filter is anchored here too — single-file grep, so `^[0-9]+:`.
+r36_vertical=$(grep -nE 'ScrollView[[:space:]]*[({]' "$R36_HOST" 2>/dev/null \
+    | grep -vE '\.horizontal' | grep -vE '^[0-9]+:[[:space:]]*//' || true)
 r36_vcount=$(printf '%s' "$r36_vertical" | grep -c . || true)
 if [[ "$r36_vcount" -ne 1 ]]; then
     fail "studio-one-surface" $'the host must have exactly ONE vertical ScrollView, found '"$r36_vcount"$':\n'"$r36_vertical"
@@ -1244,10 +1282,11 @@ HC_BEAT="HueHome/Core/Audio/BeatBinding.swift"
 [[ -f "$HC_BEAT" ]] || fail "slice2-r1" "$HC_BEAT is missing — the flash-safety invariant has no home"
 hc_beat_code=$(grep -vE '^[[:space:]]*//' "$HC_BEAT" 2>/dev/null || true)
 for sym in entertainmentFrameDuration entertainmentFrameNanoseconds minOnsetPeriod \
-           minOnsetLedgerPeriod onsetComparisonTolerance flashRiseEpsilon clampedInt \
+           minOnsetLedgerPeriod onsetComparisonTolerance onsetRiseThreshold onsetColorDelta \
+           onsetVisibleBrightness clampedInt \
            slowestPlannedHz minCycleFrames entertainmentMaxLockHz cycleFrames splitFrames \
-           OnsetGate OnsetLedger StrobePlan PartyPlan ThunderstormPlan requestedGapFrames \
-           flashFrameRange afterglowFrameRange noteAmbient noteStrike gapFrames; do
+           WireFrame FrameVerdict OnsetGate OnsetLedger StrobePlan PartyPlan ThunderstormPlan \
+           requestedGapFrames flashFrameRange afterglowFrameRange noteAmbient noteStrike gapFrames; do
     echo "$hc_beat_code" \
         | grep -qE "^[[:space:]]*((static|mutating|private|public|internal|final)[[:space:]]+)*(let|var|func|struct|class|enum)[[:space:]]+${sym}([^A-Za-z0-9_]|\$)" \
         || fail "slice2-r1" "BeatMath.FlashSafety.$sym is no longer DECLARED in $HC_BEAT (a comment mentioning it does not count)"
@@ -1275,10 +1314,8 @@ for loop in runStrobeEntertainment runPartyEntertainment runThunderstormEntertai
     [[ -n "$body" ]] || fail "slice2-r1" "$loop not found in $HC_ORCH"
     echo "$body" | grep -q 'onsetLedger: BeatMath.FlashSafety.OnsetLedger' \
         || fail "slice2-r1" "$loop no longer takes the bridge's shared onsetLedger"
-    echo "$body" | grep -q 'streamUntilOnsetAdmitted(' \
-        || fail "slice2-r1" "$loop no longer delays its onsets through streamUntilOnsetAdmitted("
-    echo "$body" | grep -q 'BeatMath.FlashSafety.entertainmentFrameNanoseconds' \
-        || fail "slice2-r1" "$loop no longer sleeps the shared 20 ms frame quantum"
+    echo "$body" | grep -q 'emitGatedFrame(' \
+        || fail "slice2-r1" "$loop no longer streams through the frame gate (emitGatedFrame()"
     echo "$body" | grep -qE 'Task\.sleep\(nanoseconds: [0-9_]+\)' \
         && fail "slice2-r1" "$loop sleeps a hard-coded frame literal"
     echo "$body" | grep -q '0\.02' \
@@ -1323,22 +1360,50 @@ if [[ -n "$hc_ledger_drop" ]]; then
     fail "slice2-r1" $'a flash onset ledger is being removed:\n'"$hc_ledger_drop"
 fi
 
-# (e) The delay helper stays a LOOP against the shared ledger. `streamUntilOnsetAdmitted`
-#     is the one piece of this invariant no unit test can execute (it needs a live
-#     HueEntertainmentClient), so its shape is pinned here instead. A numeric
-#     bail-out — "give up after N frames and flash anyway" — would convert every
-#     refusal into exactly the SKIP that R1 rule 4 forbids; only cancellation may
-#     end the wait.
-hc_admit_body=$(awk '/private func streamUntilOnsetAdmitted\(/,/^    }$/' "$HC_ORCH" 2>/dev/null | grep -vE '^[[:space:]]*//' || true)
-[[ -n "$hc_admit_body" ]] || fail "slice2-r1" "streamUntilOnsetAdmitted is gone from $HC_ORCH"
-echo "$hc_admit_body" | grep -q 'while !Task.isCancelled' \
-    || fail "slice2-r1" "streamUntilOnsetAdmitted no longer loops until the ledger admits — only cancellation may end the wait"
-echo "$hc_admit_body" | grep -q 'tryOnset(at:' \
-    || fail "slice2-r1" "streamUntilOnsetAdmitted no longer asks the shared ledger through tryOnset(at:"
-echo "$hc_admit_body" | grep -q 'minOnsetLedgerPeriod' \
-    || fail "slice2-r1" "streamUntilOnsetAdmitted no longer enforces the 17-frame minOnsetLedgerPeriod (minOnsetPeriod concedes 6.67 ms the cross-run path cannot afford)"
-echo "$hc_admit_body" | grep -qE 'heldFrames[[:space:]]*[<>]' \
-    && fail "slice2-r1" "streamUntilOnsetAdmitted has a numeric bail-out on heldFrames — a refusal must DELAY the flash, never skip it"
+# (e) The frame helper is the ONE place a flash-class ENT loop may send, and it
+#     asks the ledger about the FRAME. `emitGatedFrame` and `emitOnsetFrame` are
+#     the pieces of this invariant no unit test can execute (they need a live
+#     HueEntertainmentClient), so their shape is pinned here instead.
+#
+#     The rule they encode: what goes on the wire is what the ledger RECORDED,
+#     never what the caller asked for. Every hole the second pass found was a
+#     frame the loop emitted while the ledger was looking at something else — the
+#     hold frame a caller assembled from `lastBri ?? minBri` (B1), the storm's
+#     ambient frame after an afterglow (H1), the strobe's OFF edge when it is the
+#     rising one (H2).
+hc_emit_body=$(awk '/private func emitGatedFrame\(/,/^    }$/' "$HC_ORCH" 2>/dev/null | grep -vE '^[[:space:]]*//' || true)
+[[ -n "$hc_emit_body" ]] || fail "slice2-r1" "emitGatedFrame is gone from $HC_ORCH"
+echo "$hc_emit_body" | grep -q 'ledger.admit(' \
+    || fail "slice2-r1" "emitGatedFrame no longer asks the shared ledger about the FRAME through admit("
+echo "$hc_emit_body" | grep -q 'lastEmitted' \
+    || fail "slice2-r1" "emitGatedFrame no longer binds the ledger's lastEmitted hold frame — a hold that re-derives its own level is defect B1"
+echo "$hc_emit_body" | grep -q 'minOnsetLedgerPeriod' \
+    || fail "slice2-r1" "emitGatedFrame no longer enforces the 17-frame minOnsetLedgerPeriod (minOnsetPeriod concedes 6.67 ms the cross-run path cannot afford)"
+echo "$hc_emit_body" | grep -q 'BeatMath.FlashSafety.entertainmentFrameNanoseconds' \
+    || fail "slice2-r1" "emitGatedFrame no longer sleeps the shared 20 ms frame quantum"
+echo "$hc_emit_body" | grep -qE 'Task\.sleep\(nanoseconds: [0-9_]+\)' \
+    && fail "slice2-r1" "emitGatedFrame sleeps a hard-coded frame literal"
+hc_emit_sends=$(echo "$hc_emit_body" | grep -c 'sendUniform(' || true)
+[[ "$hc_emit_sends" == "1" ]] \
+    || fail "slice2-r1" "emitGatedFrame makes $hc_emit_sends sendUniform( calls — it must make exactly one, so every frame is gated exactly once"
+echo "$hc_emit_body" | grep -q 'x: onWire.x, y: onWire.y, brightness: onWire.brightness' \
+    || fail "slice2-r1" "emitGatedFrame sends something other than the frame the ledger recorded (onWire) — sending the REQUESTED frame after a refusal is the whole defect"
+
+# `emitOnsetFrame` is the successor to `streamUntilOnsetAdmitted` and inherits its
+# one hard rule: a refusal is a DELAY, never a skip. A numeric bail-out — "give up
+# after N frames and flash anyway" — would convert every refusal into exactly the
+# skip R1 rule 4 forbids. It is banned in BOTH spellings (`held > N` and
+# `N < held`), and in fact no numeric comparison belongs in that body at all.
+hc_onset_body=$(awk '/private func emitOnsetFrame\(/,/^    }$/' "$HC_ORCH" 2>/dev/null | grep -vE '^[[:space:]]*//' || true)
+[[ -n "$hc_onset_body" ]] || fail "slice2-r1" "emitOnsetFrame is gone from $HC_ORCH"
+echo "$hc_onset_body" | grep -q 'while !Task.isCancelled' \
+    || fail "slice2-r1" "emitOnsetFrame no longer loops until the frame lands — only cancellation may end the wait"
+echo "$hc_onset_body" | grep -q 'emitGatedFrame(' \
+    || fail "slice2-r1" "emitOnsetFrame no longer streams its wait through the frame gate"
+echo "$hc_onset_body" | grep -q 'wasAdmitted' \
+    || fail "slice2-r1" "emitOnsetFrame no longer returns on the REQUESTED frame reaching the wire (wasAdmitted)"
+echo "$hc_onset_body" | grep -qE '[<>]=?[[:space:]]*[0-9]|[0-9][[:space:]]*[<>]=?' \
+    && fail "slice2-r1" "emitOnsetFrame compares against a numeric bound — a refusal must DELAY the flash, never skip it (both spellings of the bail-out are banned)"
 
 # (f) Every loop is started with the PER-BRIDGE ledger, resolved before it. A
 #     fresh `OnsetLedger()` at the call site type-checks, reads as correct, and
@@ -1368,23 +1433,53 @@ hc_storm_while=$(awk -v s="$hc_storm_start" 'NR > s && /while !Task\.isCancelled
 [[ -n "$hc_budget_line" && -n "$hc_storm_while" && "$hc_budget_line" -lt "$hc_storm_while" ]] \
     || fail "slice2-r1" "runThunderstormEntertainment's Budget() (line ${hc_budget_line:-none}) is not declared before its render loop (line ${hc_storm_while:-none}) — a budget rebuilt each iteration banks fresh credit for every strike"
 
-# (h) The beat branches gate the RENDERED RISE, not the cycle index / duty edge
-#     (defect R1-RG). What a photosensitive viewer perceives is the light getting
-#     brighter — and both branches compute brightness from inputs that move
-#     without the index or the edge moving: a BeatClock epoch correction runs the
-#     phase BACKWARDS, dragging smoothness down runs `hold` FORWARD, and raising
-#     min_brightness while dark raises output with no duty flip at all. Each of
-#     those restored full brightness with no gate call whatsoever, and the genuine
-#     boundary milliseconds later was then admitted on top of it.
-for loop in runStrobeEntertainment runPartyEntertainment; do
-    hc_gate=$(hc_ent_loop "$loop" | grep -A2 'let needsGate =')
-    [[ -n "$hc_gate" ]] \
-        || fail "slice2-r1" "$loop's beat branch has no needsGate — it is gating something other than the rendered rise (R1-RG)"
-    echo "$hc_gate" | grep -q 'lastBri' \
-        || fail "slice2-r1" "$loop's gate condition does not compare against lastBri (the brightness last STREAMED) — an index-only or edge-only gate is defect R1-RG"
-    echo "$hc_gate" | grep -q 'FlashSafety.flashRiseEpsilon' \
-        || fail "slice2-r1" "$loop's gate condition no longer uses the shared flashRiseEpsilon"
+# (h) The gate measures the WIRE, and NOTHING bypasses it.
+#
+#     The first pass gated the transitions each loop COMPUTED — a duty edge, a
+#     cycle-index change, an ambient raise — and pinned that here by grepping for
+#     a `needsGate` expression. That check was operator-blind: it could see that a
+#     comparison existed, not that the comparison covered every frame the loop
+#     emitted. It could not, and the second pass found four frames that escaped
+#     (B1, H1, H2, M4) plus a per-frame epsilon that a slow ramp walked straight
+#     past (M3). The rule is now structural instead of textual: a flash-class ENT
+#     loop contains ZERO direct sends, so there is no frame left for it to emit
+#     behind the ledger's back.
+for loop in runStrobeEntertainment runPartyEntertainment runThunderstormEntertainment; do
+    body=$(hc_ent_loop "$loop")
+    hc_direct=$(echo "$body" | grep -c 'sendUniform(' || true)
+    [[ "$hc_direct" == "0" ]] \
+        || fail "slice2-r1" "$loop makes $hc_direct direct sendUniform( call(s) — every frame must go through emitGatedFrame(, or the ledger is measuring something other than the wire"
+    hc_gated=$(echo "$body" | grep -c 'emitGatedFrame(' || true)
+    [[ "$hc_gated" -ge 1 ]] \
+        || fail "slice2-r1" "$loop makes no emitGatedFrame( call — a loop that streams nothing through the gate is not gated at all"
 done
+
+# The gate tracks the wire state it measures rises against, and RECORDS what it
+# emitted. Scoped to the struct body: a file-wide grep would be satisfied by the
+# prose above each fix, which necessarily names every symbol it explains.
+hc_gate_body=$(awk '/^        struct OnsetGate \{/,/^        \}$/' "$HC_BEAT" 2>/dev/null | grep -vE '^[[:space:]]*//' || true)
+[[ -n "$hc_gate_body" ]] || fail "slice2-r1" "BeatMath.FlashSafety.OnsetGate is gone from $HC_BEAT"
+for decl in 'var lastEmitted' 'var troughSinceOnset' 'var lastAdmittedBrightness' \
+            'func admit(frame' 'func isOnsetCandidate('; do
+    echo "$hc_gate_body" | grep -qF "$decl" \
+        || fail "slice2-r1" "OnsetGate no longer declares '$decl' — without the wire state and the trough the gate is back to measuring what the loop computed"
+done
+echo "$hc_gate_body" | grep -q 'lastEmitted = frame' \
+    || fail "slice2-r1" "OnsetGate.admit no longer RECORDS the frame it emitted — a gate that does not remember the wire cannot hold it"
+echo "$hc_gate_body" | grep -q 'min(troughSinceOnset,' \
+    || fail "slice2-r1" "OnsetGate no longer lowers troughSinceOnset toward the darkest EMITTED frame — a rise measured against the previous frame is a slew limit, and a 0.019/frame ramp walks straight past it (defect M3)"
+echo "$hc_gate_body" | grep -q 'FlashSafety.onsetRiseThreshold' \
+    || fail "slice2-r1" "OnsetGate's candidacy test no longer uses the shared onsetRiseThreshold"
+echo "$hc_gate_body" | grep -qE 'return[[:space:]]+\.hold\(' \
+    || fail "slice2-r1" "OnsetGate.admit never returns .hold — a refusal must yield the frame already on the wire, not a level the caller invents"
+
+# The ledger decides AND records in one critical section. Two calls would let the
+# other loop instance alive during the un-awaited cancel window interleave a frame
+# between them, and the trough would then belong to neither loop.
+hc_ledger_body=$(awk '/^        final class OnsetLedger/,/^        \}$/' "$HC_BEAT" 2>/dev/null | grep -vE '^[[:space:]]*//' || true)
+echo "$hc_ledger_body" | grep -q 'return gate.admit(frame:' \
+    || fail "slice2-r1" "OnsetLedger no longer forwards admit( to its gate under the lock"
+
 echo "$hc_storm_body" | grep -q 'FlashSafety.clampedInt(' \
     || fail "slice2-r1" "runThunderstormEntertainment no longer converts its param-box Ints through the finite-guarded FlashSafety.clampedInt"
 
@@ -1432,8 +1527,12 @@ done
 
 # (c) The pre-funnel per-view verdicts stay gone. Comment-only lines are
 #     stripped so the history above the fix may keep naming them.
+#     The comment filter is ANCHORED (Guard 13(a)'s form). The unanchored
+#     `:[[:space:]]*//` matched any line containing "://", so a single trailing
+#     `// https://…` comment on a real `showsEntOnlyHint` line hid it from the
+#     guard entirely.
 r2_legacy=$(grep -nE 'showsEntOnlyHint|param\.entOnly' "$R2_BOARD" 2>/dev/null \
-    | grep -vE ':[[:space:]]*//' || true)
+    | grep -vE '^[0-9]+:[[:space:]]*//' || true)
 if [[ -n "$r2_legacy" ]]; then
     fail "slice2-r2" $'a per-view availability verdict is back in '"$R2_BOARD"$' — the funnel is no longer the only answer:\n'"$r2_legacy"
 fi
@@ -1481,7 +1580,16 @@ done
 r2_color_body=$(r2_board_fn colorSection)
 echo "$r2_color_body" | grep -qF 'onApply: interactive' \
     || fail "slice2-r2" "colorSection no longer swaps in a no-op onApply when the control is not interactive — a dead colour editor's own gestures could still commit"
-echo "$r2_color_body" | grep -qF 'isInteractive: interactive' \
+#     Scoped to the StageColorEditor CALL. A bare body-wide grep for
+#     `isInteractive: interactive` was satisfied by the sibling
+#     `colorExpansionBinding(controlID, isInteractive: interactive)` line, so
+#     mutating the editor's own argument to `isInteractive: true` passed green.
+#     The editor's argument list is the region between its call and the
+#     `isExpanded:` argument that follows it.
+r2_color_editor=$(echo "$r2_color_body" | awk '/StageColorEditor\(/,/isExpanded:/')
+[[ -n "$r2_color_editor" ]] \
+    || fail "slice2-r2" "the StageColorEditor( call is gone from colorSection — the funnel's verdict has nothing to reach"
+echo "$r2_color_editor" | grep -qF 'isInteractive: interactive' \
     || fail "slice2-r2" "colorSection no longer hands the funnel's verdict to StageColorEditor as isInteractive: — a dead editor would still expand and drag"
 
 # (i) The knob/fader floor. `.disabled()` on the wrapper is the gate; inside
@@ -1527,6 +1635,49 @@ r2_snapshot=$(awk '/func targetSnapshot\(for effect/,/^    }$/' "$R2_WIRING" 2>/
 [[ -n "$r2_snapshot" ]] || fail "slice2-r2" "targetSnapshot(for:) not found in $R2_WIRING"
 echo "$r2_snapshot" | grep -qF 'capabilityInventoryGeneration' \
     || fail "slice2-r2" "targetSnapshot(for:) no longer reads the orchestrator's capabilityInventoryGeneration — the snapshot would depend on nothing observable and the 'checking what these lights support' note would never clear"
+
+# (k) The funnel's answer is APPLIED, not merely fetched.
+#
+#     Every check above pins that the funnel is CALLED. None of them pins that
+#     anything is done with what it returns: a body could resolve, compute
+#     `interactive`/`opacity`/`note` into unused lets, and render a fully live
+#     control — every guard green, the defect back. These three are the exact
+#     places the answer reaches the screen, and they are checked per body so
+#     one renderer keeping them cannot mask the other losing them.
+#
+#     `.opacity(opacity)` is deliberately the variable, not a literal: the
+#     shape that regressed was `.opacity(0.45)`-style constants and whole-VStack
+#     dimming that swallowed the note with the control.
+R2_BROWSER="HueHome/UI/Studio/StudioLookBrowserView.swift"
+[[ -f "$R2_BROWSER" ]] || fail "slice2-r2" "$R2_BROWSER is missing — the details-panel half of the funnel rule is unenforceable"
+
+r2_applied_check() {
+    local body="$1" where="$2"
+    echo "$body" | grep -qF '.disabled(!interactive)' \
+        || fail "slice2-r2" "$where does not disable on the funnel's verdict (.disabled(!interactive)) — a control the funnel refused would still take gestures"
+    echo "$body" | grep -qF '.opacity(opacity)' \
+        || fail "slice2-r2" "$where does not apply the funnel's opacity (.opacity(opacity)) — an unproven or staged control would look exactly like a fully live one"
+    echo "$body" | grep -qF 'if let note' \
+        || fail "slice2-r2" "$where does not render the funnel's note (if let note) — the control would go quiet about why it cannot do what it looks like it does"
+}
+
+for fn in boardControl colorSection; do
+    r2_applied_check "$(r2_board_fn "$fn")" "$R2_BOARD:$fn"
+done
+
+r2_setup_body=$(awk '/private func setupSliderRow\(/,/^    }$/' "$R2_BROWSER" 2>/dev/null \
+    | grep -vE '^[[:space:]]*//' || true)
+[[ -n "$r2_setup_body" ]] \
+    || fail "slice2-r2" "setupSliderRow not found in $R2_BROWSER — the details-panel hero slider is where the fixed defects were re-committed once already"
+echo "$r2_setup_body" | grep -qF 'StudioBoardAvailability.resolve(' \
+    || fail "slice2-r2" "setupSliderRow no longer resolves through StudioBoardAvailability.resolve( — the panel's live sliders would answer availability for themselves again"
+echo "$r2_setup_body" | grep -qF 'StudioBoardAvailability.rendersControl(' \
+    || fail "slice2-r2" "setupSliderRow no longer gates on rendersControl( — a Hidden control would render present-but-dead"
+echo "$r2_setup_body" | grep -qF 'strategy: card.strategy' \
+    || fail "slice2-r2" "setupSliderRow no longer passes strategy: card.strategy — it would be reading the PRE-funnel overloads, which know nothing about isHardwareUnverified"
+echo "$r2_setup_body" | grep -qF 'guard interactive else { return }' \
+    || fail "slice2-r2" "setupSliderRow's StageSlider setter has no interactivity floor — StageSlider's track is a raw drag surface, so the wrapper's .disabled cannot be the only gate"
+r2_applied_check "$r2_setup_body" "$R2_BROWSER:setupSliderRow"
 
 # ──────────────────────────────────────────────────────────────
 

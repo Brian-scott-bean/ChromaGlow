@@ -831,6 +831,10 @@ final class StudioViewModel {
         // Cleared before the first await, so a double-tap finds nil.
         guard let request = areaChoiceRequest else { return }
         areaChoiceRequest = nil
+        // M5 (Preview Live), single exit: however this body ends — a stale
+        // choice, a missing orchestrator, an apply that refuses — an audition
+        // deferred behind this prompt that never started must not stay armed.
+        defer { releaseDeferredPreviewIfUnresolved() }
         guard let orchestrator else { return }
 
         guard case .plan(let fresh) = await orchestrator.exactTargetDecision(
@@ -971,6 +975,12 @@ final class StudioViewModel {
                 // kind, so the removal stays exact under the kind-aware key.
                 let key = StudioSelectionKey(bridgeID: savedBridgeID, groupID: room.id, kind: room.kind)
                 stopRunningScopes(forRowAt: key)
+                // The audition's row may be the one going away — say so, or
+                // "Put It Back" stays on screen offering an undo that would
+                // land on whatever takes this room next. (Spelled out here
+                // rather than funnelled through `removeRunningRow` because
+                // Guard 12(m) pins this literal removal to the fence above it.)
+                notePreviewRowRemoved(rowKey: key)
                 runningEffects.removeValue(forKey: key)
                 activeCompositionBoxes.removeValue(forKey: key)
             }
@@ -1020,6 +1030,9 @@ final class StudioViewModel {
             if fenceValid {
                 let key = StudioSelectionKey(bridgeID: failedBridgeID, groupID: room.id, kind: room.kind)
                 stopRunningScopes(forRowAt: key)
+                // Same as the arm above: the removal is also the withdrawal of
+                // any Preview Live restore fenced on this row.
+                notePreviewRowRemoved(rowKey: key)
                 runningEffects.removeValue(forKey: key)
                 activeCompositionBoxes.removeValue(forKey: key)
             }
@@ -1079,8 +1092,23 @@ final class StudioViewModel {
                orchestrator.presentationFenceHolds(fence) {
                 // The outcome carries bridge + room id but no kind — resolve
                 // the unique row and fail closed on a room/zone collision.
+                //
+                // KNOWN, PRE-EXISTING (L5): the two lookups fail closed
+                // independently, so a room and a zone sharing an id on this
+                // bridge can leave `runningKey` ambiguous (nil) while
+                // `activeCompositionBoxKey` still resolves a unique box — and
+                // the else-branch then removes a BOX with no ROW, leaving the
+                // editor's backing state gone under a row that still claims to
+                // be running. Recorded rather than changed here: making the
+                // box removal fail closed too would silently retain the box of
+                // a look whose bridge resources are provably gone, which is
+                // the worse of the two lies. The real fix is a kind-carrying
+                // outcome, which is an orchestrator-side change.
                 if let key = runningKey(bridgeID: bridgeID, groupID: roomID) {
                     stopRunningScopes(forRowAt: key)
+                    // The removal is also the withdrawal of any Preview Live
+                    // restore fenced on this row.
+                    notePreviewRowRemoved(rowKey: key)
                     runningEffects.removeValue(forKey: key)
                     activeCompositionBoxes.removeValue(forKey: key)
                 } else if let boxKey = activeCompositionBoxKey(bridgeID: bridgeID, groupID: roomID) {
@@ -1537,8 +1565,7 @@ final class StudioViewModel {
             // its scopes and pending sends first (a drag still in flight must
             // not land on a dead target), then remove it.
             stopRunningScopes(forRowAt: key)
-            notePreviewRowRemoved(rowKey: key)
-            runningEffects.removeValue(forKey: key)
+            removeRunningRow(at: key)
             // The orchestrator already raised the user-facing toast
             // (`controllerResumed`) and removed the Now-Playing entry; a second
             // sentence from here would say the same thing twice.
@@ -1608,7 +1635,7 @@ final class StudioViewModel {
         for (rowKey, effect) in runningEffects {
             guard let key = effect.recovered else { continue }
             if live[key] == nil || recoveredCountByRoomID[rowKey.groupID, default: 0] > 1 {
-                runningEffects.removeValue(forKey: rowKey)
+                removeRunningRow(at: rowKey)
             }
         }
 
@@ -1955,6 +1982,28 @@ final class StudioViewModel {
         return paramColor(for: card.id, paramID: paramID)
     }
 
+    /// The seed value ONLY when one actually exists — the same room rule as
+    /// `seedNumber`, without the catalog fallback.
+    ///
+    /// Warmth needs the difference. Its apply-time sentinel is "a value is
+    /// stored ⇒ the user set it", so a fallback would turn every card into one
+    /// that ships a mirek. It read `valueScopes.defaults` DIRECTLY, which made
+    /// it the one seed on this path that ignored the room rule: an apply onto
+    /// a room other than the selected one is supposed to read scope 1, and an
+    /// apply onto the selected room its live instance — warmth read scope 1
+    /// either way, so a live warmth edit did not survive a restart of the look
+    /// it was made on.
+    private func seedOptionalNumber(for card: StudioCard, paramID: String,
+                                    seedRoomIsSelected: Bool) -> Double? {
+        guard seedRoomIsSelected else {
+            return valueScopes.defaults(forCard: card.id).numbers[paramID]
+        }
+        if let effect = currentRoomEffect, effect.cardID == card.id, effect.recovered == nil {
+            return valueScopes.live(for: effect.identity).numbers[paramID]
+        }
+        return valueScopes.defaults(forCard: card.id).numbers[paramID]
+    }
+
     /// Read a param value for a specific card, falling back to the param's default.
     ///
     /// Selection-aware (Slice 2 production wiring): when the SELECTED room is
@@ -2134,7 +2183,8 @@ final class StudioViewModel {
         // firmware's default look.
         var mirek: Int? = nil
         if card.params.contains(where: { $0.id == "warmth" }),
-           let raw = valueScopes.defaults(forCard: card.id).numbers["warmth"] {
+           let raw = seedOptionalNumber(for: card, paramID: "warmth",
+                                        seedRoomIsSelected: seedRoomIsSelected) {
             mirek = Int(raw.rounded())
         }
         guard speed != nil || colorXY != nil || mirek != nil else { return v2Capable.map(\.id) }
@@ -3172,11 +3222,13 @@ final class StudioViewModel {
         generationCounter.bump(.stopped)
         bumpLiveValuesTick()
 
-        // R4C: the row being torn down IS the live Preview Live audition. One
-        // implementation of "the audition's row went away", shared with the
-        // two removal paths that never reach this function — see
-        // `notePreviewRowRemoved`.
-        notePreviewRowRemoved(rowKey: rowKey)
+        // R4C: "the audition's row went away" is announced at the REMOVAL, by
+        // `removeRunningRow(at:)` — not here. Saying it at the top of the stop
+        // was a claim this function had not yet made good on: a recovered
+        // animation the bridge refuses to stop returns below with its row
+        // intact, and a stop that loses the identity match at the tail leaves
+        // the REPLACEMENT's row standing. Both told the user their restore had
+        // been dropped while the row it was fenced on was still there.
         orchestrator.recordStopAudit(context, operation: .stopRequested,
                                      bridgeID: rowKey.bridgeID, roomID: roomID,
                                      cardOrEffectID: effect.cardID,
@@ -3199,7 +3251,7 @@ final class StudioViewModel {
             // function: a replacement that took this room while the stop was in
             // flight must keep its row.
             guard let current = runningEffects[rowKey], current.recovered == key else { return }
-            runningEffects.removeValue(forKey: rowKey)
+            removeRunningRow(at: rowKey)
             orchestrator.recordStopAudit(context, operation: .rowRemoved,
                                          bridgeID: rowKey.bridgeID, roomID: roomID,
                                          cardOrEffectID: current.cardID,
@@ -3273,7 +3325,7 @@ final class StudioViewModel {
         guard let current = runningEffects[rowKey],
               current.cardID == stoppingCardID,
               current.bridgeNativeOwnership == ownership else { return }
-        runningEffects.removeValue(forKey: rowKey)
+        removeRunningRow(at: rowKey)
         if runningEffects.isEmpty { sessionMemory.clearAll() }   // session over
         orchestrator.recordStopAudit(context, operation: .rowRemoved,
                                      bridgeID: rowKey.bridgeID, roomID: roomID,
@@ -3313,6 +3365,8 @@ final class StudioViewModel {
         // in flight finds nil and returns instead of stopping or starting twice.
         guard let prompt = entertainmentHandoffPrompt else { return }
         entertainmentHandoffPrompt = nil
+        // M5 (Preview Live), single exit — see `releaseDeferredPreviewIfUnresolved`.
+        defer { releaseDeferredPreviewIfUnresolved() }
         guard let orchestrator else { return }
 
         debugLog("[Handoff] Switching from '\(prompt.runningLookName)' to '\(prompt.requestedLookName)'")
@@ -3387,6 +3441,9 @@ final class StudioViewModel {
         // in flight finds nil and returns instead of stopping or starting twice.
         guard let request = studioHandoffRequest else { return }
         studioHandoffRequest = nil
+        // M5 (Preview Live), single exit — see `releaseDeferredPreviewIfUnresolved`.
+        // `.failed`, and a `.changedOwner` that re-presents, both end here.
+        defer { releaseDeferredPreviewIfUnresolved() }
         guard let orchestrator else { return }
 
         debugLog("[Handoff] Switching from '\(request.runningLookName)' to '\(request.requestedLookName)' on \(request.bridgeID)")
@@ -3449,8 +3506,7 @@ final class StudioViewModel {
         if let key = runningKey(bridgeID: request.owner.bridgeID,
                                 groupID: request.owner.roomID) {
             stopRunningScopes(forRowAt: key)
-            notePreviewRowRemoved(rowKey: key)
-            runningEffects.removeValue(forKey: key)
+            removeRunningRow(at: key)
         }
         orchestrator?.removeActiveEffect(
             bridgeID: request.owner.bridgeID, roomID: request.owner.roomID)
@@ -3570,6 +3626,10 @@ final class StudioViewModel {
         // twice.
         guard let request = foreignTakeoverRequest else { return }
         foreignTakeoverRequest = nil
+        // M5 (Preview Live), single exit — see `releaseDeferredPreviewIfUnresolved`.
+        // `.failed`, and a `.changedOwner` that cannot name one session, both
+        // end here without starting anything.
+        defer { releaseDeferredPreviewIfUnresolved() }
         guard let orchestrator else { return }
 
         let resolution = await orchestrator.resolveForeignTakeover(

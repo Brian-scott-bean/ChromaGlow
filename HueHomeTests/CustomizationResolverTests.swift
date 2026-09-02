@@ -175,8 +175,66 @@ final class CustomizationResolverTests: XCTestCase {
         XCTAssertNotEqual(unreadable.availability, unsupported.availability)
     }
 
+    /// UNKNOWN `.effectsV2` must not borrow the UNSUPPORTED answer.
+    ///
+    /// The old mapping sent both outcomes to `.effectsV2Unavailable`, whose
+    /// board copy is "THESE LIGHTS CAN'T CHANGE THIS WHILE RUNNING" — a
+    /// hardware refusal asserted on evidence we never read. On a cold snapshot
+    /// that made the Speed knob contradict the three controls beside it, which
+    /// correctly said we were still checking. Unknown must never read as a
+    /// refusal; `.effectsV2Unavailable` is now reachable from `unsupported`
+    /// alone.
+    func testUnknownEffectsV2StaysInTheUnknownFamily() {
+        func target(_ evidence: CapabilityEvidence) -> CustomizationTargetSnapshot {
+            CustomizationTargetSnapshot(
+                identity: identity(), totalLights: 3,
+                dimming: .all(total: 3), color: .all(total: 3),
+                colorTemperature: .all(total: 3), gradient: .all(total: 3),
+                effectsV2: CapabilityCoverage(supported: 0, total: 3, evidence: evidence),
+                entertainmentAvailable: .known, transport: .bridgeEffectV2, running: true)
+        }
+
+        for evidence in [CapabilityEvidence.unknown, .unreadable] {
+            let resolution = CustomizationResolver.resolve(
+                control: control("speed", requirement: .effectsV2), on: target(evidence))
+            guard case .unavailable(let reason, let remediation) = resolution.availability else {
+                return XCTFail("expected unavailable for \(evidence), got \(resolution.availability)")
+            }
+            XCTAssertTrue(reason == .capabilityUnknown || reason == .capabilityUnreadable,
+                          "\(evidence) must stay unknown, got \(reason)")
+            XCTAssertNotEqual(reason, .effectsV2Unavailable,
+                              "unknown must never read as the hardware refusal")
+            XCTAssertEqual(remediation, .retryCapabilityFetch,
+                           "an unknown answer offers a retry; a refusal does not")
+        }
+    }
+
+    /// …and the refusal itself is untouched: a bridge that ANSWERED and said
+    /// no still gets the reason whose copy names the hardware fact.
+    func testUnsupportedEffectsV2KeepsTheRefusalReason() {
+        let target = CustomizationTargetSnapshot(
+            identity: identity(), totalLights: 3,
+            dimming: .all(total: 3), color: .all(total: 3),
+            colorTemperature: .all(total: 3), gradient: .all(total: 3),
+            effectsV2: .none(total: 3),
+            entertainmentAvailable: .known, transport: .legacy, running: true)
+
+        let resolution = CustomizationResolver.resolve(
+            control: control("speed", requirement: .effectsV2), on: target)
+
+        XCTAssertEqual(resolution.availability,
+                       .unavailable(reason: .effectsV2Unavailable,
+                                    remediation: .addCapableLights))
+    }
+
     /// An effect/parameter pair that was never verified must never be exposed
     /// as supported — audit §7's "never guess".
+    ///
+    /// The reason stays `.effectParameterUnverified` (the audit's own word),
+    /// but the REMEDIATION is what separates the two flavours for the board:
+    /// unknown offers a retry and renders as checking, unsupported offers
+    /// nothing and renders as a plain "not available". Unknown must never
+    /// read as a refusal.
     func testUnverifiedEffectParameterIsUnknownNotSupported() {
         let resolution = CustomizationResolver.resolve(
             control: control("tint", requirement: .effectParameter(effect: "prism",

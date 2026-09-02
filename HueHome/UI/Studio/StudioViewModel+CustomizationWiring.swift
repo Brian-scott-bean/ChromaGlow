@@ -66,6 +66,21 @@ struct PendingStudioSend {
     var numbers: [String: Double] = [:]
     /// Colour params committed in this window, by param id.
     var colors: [String: Color] = [:]
+    /// Which member of the mutually exclusive grouped pair was committed LAST.
+    ///
+    /// `color` and `color_temperature` cannot share one CLIP grouped body, so
+    /// a window holding both emits two PUTs — and the SECOND one wins on the
+    /// wall. The emit order was hard-coded xy-then-mirek, so a user who picked
+    /// a colour after dragging warmth watched the older warmth overwrite the
+    /// colour they had just chosen. The window records the order it actually
+    /// saw, and the emit puts the later one last.
+    var lastColourLikeCommit: ColourLikeCommit? = nil
+
+    /// The two grouped fields that cannot travel together.
+    enum ColourLikeCommit: Hashable {
+        case xy      // base_color
+        case mirek   // warmth
+    }
 }
 
 extension StudioViewModel {
@@ -88,45 +103,40 @@ extension StudioViewModel {
         // debounced sends still pass the fence. A PLACE may hold exactly one
         // live scope; retiring the predecessors here makes that structural
         // rather than a property of the call order.
+        //
+        // The key the successor will occupy, computed before the sweep: a
+        // RESTART of the same look on the same place retires and re-registers
+        // the SAME target key.
+        let successorKey = RunningLookTargetKey(
+            bridgeID: room.bridgeID, groupID: room.id, kind: room.kind,
+            cardID: card.id, execution: execution)
         for retired in valueScopes.stopRunning(atPlace: room.bridgeID,
                                                groupID: room.id, kind: room.kind) {
             retirePendingSends(for: retired)
             // The retired scope's working memory (expansions, board position)
             // described a run that no longer exists. Leaving it behind hands
             // the successor another look's UI state under the same key.
+            //
+            // …unless the retired key IS the successor's. A same-card restart
+            // (a reset's re-apply, a handoff replay, a transport change that
+            // goes back through apply) is the same look on the same place, and
+            // wiping its board position and expansions there made the console
+            // jump under the user for a run that never changed.
+            guard retired != successorKey else { continue }
             sessionMemory.clear(for: retired)
         }
         let identity = RunningLookIdentity(
             bridgeID: room.bridgeID, groupID: room.id, kind: room.kind,
             cardID: card.id, execution: execution,
             generation: generationCounter.bump(.cardReplaced))
-        valueScopes.startRunning(identity, seed: startSeed(for: card))
+        // Sparse own-values over a base frozen from the card's persisted
+        // defaults right now — see `CustomizationValueScopes.frozenBases` for
+        // why a COMPLETE catalog seed closes the cross-instance leak at the
+        // cost of a worse one (every untouched param becoming a persisted
+        // "the user set this").
+        valueScopes.startRunning(identity)
         bumpLiveValuesTick()
         return identity
-    }
-
-    /// The COMPLETE value set a new instance starts from: every parameter the
-    /// card declares, materialized at its catalog default, with the card's
-    /// persisted next-start defaults layered on top.
-    ///
-    /// Completeness is the point (cross-instance leak). `live(for:)` layers an
-    /// instance's own values over the card's CURRENT defaults, and defaults
-    /// track last-used — so a param missing from the running set resolved
-    /// against whatever ANOTHER instance had written since. Materializing the
-    /// catalog default here means the running set answers for every control
-    /// from the first frame, and the layering can never reach past it.
-    ///
-    /// Colour params are deliberately NOT given a number: their catalog
-    /// `defaultValue` is a placeholder for a control that stores a colour, and
-    /// writing it into `numbers` would publish a meaningless value under a
-    /// colour param's id.
-    private func startSeed(for card: StudioCard) -> CustomizationValueSet<Color> {
-        var catalog = CustomizationValueSet<Color>()
-        for param in card.params {
-            if case .colorPicker = param.kind { continue }
-            catalog.numbers[param.id] = param.defaultValue
-        }
-        return valueScopes.defaults(forCard: card.id).layered(over: catalog)
     }
 
     /// Forget the scopes entry and cancel the pending send for the row at
@@ -376,6 +386,48 @@ extension StudioViewModel {
         _ = previewLive.cancelVerdict(live: nil)
         previewLiveRoom = nil
         setPreviewingLive(false)
+    }
+
+    /// The SINGLE exit rule for every confirmation body: when this path is
+    /// over and no question is left standing, a deferred audition that never
+    /// started must not be left armed.
+    ///
+    /// THE STRANDING THIS ENDS. An audition whose apply raised a prompt keeps
+    /// its snapshot deliberately (M5) — the confirmation is going to run the
+    /// apply for real. But a confirmation has many ways to end WITHOUT
+    /// starting anything: a stale area choice, an unreadable bridge, a
+    /// `.failed` resolution, an owner that changed into something the consent
+    /// did not name, or a replayed `applyCore` that simply refuses. Each of
+    /// those left `previewLive.isPreviewing` true with `previewIdentity` nil:
+    /// no UI can offer Keep It or Put It Back for a look that never started,
+    /// nothing consumes the machine, and every OTHER room's Preview Live is
+    /// then refused with "finish the preview in Room A first" — permanently.
+    ///
+    /// Called from a `defer` in each confirmation core, so a future early
+    /// return cannot reintroduce the leak by forgetting a call site.
+    ///
+    /// A standing prompt is exempt for the same reason it always was: the
+    /// question is still open, so the audition is still deferred, not refused.
+    func releaseDeferredPreviewIfUnresolved() {
+        guard !hasPendingLifecyclePrompt else { return }
+        discardArmedPreviewIfNotStarted()
+    }
+
+    /// The ONE way a running row leaves `runningEffects`.
+    ///
+    /// Every removal is also the disappearance of a row the live audition may
+    /// have been fenced on, and three of them (`applyBridgeSaveOutcome`'s two
+    /// arms, `applySavedLookStopOutcome`) forgot to say so — leaving "Put It
+    /// Back" offering an undo that would land on whatever took the room next.
+    /// Funnelling them through here makes the notification structural instead
+    /// of a thing each new removal site has to remember.
+    ///
+    /// The identity-matched guards stay at the CALL SITES: only they know
+    /// whether the row standing there is the one this path owns.
+    func removeRunningRow(at key: StudioSelectionKey) {
+        guard runningEffects[key] != nil else { return }
+        notePreviewRowRemoved(rowKey: key)
+        runningEffects.removeValue(forKey: key)
     }
 
     /// A row was REMOVED by a path that does not run `stopEffect`
@@ -781,10 +833,21 @@ extension StudioViewModel {
         if let inFlight = inFlightParamSends[targetKey] {
             pending.numbers.merge(inFlight.numbers) { mine, _ in mine }
             pending.colors.merge(inFlight.colors) { mine, _ in mine }
+            // A carried-forward field is OLDER than anything this window
+            // committed, so it only supplies the order when this window has
+            // not seen either member of the pair itself.
+            if pending.lastColourLikeCommit == nil {
+                pending.lastColourLikeCommit = inFlight.lastColourLikeCommit
+            }
         }
         pending.session = session
         if let number { pending.numbers[session.control.paramID] = number }
         if let color { pending.colors[session.control.paramID] = color }
+        switch session.control.paramID {
+        case "base_color": pending.lastColourLikeCommit = .xy
+        case "warmth":     pending.lastColourLikeCommit = .mirek
+        default: break
+        }
         pendingParamSends[targetKey] = pending
 
         paramSendTasks[targetKey]?.cancel()
@@ -898,8 +961,21 @@ extension StudioViewModel {
 
         let gate = orchestrator.commandGate(for: bridgeID)
         let brightness = groupedBrightness
-        let xy = groupedXY
-        let mirek = groupedMirek
+
+        // ORDER OF THE EXCLUSIVE PAIR. Two PUTs means the second one wins on
+        // the wall, so the later-COMMITTED field has to go second. The order
+        // used to be fixed (xy, then mirek), which meant a warmth value merely
+        // carried forward in the window overwrote the colour the user had just
+        // picked. `lastColourLikeCommit` is the window's record of what
+        // actually happened; absent one (only ever one field present), the
+        // order is irrelevant.
+        var exclusive: [(xy: (Double, Double)?, mirek: Int?)] = []
+        if let groupedXY { exclusive.append((xy: groupedXY, mirek: nil)) }
+        if let groupedMirek { exclusive.append((xy: nil, mirek: groupedMirek)) }
+        if exclusive.count == 2, window.lastColourLikeCommit == .xy {
+            exclusive.reverse()   // the colour was committed later — it lands last
+        }
+        let orderedExclusive = exclusive
         let identity = session.identity
         let targetKey = identity.targetKey
 
@@ -933,19 +1009,22 @@ extension StudioViewModel {
                 // bridge rejects a grouped body carrying both — `try?` then
                 // swallowed the rejection, so a window that changed colour AND
                 // warmth silently lost its brightness too. They travel as two
-                // PUTs: dimming + xy first, then the mirek.
-                guard await stillCurrent() else { return }
-                try? await api.setGroupedLightEffect(
-                    id: groupedLightID, on: nil,
-                    brightness: brightness, xy: xy,
-                    mirek: xy == nil ? mirek : nil,
-                    duration: transitionMs)
-                if xy != nil, let mirek {
+                // PUTs, in COMMIT ORDER, with the dimming riding the first.
+                if orderedExclusive.isEmpty {
                     guard await stillCurrent() else { return }
                     try? await api.setGroupedLightEffect(
                         id: groupedLightID, on: nil,
-                        brightness: nil, xy: nil, mirek: mirek,
+                        brightness: brightness, xy: nil, mirek: nil,
                         duration: transitionMs)
+                } else {
+                    for (index, field) in orderedExclusive.enumerated() {
+                        guard await stillCurrent() else { return }
+                        try? await api.setGroupedLightEffect(
+                            id: groupedLightID, on: nil,
+                            brightness: index == 0 ? brightness : nil,
+                            xy: field.xy, mirek: field.mirek,
+                            duration: transitionMs)
+                    }
                 }
             }
             if let v2Body {

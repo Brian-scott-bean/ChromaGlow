@@ -174,12 +174,43 @@ struct LookDetailsPanel: View {
         vm.isPreviewingLive && vm.previewAuditionCardID == card.id
     }
 
-    /// An audition is running, but for a DIFFERENT card than this panel shows.
+    /// An audition is running ON THIS ROOM, but for a DIFFERENT card than this
+    /// panel shows.
+    ///
+    /// The room scope is the whole point. Gating on `isPreviewingLive` and the
+    /// card id alone made ONE audition in ONE room replace Apply and PREVIEW
+    /// LIVE with "A preview of X is running" on every other card's panel —
+    /// including after the user selected a completely different room, where
+    /// starting this look is perfectly legal and nothing at all is auditioning.
+    /// The banner exists to explain a refusal, and the refusal
+    /// (`beginPreviewLive`'s armed-room check) is scoped to the audition's own
+    /// room; the banner must be scoped identically or it refuses things the
+    /// app will happily do.
     private var otherAuditionCardName: String? {
         guard vm.isPreviewingLive,
               let auditionID = vm.previewAuditionCardID,
-              auditionID != card.id else { return nil }
+              auditionID != card.id,
+              isSelectedRoomAuditioning else { return nil }
         return vm.lookCard(forID: auditionID)?.name ?? "another look"
+    }
+
+    /// Is the room this panel would act on the same room the audition armed?
+    ///
+    /// `StudioSelectionKey` is the EXACT place key — bridge + group + kind —
+    /// and it is the same comparison `beginPreviewLiveCore` uses to refuse a
+    /// chained cross-room audition. Matching it exactly is the point: the
+    /// banner exists to explain that refusal, so any looser test (id alone,
+    /// or a name) would refuse things the app will happily do, and any
+    /// stricter one would let the panel offer an apply the core then rejects.
+    ///
+    /// `previewLiveRoom` is `@ObservationIgnored`, so it is read only
+    /// alongside `isPreviewingLive` and `selectedRoom` — both observed, and
+    /// between them they change on every transition that can change this
+    /// answer (an audition starting or ending, and the room selection moving).
+    private var isSelectedRoomAuditioning: Bool {
+        guard let armed = vm.previewLiveRoom,
+              let selected = vm.selectedRoom else { return false }
+        return StudioSelectionKey(room: armed) == StudioSelectionKey(room: selected)
     }
 
     /// The row this panel's card is running on the SELECTED room, if it is the
@@ -203,6 +234,88 @@ struct LookDetailsPanel: View {
         return ids.compactMap { id in
             card.params.first { $0.id == id && {
                 if case .slider = $0.kind { return true }; return false }($0) }
+        }
+    }
+
+    /// ONE setup slider, through the SAME funnel the board uses.
+    ///
+    /// The first cut of this row re-committed every defect the board had just
+    /// fixed: it dimmed the whole `VStack` (note included, so the sentence
+    /// explaining a dead control rendered at ≈0.45 × 0.65), it read the
+    /// PRE-funnel `isInteractive(_:)`/`opacity(_:)` overloads — which know
+    /// nothing about `isHardwareUnverified`, so an unproven parameter looked
+    /// fully vouched-for — it never asked `rendersControl`, and its
+    /// `StageSlider` setter had no floor beneath the wrapper's `.disabled`.
+    ///
+    /// WHY NIL MEANS SOMETHING DIFFERENT HERE. On the board, a nil resolution
+    /// is "no proven send path" and must fail CLOSED. Here nil means the look
+    /// is not running on the selected room, so the slider edits a NEXT-START
+    /// DEFAULT — a write to persisted setup that touches no light and has no
+    /// hardware precondition at all. Feeding that case the funnel's
+    /// fail-closed nil answer would disable every bridge-native card's setup
+    /// slider for a reason that does not apply, so the funnel is consulted
+    /// exactly when it has something to say: while this card is live here.
+    @ViewBuilder
+    private func setupSliderRow(_ param: StudioParam,
+                                range: ClosedRange<Double>) -> some View {
+        let live = runningHere
+        let resolution = live.flatMap {
+            StudioBoardAvailability.resolve(card: card, param: param,
+                                            snapshot: vm.targetSnapshot(for: $0))
+        }
+        // Hidden means DO NOT RENDER (spec §17), here as on the board.
+        if StudioBoardAvailability.rendersControl(resolution) {
+            let note = live == nil ? nil
+                : StudioBoardAvailability.note(for: resolution,
+                                               strategy: card.strategy, isColor: false)
+            let interactive = live == nil ? true
+                : StudioBoardAvailability.isInteractive(resolution: resolution,
+                                                        strategy: card.strategy)
+            let opacity: Double = live == nil ? 1
+                : StudioBoardAvailability.opacity(resolution: resolution,
+                                                  strategy: card.strategy)
+            VStack(alignment: .leading, spacing: 3) {
+                StageSlider(
+                    title: param.label,
+                    value: Binding(
+                        get: { vm.paramValue(for: card.id, paramID: param.id,
+                                             default: param.defaultValue) },
+                        // Belt-and-braces beneath the wrapper's `.disabled`:
+                        // StageSlider's track is a raw drag surface and its
+                        // readout is an editable field, not a Button.
+                        set: { newValue in
+                            guard interactive else { return }
+                            vm.commitParam(cardID: card.id, paramID: param.id,
+                                           value: newValue)
+                        }
+                    ),
+                    range: range,
+                    format: param.format ?? { "\(Int($0.rounded()))" }
+                )
+                // The opacity belongs to the CONTROL, not to the pair.
+                .opacity(opacity)
+                if let note {
+                    Text(note)
+                        .font(HueFont.stageTag)
+                        .tracking(0.8)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.85)
+                        .foregroundStyle(HuePalette.amber.opacity(0.65))
+                        .accessibilityLabel("\(param.label): \(note)")
+                } else if live == nil {
+                    // Honest about WHICH value this edits: nothing is
+                    // running here, so the write is a next-start
+                    // default and changes no light right now.
+                    Text("SETS THE NEXT START")
+                        .font(HueFont.stageTag)
+                        .tracking(0.8)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.85)
+                        .foregroundStyle(.white.opacity(0.38))
+                        .accessibilityLabel("\(param.label): sets the value this look starts at")
+                }
+            }
+            .disabled(!interactive)
         }
     }
 
@@ -257,48 +370,7 @@ struct LookDetailsPanel: View {
             // moved while reaching nothing, with no note saying why.
             ForEach(setupParams) { param in
                 if case .slider(let min, let max) = param.kind {
-                    let resolution = runningHere.flatMap {
-                        StudioBoardAvailability.resolve(
-                            card: card, param: param,
-                            snapshot: vm.targetSnapshot(for: $0))
-                    }
-                    let note = resolution.flatMap {
-                        StudioBoardAvailability.note(for: $0, isColor: false)
-                    }
-                    let interactive = resolution
-                        .map { StudioBoardAvailability.isInteractive($0.availability) } ?? true
-                    let opacity = resolution
-                        .map { StudioBoardAvailability.opacity($0.availability) } ?? 1
-                    VStack(alignment: .leading, spacing: 3) {
-                        StageSlider(
-                            title: param.label,
-                            value: Binding(
-                                get: { vm.paramValue(for: card.id, paramID: param.id,
-                                                     default: param.defaultValue) },
-                                set: { vm.commitParam(cardID: card.id, paramID: param.id, value: $0) }
-                            ),
-                            range: min...max,
-                            format: param.format ?? { "\(Int($0.rounded()))" }
-                        )
-                        if let note {
-                            Text(note)
-                                .font(HueFont.stageTag)
-                                .tracking(0.8)
-                                .foregroundStyle(HuePalette.amber.opacity(0.65))
-                                .accessibilityLabel("\(param.label): \(note)")
-                        } else if runningHere == nil {
-                            // Honest about WHICH value this edits: nothing is
-                            // running here, so the write is a next-start
-                            // default and changes no light right now.
-                            Text("SETS THE NEXT START")
-                                .font(HueFont.stageTag)
-                                .tracking(0.8)
-                                .foregroundStyle(.white.opacity(0.38))
-                                .accessibilityLabel("\(param.label): sets the value this look starts at")
-                        }
-                    }
-                    .disabled(!interactive)
-                    .opacity(opacity)
+                    setupSliderRow(param, range: min...max)
                 }
             }
 

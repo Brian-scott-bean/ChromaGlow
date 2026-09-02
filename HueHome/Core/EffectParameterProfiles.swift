@@ -155,6 +155,12 @@ enum EffectParameterProfiles {
 
     /// Every hardware check this table still owes, for the on-device
     /// checklist. Deterministic order.
+    ///
+    /// SHAPE LOCK: `Scripts/generate_capability_matrix.py` parses this literal
+    /// with a regex that expects `("paramID", …)` rows inside a `[ … ]`, so the
+    /// tuple shape is load-bearing beyond Swift. Scope lives in
+    /// `groupedFallbackOnlyChecks` beside it rather than as a third tuple
+    /// element for exactly that reason.
     static var pendingHardwareChecks: [(paramID: String, note: String)] {
         [
             ("brightness", "grouped light-state brightness during an active firmware effect — verify visible scaling per effect"),
@@ -163,4 +169,29 @@ enum EffectParameterProfiles {
             ("speed", "visible firmware response to live effects_v2 speed per effect and light model"),
         ]
     }
+
+    /// The paramIDs above, as a set — the SINGLE SOURCE OF TRUTH for "does
+    /// this parameter still owe a hardware check?".
+    ///
+    /// `StudioBoardAvailability` used to carry its own parallel list, which
+    /// drifted: it labelled `brightness` (via `.hardwarePending` evidence) and
+    /// the `base_color`/`warmth` grouped fallback, but silently omitted
+    /// `speed` — a check this table has owed all along, and the one control
+    /// that is the HERO knob on every bridge-native board.
+    static var pendingHardwareCheckParamIDs: Set<String> {
+        Set(pendingHardwareChecks.map(\.paramID))
+    }
+
+    /// Pending checks owed ONLY where the v1-only grouped light-state write
+    /// stands in for the per-light `effects_v2` path.
+    ///
+    /// These two ship a code-proven per-light v2 write — on a room whose
+    /// lights took `effects_v2` there is nothing left to verify. It is the
+    /// PRESERVED grouped xy/mirek fallback, used when the lights refused v2,
+    /// whose behaviour against a running firmware effect nobody has watched.
+    /// Every other pending check (`brightness`, `speed`) is owed everywhere.
+    ///
+    /// A subset of `pendingHardwareCheckParamIDs` by construction —
+    /// `StudioBoardAvailabilityTests` pins that the two agree.
+    static let groupedFallbackOnlyChecks: Set<String> = ["base_color", "warmth"]
 }

@@ -916,8 +916,706 @@ final class FlashSafetyTests: XCTestCase {
     }
 
     // ══════════════════════════════════════════════════════════════
+    // MARK: - The frame gate (second pass): the ledger measures the WIRE
+    // ══════════════════════════════════════════════════════════════
+    //
+    // Every hole the second pass found shares one cause: the ledger gated the
+    // transitions a loop COMPUTED and not the frames it EMITTED. `admit(frame:at:)`
+    // closes the category by asking one question of every frame that reaches the
+    // wire — is this brighter than the trough since the last admitted onset (or a
+    // palette step at a level a viewer can see)? — and answering with the frame to
+    // send, which for a refusal is the frame the bridge is ALREADY showing.
+
+    func testFrameGateAdmitsTheFirstFrameOfABridgesLife() {
+        // There is no last frame to hold, so the first frame must be emitted:
+        // refusing it would mean streaming nothing, and a paused DTLS stream lets
+        // the bridge fall back to its own light state mid-effect.
+        var gate = FS.OnsetGate()
+        XCTAssertNil(gate.lastEmitted)
+        let first = FS.WireFrame(x: 0.3127, y: 0.3290, brightness: 0.90)
+        let verdict = gate.admit(frame: first, at: 100.0)
+        XCTAssertEqual(verdict, .emit(first))
+        XCTAssertEqual(gate.lastEmitted, first)
+        XCTAssertEqual(gate.troughSinceOnset, 0.90)
+        // ...and STAMPED, because the unknown prior wire state reads as black and
+        // 0.90 out of black is a 0.90 rise. Without the stamp a two-frame run
+        // followed by a card switch realizes its first MEASURED rise 0.06 s later.
+        XCTAssertEqual(gate.lastOnset, 100.0)
+
+        // A first frame BELOW the threshold is not a rise out of black, so it is
+        // not stamped — the storm's 0.05 ambient must not delay its first strike.
+        var dim = FS.OnsetGate()
+        let ambient = FS.WireFrame(x: 0.1548, y: 0.1220, brightness: 0.05)
+        XCTAssertEqual(dim.admit(frame: ambient, at: 100.0), .emit(ambient))
+        XCTAssertNil(dim.lastOnset)
+        let strike = FS.WireFrame(x: 0.3127, y: 0.3290, brightness: 0.90)
+        XCTAssertEqual(dim.admit(frame: strike, at: 100.02), .emit(strike),
+                       "the first strike of a session is never delayed")
+        XCTAssertEqual(dim.lastOnset, 100.02)
+    }
+
+    func testFrameGateLetsFallsAndSubThresholdRisesThroughUngated() {
+        var gate = FS.OnsetGate()
+        _ = gate.admit(frame: FS.WireFrame(x: 0.3, y: 0.3, brightness: 1.0), at: 0)
+
+        // A fall passes and LOWERS the trough.
+        let dark = FS.WireFrame(x: 0.3, y: 0.3, brightness: 0.20)
+        XCTAssertEqual(gate.admit(frame: dark, at: 0.02), .emit(dark))
+        XCTAssertEqual(gate.troughSinceOnset, 0.20)
+
+        // A sub-threshold rise passes and does NOT raise the trough.
+        let nudge = FS.WireFrame(x: 0.3, y: 0.3, brightness: 0.29)
+        XCTAssertEqual(gate.admit(frame: nudge, at: 0.04), .emit(nudge))
+        XCTAssertEqual(gate.troughSinceOnset, 0.20,
+                       "the trough is the floor a rise is measured from — a rise cannot move it up")
+
+        // One more 0.09 nudge is only 0.09 from the frame before it, but 0.18
+        // from the trough — a candidate. That is defect M3, closed structurally.
+        let second = FS.WireFrame(x: 0.3, y: 0.3, brightness: 0.38)
+        XCTAssertEqual(gate.admit(frame: second, at: 0.06), .hold(nudge))
+    }
+
+    func testFrameGateHoldsTheLastEMITTEDFrameUntilThePeriodPasses() {
+        var gate = FS.OnsetGate()
+        let dark = FS.WireFrame(x: 0.64, y: 0.33, brightness: 0.0)
+        _ = gate.admit(frame: dark, at: 10.0)
+        let flash = FS.WireFrame(x: 0.64, y: 0.33, brightness: 1.0)
+        XCTAssertEqual(gate.admit(frame: flash, at: 10.02), .emit(flash))
+        XCTAssertEqual(gate.lastOnset, 10.02)
+
+        // Down and straight back up, 4 frames later.
+        _ = gate.admit(frame: dark, at: 10.04)
+        for n in 3...16 {
+            let t = 10.02 + Double(n) * fd
+            XCTAssertEqual(gate.admit(frame: flash, at: t), .hold(dark),
+                           "frame \(n): a refusal must repeat the frame ALREADY on the wire")
+        }
+        XCTAssertEqual(gate.admit(frame: flash, at: 10.02 + Double(minFrames) * fd),
+                       .emit(flash), "17 frames later it is admissible")
+
+        // The hold frame carries COLOUR as well as brightness (defect L1: the
+        // old hold used `lastColor?.x ?? color.x`, so a party palette step put
+        // the NEW colour on the wire while refusing the onset that step WAS).
+        var party = FS.OnsetGate()
+        let red = FS.WireFrame(x: 0.64, y: 0.33, brightness: 0.90)
+        _ = party.admit(frame: red, at: 20.0)
+        let blue = FS.WireFrame(x: 0.15, y: 0.06, brightness: 0.90)
+        XCTAssertEqual(party.admit(frame: blue, at: 20.02), .hold(red))
+        XCTAssertEqual(party.admit(frame: blue, at: 20.02).frame.x, 0.64)
+    }
+
+    func testFrameGateTreatsAPaletteStepAsAnOnsetButNotAColourFallToAmbient() {
+        // Party can step its palette at CONSTANT brightness (brightness ==
+        // min_brightness), which no rise rule can see. That step is an onset.
+        var party = FS.OnsetGate()
+        let red = FS.WireFrame(x: 0.64, y: 0.33, brightness: 0.30)
+        _ = party.admit(frame: red, at: 0)
+        let blue = FS.WireFrame(x: 0.15, y: 0.06, brightness: 0.30)
+        XCTAssertEqual(party.admit(frame: blue, at: 0.02), .hold(red))
+        XCTAssertEqual(party.admit(frame: blue, at: 0.34), .emit(blue))
+
+        // ...but a colour change BELOW the level of the onset already admitted is
+        // the decay side of that flash, not a new one. The storm's white
+        // afterglow giving way to its blue ambient must pass straight through, or
+        // every strike would hold its afterglow for 0.34 s.
+        var storm = FS.OnsetGate()
+        let flash = FS.WireFrame(x: 0.3127, y: 0.3290, brightness: 0.90)
+        _ = storm.admit(frame: flash, at: 0)
+        XCTAssertEqual(storm.lastAdmittedBrightness, 0.90)
+        let afterglow = FS.WireFrame(x: 0.3127, y: 0.3290, brightness: 0.36)
+        _ = storm.admit(frame: afterglow, at: 0.02)
+        let ambient = FS.WireFrame(x: 0.1548, y: 0.1220, brightness: 0.05)
+        XCTAssertEqual(storm.admit(frame: ambient, at: 0.04), .emit(ambient))
+
+        // The case the afterglow floor creates: with the afterglow floored at
+        // `max(0.4 × 0.50, 0.30)` the step to ambient is exactly LEVEL. A rule
+        // that compared against the previous FRAME would have called that a
+        // palette step and held it; comparing against the ADMITTED level (0.50)
+        // does not.
+        var floored = FS.OnsetGate()
+        let strike = FS.WireFrame(x: 0.3127, y: 0.3290, brightness: 0.50)
+        _ = floored.admit(frame: strike, at: 0)
+        let glow = FS.WireFrame(x: 0.3127, y: 0.3290, brightness: 0.30)
+        _ = floored.admit(frame: glow, at: 0.02)
+        let stormBlue = FS.WireFrame(x: 0.1548, y: 0.1220, brightness: 0.30)
+        XCTAssertEqual(floored.admit(frame: stormBlue, at: 0.04), .emit(stormBlue),
+                       "a level colour step below the admitted onset is decay, not an onset")
+
+        // A colour change below the visible level is not one either.
+        var off = FS.OnsetGate()
+        let black = FS.WireFrame(x: 0.64, y: 0.33, brightness: 0.0)
+        _ = off.admit(frame: black, at: 0)
+        let blackBlue = FS.WireFrame(x: 0.15, y: 0.06, brightness: 0.0)
+        XCTAssertEqual(off.admit(frame: blackBlue, at: 0.02), .emit(blackBlue))
+    }
+
+    func testFrameGateRefusesABackwardsOrNonFiniteTimeWithoutMovingTheWire() {
+        var gate = FS.OnsetGate()
+        let dark = FS.WireFrame(x: 0.3, y: 0.3, brightness: 0.0)
+        _ = gate.admit(frame: dark, at: 100.0)
+        let bright = FS.WireFrame(x: 0.3, y: 0.3, brightness: 1.0)
+        _ = gate.admit(frame: bright, at: 100.02)
+        _ = gate.admit(frame: dark, at: 100.04)
+
+        XCTAssertEqual(gate.admit(frame: bright, at: 99.0), .hold(dark),
+                       "a backwards sample is not a proven-safe interval")
+        XCTAssertEqual(gate.admit(frame: bright, at: .nan), .hold(dark))
+        XCTAssertEqual(gate.admit(frame: bright, at: .infinity), .hold(dark))
+        XCTAssertEqual(gate.lastOnset, 100.02, "the reference point may only ever move forward")
+        XCTAssertEqual(gate.lastEmitted, dark, "a refusal leaves the wire state alone")
+
+        // A non-finite BRIGHTNESS cannot poison the trough either: every NaN
+        // comparison is false, so a NaN trough would answer "not a rise" forever.
+        let poison = FS.WireFrame(x: .nan, y: .infinity, brightness: .nan)
+        XCTAssertEqual(poison.brightness, 0)
+        XCTAssertEqual(poison.x, 0.3127)
+        XCTAssertEqual(poison.y, 0.3290)
+    }
+
+    func testLedgerExposesTheWireStateItRecords() {
+        let ledger = FS.OnsetLedger()
+        XCTAssertNil(ledger.lastEmitted)
+        let f = FS.WireFrame(x: 0.3, y: 0.3, brightness: 0.4)
+        XCTAssertEqual(ledger.admit(frame: f, at: 1.0), .emit(f))
+        XCTAssertEqual(ledger.lastEmitted, f)
+        XCTAssertEqual(ledger.troughSinceOnset, 0.4)
+        let dim = FS.WireFrame(x: 0.3, y: 0.3, brightness: 0.1)
+        _ = ledger.admit(frame: dim, at: 1.02)
+        XCTAssertEqual(ledger.troughSinceOnset, 0.1)
+        XCTAssertEqual(ledger.admit(frame: f, at: 1.04), .hold(dim))
+    }
+
+    func testOnsetRiseThresholdIsTheWCAGTenPercentNotASlewLimit() {
+        XCTAssertEqual(FS.onsetRiseThreshold, 0.10, accuracy: 1e-15)
+        // The 2 % it replaces was a per-FRAME slew limit: at 50 fps a ramp just
+        // under it climbs 0.95 of full scale per second and was never a
+        // candidate at all (defect M3). The threshold is now measured from the
+        // trough, so no ramp rate can evade it.
+        XCTAssertGreaterThan(FS.onsetRiseThreshold, 0.019 * 5)
+        XCTAssertGreaterThan(FS.onsetColorDelta, 0.0)
+        XCTAssertLessThan(FS.onsetColorDelta, 0.13,
+                          "Party's closest palette pair must still read as a step")
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // MARK: - The second pass's scenarios, rendered frame by frame
+    // ══════════════════════════════════════════════════════════════
+    //
+    // Each of these runs the SAME loop model twice: once through the shipped
+    // pre-fix mechanism (`legacy…`, which gates computed transitions and
+    // assembles its own hold frames) and once through `WireModel`, which is a
+    // frame-for-frame mirror of `emitGatedFrame` / `emitOnsetFrame`. Both
+    // produce a list of EMITTED frames, and both are measured by the same
+    // `realizedOnsets`, which re-derives the WCAG rule from the wire alone and
+    // never asks either gate anything.
+
+    func testCrossRunMinBrightnessRaiseIsNotItselfAnUngatedRise() {
+        // Blocker B1. A run at min_brightness 0 is replaced by a run at
+        // min_brightness 50 (catalog 0…50, both legal). The old hold frame was
+        // `lastBri ?? minBri` and a fresh loop's `lastBri` is nil, so the frame
+        // streamed to REFUSE the new run's onset was itself 0.50 on the wire.
+        let legacy = legacyStrobeFreeRunAcrossARunBoundary(minA: 0.0, minB: 0.50)
+        XCTAssertLessThan(minimumGap(realizedOnsets(legacy)) ?? .infinity,
+                          FS.minOnsetLedgerPeriod,
+                          "B1 must be SHOWN on the pre-fix model, or this test proves nothing")
+
+        let model = WireModel()
+        modelStrobeFreeRun(model, cycles: 3, speed: 100, duty: 0.5, peak: 1.0, minBri: 0.0)
+        // ...and the card is stopped four frames into its DARK half, which is
+        // where the switch has to happen for the old hold frame to be a rise.
+        let plan = FS.StrobePlan.make(speed: 100, dutyCycle: 0.5)
+        model.emitOnset(1.0)
+        for _ in 1..<plan.onFrames { model.emit(1.0) }
+        model.emitOnset(0.0)
+        for _ in 1..<4 { model.emit(0.0) }
+        let switchFrame = model.frame
+        modelStrobeFreeRun(model, cycles: 4, speed: 100, duty: 0.5, peak: 1.0, minBri: 0.50)
+        let onsets = realizedOnsets(model.wire)
+        XCTAssertGreaterThan(onsets.count, 3, "the model must actually flash")
+        assertOnsetsRespectTheFloor(onsets, label: "B1 cross-run min_brightness 0 → 50")
+
+        // And concretely: the frame that REFUSES the new run's onset is the dark
+        // frame the bridge is already showing, not the new run's 0.50 floor.
+        XCTAssertEqual(model.wire[switchFrame - 1].frame.brightness, 0.0)
+        XCTAssertEqual(model.wire[switchFrame].frame.brightness, 0.0, accuracy: 1e-12,
+                       "the refusing frame must be the frame the bridge is already showing")
+    }
+
+    func testThunderstormAfterglowToAmbientRiseIsHeldNotStreamed() {
+        // H1. flash_intensity 50 and min_brightness 30 (both in range): the
+        // afterglow renders 0.4 × 0.50 = 0.20 and the very next ambient frame
+        // renders 0.30 — a +0.10 rise two frames after the strike. The old
+        // ambient-raise gate compared against the previous AMBIENT, not against
+        // the last EMITTED frame, so it could not see it.
+        let legacy = legacyStorm(strikes: 6, frequency: 1.0, flashIntensity: 0.50,
+                                 minBri: 0.30, flashFrames: 2, afterglowFrames: 1)
+        XCTAssertLessThan(minimumGap(realizedOnsets(legacy)) ?? .infinity,
+                          FS.minOnsetLedgerPeriod,
+                          "H1 must be SHOWN on the pre-fix model")
+
+        // The fix is in two parts, and only the first is load-bearing for
+        // safety. The ledger measures the wire, so it would HOLD that climb — but
+        // holding it costs the storm a second admitted onset per strike and
+        // halves its cadence. Flooring the afterglow at the ambient it returns to
+        // removes the climb instead, so a strike decays monotonically and the
+        // ledger has nothing to hold. The ledger remains the backstop.
+        let strikes = 8
+        let model = WireModel()
+        modelStorm(model, strikes: strikes, frequency: 1.0, flashIntensity: 0.50,
+                   minBri: 0.30, flashFrames: 2, afterglowFrames: 1)
+        let onsets = realizedOnsets(model.wire)
+        assertOnsetsRespectTheFloor(onsets, label: "H1 storm FI 50 / min 30 / afterglow 1")
+        XCTAssertEqual(onsets.count, strikes,
+                       "ONE admitted onset per strike — the return to ambient is no longer one")
+
+        // The afterglow never dips below the ambient it hands back to, so the
+        // whole strike is a monotone fall: 0.50 → 0.50 → 0.30 → 0.30…
+        let afterglowBri = max(0.50 * 0.4, 0.30)
+        XCTAssertEqual(afterglowBri, 0.30, accuracy: 1e-12)
+        XCTAssertEqual(model.wire.map(\.frame.brightness).min(), 0.30,
+                       "nothing on the wire is dimmer than the ambient level")
+        let strikeAt = model.wire.firstIndex { $0.frame.brightness >= 0.50 - 1e-12 }
+        XCTAssertNotNil(strikeAt)
+        if let k = strikeAt {
+            for n in (k + 1)..<min(k + minFrames, model.wire.count) {
+                XCTAssertLessThanOrEqual(model.wire[n].frame.brightness,
+                                         model.wire[n - 1].frame.brightness + 1e-12,
+                                         "frame \(n - k) after the strike is a CLIMB, not a decay")
+            }
+        }
+
+        // And the shipped default storm is untouched by the floor: 0.4 × 0.90 is
+        // already well above its 0.05 ambient.
+        let defaultStorm = WireModel()
+        modelStorm(defaultStorm, strikes: 6, frequency: 0.5, flashIntensity: 0.90,
+                   minBri: 0.05, flashFrames: 3, afterglowFrames: 1)
+        XCTAssertEqual(realizedOnsets(defaultStorm.wire).count, 6)
+        assertOnsetsRespectTheFloor(realizedOnsets(defaultStorm.wire), label: "default storm")
+    }
+
+    func testStrobeWithBrightnessBelowMinBrightnessGatesTheRisingOFFEdge() {
+        // H2. brightness 1 with min_brightness 50 (1…100 vs 0…50, both legal):
+        // the ON edge is a FALL and the OFF edge is the rise. The old gate
+        // stamped the ON edge — `onFrames` before the real rise — so a run at
+        // duty 90 followed by a run at duty 10 realized 0.08 s.
+        let legacy = legacyStrobeInvertedAcrossARunBoundary(dutyA: 0.9, dutyB: 0.1)
+        let legacyGap = minimumGap(realizedOnsets(legacy)) ?? .infinity
+        XCTAssertLessThan(legacyGap, FS.minOnsetLedgerPeriod,
+                          "H2 must be SHOWN on the pre-fix model")
+        XCTAssertLessThanOrEqual(legacyGap, 0.10 + 1e-12,
+                                 "the reported worst case is ~0.08 s")
+
+        let model = WireModel()
+        modelStrobeFreeRun(model, cycles: 3, speed: 100, duty: 0.9, peak: 0.01, minBri: 0.50)
+        modelStrobeFreeRun(model, cycles: 3, speed: 100, duty: 0.1, peak: 0.01, minBri: 0.50)
+        let onsets = realizedOnsets(model.wire)
+        XCTAssertGreaterThan(onsets.count, 2, "the inverted strobe must still flash")
+        assertOnsetsRespectTheFloor(onsets, label: "H2 inverted strobe, duty 90 → 10")
+    }
+
+    func testACumulativeRampNoPerFrameEpsilonCouldSeeIsGatedByTheTrough() {
+        // M3. 0.019 per frame never trips a 0.02 per-FRAME epsilon, and at 50 fps
+        // it is 0.95 of full scale per second. Measured from the trough it is a
+        // candidate within six frames, and the wire becomes a staircase.
+        let step = 0.019
+        XCTAssertLessThan(step, 0.02, "the ramp must be invisible to the epsilon it replaces")
+        let model = WireModel()
+        model.emit(0.0)
+        for k in 1...250 { model.emit(min(1.0, Double(k) * step)) }
+        let onsets = realizedOnsets(model.wire)
+        XCTAssertGreaterThan(onsets.count, 1, "the ramp must still be rendered, in steps")
+        assertOnsetsRespectTheFloor(onsets, label: "cumulative 0.019/frame ramp")
+
+        // The realized slew: at most one `onsetRiseThreshold` step per
+        // `minOnsetLedgerPeriod`, i.e. under 0.30 of full scale per second —
+        // against the 0.95 the same ramp used to realize.
+        let span = model.wire.last!.time - model.wire.first!.time
+        XCTAssertLessThanOrEqual(Double(onsets.count), span / FS.minOnsetLedgerPeriod + 1)
+    }
+
+    func testThunderstormDoesNotBlackOutOrStallOnItsFirstIteration() {
+        // M4. The old ambient-raise gate compared `minBri` against a nil
+        // `lastAmbientBri`, so EVERY start looked like a raise: the storm
+        // streamed hold frames at `lastAmbientBri ?? 0` — a literal blackout —
+        // and delayed its first strike behind them.
+        // On a CARD SWITCH the bridge's ledger already holds a recent onset, so
+        // the raise gate actually waits — and what it streamed while waiting was
+        // `lastAmbientBri ?? 0`: a full 17 frames of black.
+        let legacy = legacyStorm(strikes: 1, frequency: 0.5, flashIntensity: 0.90,
+                                 minBri: 0.05, flashFrames: 3, afterglowFrames: 1,
+                                 seedOnset: 0.0)
+        XCTAssertEqual(legacy.prefix { $0.frame.brightness == 0 }.count, minFrames,
+                       "the pre-fix storm really did open a card switch with 0.34 s of black")
+
+        let switched = WireModel()
+        modelStrobeFreeRun(switched, cycles: 2, speed: 100, duty: 0.5, peak: 1.0, minBri: 0.0)
+        let handoff = switched.frame
+        modelStorm(switched, strikes: 3, frequency: 0.5, flashIntensity: 0.90,
+                   minBri: 0.05, flashFrames: 3, afterglowFrames: 1)
+        XCTAssertEqual(switched.wire[handoff].frame.brightness, 0.05,
+                       "the storm's first frame after a switch is the ambient it asked for")
+        XCTAssertEqual(switched.wire[handoff...].prefix { $0.frame.brightness == 0 }.count, 0,
+                       "no blackout: 0.05 above a trough of 0 is not a candidate at all")
+        assertOnsetsRespectTheFloor(realizedOnsets(switched.wire), label: "M4 storm after a card switch")
+
+        // Cold start: the first frame is the ambient, and the first strike lands
+        // on the budget's own gap — 0.05 is below the threshold, so the very
+        // first frame of the bridge's life is not stamped either.
+        let model = WireModel()
+        modelStorm(model, strikes: 4, frequency: 0.5, flashIntensity: 0.90,
+                   minBri: 0.05, flashFrames: 3, afterglowFrames: 1)
+        XCTAssertEqual(model.wire.first?.frame.brightness, 0.05)
+        let requestedGap = FS.ThunderstormPlan.requestedGapFrames(frequency: 0.5)
+        XCTAssertEqual(model.wire.firstIndex { $0.frame.brightness >= 0.90 - 1e-12 }, requestedGap)
+        assertOnsetsRespectTheFloor(realizedOnsets(model.wire), label: "M4 storm cold start")
+    }
+
+    func testPartyFreeRunPaletteStepsStayAFloorApartAcrossARunBoundary() {
+        // L1 in situ: a card switch restarts the loop on a new palette colour,
+        // and the frames streamed while that step waits are the PREVIOUS colour
+        // at the PREVIOUS level.
+        let model = WireModel()
+        modelPartyFreeRun(model, cycles: 4, speed: 100, smoothness: 0.20,
+                          peak: 0.90, minBri: 0.05, startIndex: 0)
+        let switchFrame = model.frame
+        modelPartyFreeRun(model, cycles: 4, speed: 100, smoothness: 0.20,
+                          peak: 0.90, minBri: 0.05, startIndex: 3)
+        XCTAssertEqual(model.wire[switchFrame].frame.x,
+                       model.wire[switchFrame - 1].frame.x,
+                       "a refused palette step must not put the new colour on the wire")
+        assertOnsetsRespectTheFloor(realizedOnsets(model.wire), label: "L1 party run boundary")
+
+        // Constant brightness (peak == min) leaves the palette step as the ONLY
+        // onset there is — and it is still a floor apart.
+        let flat = WireModel()
+        modelPartyFreeRun(flat, cycles: 6, speed: 100, smoothness: 0.20,
+                          peak: 0.30, minBri: 0.30, startIndex: 0)
+        let steps = realizedPaletteSteps(flat.wire)
+        XCTAssertGreaterThan(steps.count, 2, "a flat party must still step its palette")
+        assertOnsetsRespectTheFloor(steps, label: "flat party palette steps")
+    }
+
+    func testSeededParamChurnThroughTheFrameGateNeverRealizesAFastOnset() {
+        // Everything at once, on one bridge, across run boundaries: strobe,
+        // party and the storm take turns on the SAME ledger while every param
+        // the second pass named is churned — including the inverted brightness
+        // ≤ min_brightness case and the H1 afterglow/ambient pair.
+        var rng = SeededGenerator(seed: 0x5EC0_4DEA)
+        let model = WireModel()
+        for _ in 0..<30 {
+            switch Int.random(in: 0...2, using: &rng) {
+            case 0:
+                modelStrobeFreeRun(model, cycles: Int.random(in: 1...3, using: &rng),
+                                   speed: Double.random(in: 0...100, using: &rng),
+                                   duty: Double.random(in: 0...1, using: &rng),
+                                   peak: Double.random(in: 0.01...1, using: &rng),
+                                   minBri: Double.random(in: 0...0.5, using: &rng))
+            case 1:
+                modelPartyFreeRun(model, cycles: Int.random(in: 1...3, using: &rng),
+                                  speed: Double.random(in: 0...100, using: &rng),
+                                  smoothness: Double.random(in: 0...1, using: &rng),
+                                  peak: Double.random(in: 0.01...1, using: &rng),
+                                  minBri: Double.random(in: 0...1, using: &rng),
+                                  startIndex: Int.random(in: 0...7, using: &rng))
+            default:
+                modelStorm(model, strikes: Int.random(in: 1...3, using: &rng),
+                           frequency: Double.random(in: 0...1, using: &rng),
+                           flashIntensity: Double.random(in: 0.01...1, using: &rng),
+                           minBri: Double.random(in: 0...0.5, using: &rng),
+                           flashFrames: Int.random(in: 1...8, using: &rng),
+                           afterglowFrames: Int.random(in: 0...3, using: &rng))
+            }
+        }
+        let onsets = realizedOnsets(model.wire)
+        XCTAssertGreaterThan(onsets.count, 20, "the churn must have produced onsets")
+        assertOnsetsRespectTheFloor(onsets, label: "cross-effect seeded churn on one bridge")
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // MARK: - BeatClock audio ingest (L3)
+    // ══════════════════════════════════════════════════════════════
+
+    @MainActor
+    func testAudioIngestClampsTheEstimateIntoTheLegalTempoWindow() {
+        // `ingest` assigned `estimate.bpm` raw while `tap()` and `driveFromTrack`
+        // both hold themselves to 20…300. Downstream, `BeatMath.cycleIndex`
+        // evaluates `Int(floor(...))` on a position derived from `60 / bpm`: a
+        // near-zero estimate makes that position enormous and the conversion
+        // TRAPS, on the render path, once per frame.
+        let fast = BeatClock()
+        fast.clear()
+        fast.ingest(estimate: TempoEstimate(bpm: 100_000, confidence: 1.0, lastBeatOffset: 0),
+                    endTime: 10.0)
+        XCTAssertEqual(fast.bpm, 300)
+
+        let slow = BeatClock()
+        slow.clear()
+        slow.ingest(estimate: TempoEstimate(bpm: 0.0001, confidence: 1.0, lastBeatOffset: 0),
+                    endTime: 10.0)
+        XCTAssertEqual(slow.bpm, 20)
+
+        // The follow-up path (already locked to audio) clamps too.
+        let follow = BeatClock()
+        follow.clear()
+        follow.ingest(estimate: TempoEstimate(bpm: 128, confidence: 1.0, lastBeatOffset: 0),
+                      endTime: 10.0)
+        XCTAssertEqual(follow.bpm, 128)
+        follow.ingest(estimate: TempoEstimate(bpm: 1e9, confidence: 1.0, lastBeatOffset: 0),
+                      endTime: 10.5)
+        XCTAssertEqual(follow.bpm, 300)
+
+        // And the value the loops actually consume can no longer trap.
+        let snap = BeatSnapshot(bpm: follow.bpm, beatEpoch: 0)
+        XCTAssertEqual(BeatMath.cycleIndex(at: 1.0, snapshot: snap, beatsPerCycle: 1), 5)
+        follow.clear()
+    }
+
+    // ══════════════════════════════════════════════════════════════
     // MARK: - Simulation helpers (pure; no clocks, no sleeps)
     // ══════════════════════════════════════════════════════════════
+
+    /// One frame as it reached the wire, with the grid time it reached it at.
+    struct Emission: Equatable {
+        let time: Double
+        let frame: BeatMath.FlashSafety.WireFrame
+    }
+
+    /// Pure mirror of `UnifiedOrchestrator.emitGatedFrame` / `emitOnsetFrame` —
+    /// the ONLY way any model below puts a frame on the wire, exactly as those
+    /// two are now the only way the orchestrator does. One 20 ms frame per call,
+    /// held or not.
+    final class WireModel {
+        private var gate = BeatMath.FlashSafety.OnsetGate()
+        private let fd = BeatMath.FlashSafety.entertainmentFrameDuration
+        private(set) var frame = 0
+        private(set) var wire: [Emission] = []
+
+        var time: Double { Double(frame) * fd }
+
+        /// `emitGatedFrame`. Returns true if the REQUESTED frame reached the wire.
+        @discardableResult
+        func emit(_ brightness: Double, x: Double = 0.3127, y: Double = 0.3290) -> Bool {
+            let verdict = gate.admit(
+                frame: BeatMath.FlashSafety.WireFrame(x: x, y: y, brightness: brightness),
+                at: time, minPeriod: BeatMath.FlashSafety.minOnsetLedgerPeriod)
+            wire.append(Emission(time: time, frame: verdict.frame))
+            frame += 1
+            return verdict.wasAdmitted
+        }
+
+        /// `emitOnsetFrame`: hold until the requested frame itself lands. The
+        /// production helper has no numeric bail-out; the model needs a finite
+        /// one only so a broken gate fails the test instead of hanging it.
+        func emitOnset(_ brightness: Double, x: Double = 0.3127, y: Double = 0.3290) {
+            for _ in 0..<(4 * BeatMath.FlashSafety.minCycleFrames()) {
+                if emit(brightness, x: x, y: y) { return }
+            }
+            XCTFail("emitOnsetFrame never landed — the gate must admit within a bounded wait")
+        }
+    }
+
+    /// Onsets a VIEWER would see, re-derived from the EMITTED frames alone.
+    ///
+    /// This asks no gate anything: it replays the frame list a model put on the
+    /// wire and applies the rule directly — a climb of at least 10 % of full
+    /// scale above the lowest level since the previous onset, or a palette step
+    /// at or above the level of that onset. If any mechanism ever realizes two of
+    /// those inside 0.34 s, this finds it whether or not that mechanism agreed
+    /// they were onsets, and it finds it on the pre-fix models too, which never
+    /// consult the frame gate at all.
+    private func onsetsOnTheWire(_ wire: [Emission]) -> (all: [Double], steps: [Double]) {
+        guard let first = wire.first else { return ([], []) }
+        var all: [Double] = []
+        var steps: [Double] = []
+        var trough = first.frame.brightness
+        var admitted = first.frame.brightness
+        var last = first.frame
+        for e in wire.dropFirst() {
+            let tol = FS.onsetComparisonTolerance
+            let rise = e.frame.brightness - trough >= FS.onsetRiseThreshold - tol
+            let step = e.frame.chromaDistance(to: last) > FS.onsetColorDelta
+                && e.frame.brightness >= FS.onsetVisibleBrightness
+                && e.frame.brightness >= admitted - tol
+            if rise || step {
+                all.append(e.time)
+                if step { steps.append(e.time) }
+                trough = e.frame.brightness
+                admitted = e.frame.brightness
+            } else {
+                trough = min(trough, e.frame.brightness)
+            }
+            last = e.frame
+        }
+        return (all, steps)
+    }
+
+    private func realizedOnsets(_ wire: [Emission]) -> [Double] { onsetsOnTheWire(wire).all }
+    private func realizedPaletteSteps(_ wire: [Emission]) -> [Double] { onsetsOnTheWire(wire).steps }
+
+    // ── Loop models: every frame through `WireModel`, nothing beside it ──
+
+    /// `runStrobeEntertainment`'s free-run branch.
+    private func modelStrobeFreeRun(_ w: WireModel, cycles: Int, speed: Double,
+                                    duty: Double, peak: Double, minBri: Double,
+                                    x: Double = 0.3127, y: Double = 0.3290) {
+        for _ in 0..<cycles {
+            let plan = FS.StrobePlan.make(speed: speed, dutyCycle: duty)
+            w.emitOnset(peak, x: x, y: y)
+            for _ in 1..<max(plan.onFrames, 1) { w.emit(peak, x: x, y: y) }
+            w.emitOnset(minBri, x: x, y: y)
+            for _ in 1..<max(plan.offFrames, 1) { w.emit(minBri, x: x, y: y) }
+        }
+    }
+
+    /// `runPartyEntertainment`'s free-run branch.
+    private func modelPartyFreeRun(_ w: WireModel, cycles: Int, speed: Double,
+                                   smoothness: Double, peak: Double, minBri: Double,
+                                   startIndex: Int) {
+        for c in 0..<cycles {
+            let plan = FS.PartyPlan.make(speed: speed, smoothness: smoothness)
+            let color = Self.partyPalette[(startIndex + c) % Self.partyPalette.count]
+            w.emitOnset(peak, x: color.x, y: color.y)
+            for _ in 1..<max(plan.holdFrames, 1) { w.emit(peak, x: color.x, y: color.y) }
+            for i in 0..<plan.fadeFrames {
+                let t = Double(i) / Double(plan.fadeFrames)
+                w.emit(peak + (minBri - peak) * t, x: color.x, y: color.y)
+            }
+        }
+    }
+
+    /// `runThunderstormEntertainment`, budget and all.
+    private func modelStorm(_ w: WireModel, strikes: Int, frequency: Double,
+                            flashIntensity: Double, minBri: Double,
+                            flashFrames: Int, afterglowFrames: Int) {
+        var budget = FS.ThunderstormPlan.Budget()
+        for _ in 0..<strikes {
+            for _ in 0..<budget.gapFrames(frequency: frequency) {
+                w.emit(minBri, x: Self.stormAmbient.x, y: Self.stormAmbient.y)
+                budget.noteAmbient()
+            }
+            var landed = false
+            var guardCount = 0
+            while !landed {
+                landed = w.emit(flashIntensity, x: Self.stormFlash.x, y: Self.stormFlash.y)
+                if !landed { budget.noteAmbient() }
+                guardCount += 1
+                if guardCount > 4 * minFrames { return XCTFail("the strike never landed") }
+            }
+            for _ in 1..<max(flashFrames, 1) {
+                w.emit(flashIntensity, x: Self.stormFlash.x, y: Self.stormFlash.y)
+            }
+            for _ in 0..<afterglowFrames {
+                w.emit(max(flashIntensity * 0.4, minBri), x: Self.stormFlash.x, y: Self.stormFlash.y)
+            }
+            budget.noteStrike(flashFrames: flashFrames, afterglowFrames: afterglowFrames)
+        }
+    }
+
+    static let partyPalette: [(x: Double, y: Double)] = [
+        (0.6400, 0.3300), (0.1500, 0.0600), (0.1700, 0.7000), (0.3200, 0.1500),
+        (0.4500, 0.4100), (0.5400, 0.2300), (0.1600, 0.2300), (0.5600, 0.4000),
+    ]
+    static let stormAmbient = (x: 0.1548, y: 0.1220)
+    static let stormFlash = (x: 0.3127, y: 0.3290)
+
+    // ── Pre-fix models: what the SHIPPED loops streamed ──
+    //
+    // These reproduce the mechanism the second pass indicted — a gate on the
+    // transition the loop COMPUTED, plus a hold frame the CALLER assembled — so
+    // each blocker is pinned as a measured failure rather than asserted in prose.
+
+    /// The old per-frame rise epsilon. Deleted from `FlashSafety`; kept here as a
+    /// literal because these models exist to reproduce code that no longer exists.
+    private static let legacyRiseEpsilon = 0.02
+
+    /// Two strobe runs on one bridge, the second raising `min_brightness` — the
+    /// pre-fix loop, hold frames included (blocker B1).
+    private func legacyStrobeFreeRunAcrossARunBoundary(minA: Double, minB: Double) -> [Emission] {
+        let ledger = FS.OnsetLedger()
+        var wire: [Emission] = []
+        var frame = 0
+        func send(_ bri: Double) {
+            wire.append(Emission(time: Double(frame) * fd,
+                                 frame: FS.WireFrame(x: 0.3127, y: 0.3290, brightness: bri)))
+            frame += 1
+        }
+        let plan = FS.StrobePlan.make(speed: 100, dutyCycle: 0.5)
+        for (runIndex, minBri) in [minA, minB].enumerated() {
+            var lastBri: Double?          // a NEW loop instance starts with none
+            for cycle in 0..<(runIndex == 0 ? 4 : 3) {
+                while !ledger.tryOnset(at: Double(frame) * fd) { send(lastBri ?? minBri) }
+                lastBri = 1.0
+                for _ in 0..<plan.onFrames { send(1.0) }
+                lastBri = minBri
+                // Run A is stopped four frames into its last dark half.
+                for _ in 0..<((runIndex == 0 && cycle == 3) ? 4 : plan.offFrames) { send(minBri) }
+            }
+        }
+        return wire
+    }
+
+    /// Two inverted-strobe runs (brightness ≤ min_brightness) at different duty
+    /// cycles — the pre-fix loop stamping the ON edge, which is the FALL (H2).
+    private func legacyStrobeInvertedAcrossARunBoundary(dutyA: Double, dutyB: Double) -> [Emission] {
+        let ledger = FS.OnsetLedger()
+        var wire: [Emission] = []
+        var frame = 0
+        func send(_ bri: Double) {
+            wire.append(Emission(time: Double(frame) * fd,
+                                 frame: FS.WireFrame(x: 0.3127, y: 0.3290, brightness: bri)))
+            frame += 1
+        }
+        for duty in [dutyA, dutyB] {
+            var lastBri: Double?
+            for _ in 0..<3 {
+                let plan = FS.StrobePlan.make(speed: 100, dutyCycle: duty)
+                while !ledger.tryOnset(at: Double(frame) * fd) { send(lastBri ?? 0.50) }
+                lastBri = 0.01
+                for _ in 0..<plan.onFrames { send(0.01) }
+                lastBri = 0.50
+                for _ in 0..<plan.offFrames { send(0.50) }
+            }
+        }
+        return wire
+    }
+
+    /// The pre-fix storm: an ambient-RAISE gate that compares against the
+    /// previous ambient (nil on the first iteration — the M4 blackout) and no
+    /// gate at all on the afterglow → ambient climb (H1).
+    private func legacyStorm(strikes: Int, frequency: Double, flashIntensity: Double,
+                             minBri: Double, flashFrames: Int, afterglowFrames: Int,
+                             seedOnset: Double? = nil) -> [Emission] {
+        let ledger = FS.OnsetLedger(lastOnset: seedOnset)
+        var budget = FS.ThunderstormPlan.Budget()
+        var lastAmbientBri: Double?
+        var wire: [Emission] = []
+        var frame = 0
+        func send(_ bri: Double, _ xy: (x: Double, y: Double)) {
+            wire.append(Emission(time: Double(frame) * fd,
+                                 frame: FS.WireFrame(x: xy.x, y: xy.y, brightness: bri)))
+            frame += 1
+        }
+        for _ in 0..<strikes {
+            if minBri > (lastAmbientBri ?? -1) + Self.legacyRiseEpsilon {
+                var held = 0
+                while !ledger.tryOnset(at: Double(frame) * fd) {
+                    send(lastAmbientBri ?? 0, Self.stormAmbient)
+                    held += 1
+                }
+                budget.noteAmbient(frames: held)
+            }
+            lastAmbientBri = minBri
+            for _ in 0..<budget.gapFrames(frequency: frequency) {
+                send(minBri, Self.stormAmbient)
+                budget.noteAmbient()
+            }
+            while !ledger.tryOnset(at: Double(frame) * fd) { send(minBri, Self.stormAmbient) }
+            for _ in 0..<flashFrames { send(flashIntensity, Self.stormFlash) }
+            for _ in 0..<afterglowFrames { send(flashIntensity * 0.4, Self.stormFlash) }
+            budget.noteStrike(flashFrames: flashFrames, afterglowFrames: afterglowFrames)
+        }
+        return wire
+    }
 
     /// Models `streamUntilOnsetAdmitted`: returns how many 20 ms hold frames a
     /// loop must stream from `frame` before the ledger admits an onset.
@@ -949,11 +1647,13 @@ final class FlashSafetyTests: XCTestCase {
     }
 
     /// Pure mirror of the beat branch of `runPartyEntertainment`, frame by frame
-    /// on the 20 ms grid. Returns every host time at which the RENDERED
-    /// brightness rose by more than `flashRiseEpsilon` — what a viewer sees, as
-    /// opposed to what the loop happens to call a gate on.
+    /// on the 20 ms grid. Returns every host time at which the EMITTED brightness
+    /// realized a WCAG rise — what a viewer sees, as opposed to what the loop
+    /// happens to call a gate on.
     ///
-    /// `riseGated: false` is the pre-fix loop (gate on cycle-index change only).
+    /// `riseGated: false` is the pre-fix loop (gate on cycle-index change only,
+    /// hold frame assembled by the caller); `riseGated: true` routes every frame
+    /// through the frame gate, exactly as the shipped loop now does.
     private func partyBeatRenderedRises(
         frames: Int,
         riseGated: Bool,
@@ -963,11 +1663,13 @@ final class FlashSafetyTests: XCTestCase {
         smoothnessAt: (Int) -> Double
     ) -> [Double] {
         let ledger = FS.OnsetLedger()
+        let model = WireModel()
+        var legacyWire: [Emission] = []
         var renderedIdx: Int?
+        var lastColor: (x: Double, y: Double)?
         var lastBri: Double?
-        var rises: [Double] = []
         var frame = 0
-        while frame < frames {
+        func brightness(_ frame: Int) -> (color: (x: Double, y: Double), bri: Double, idx: Int) {
             let snapshot = snapshotAt(frame)
             let smoothness = smoothnessAt(frame)
             let perCycle = BeatMath.wcagSafeBeatsPerCycle(requested: 1, bpm: snapshot.bpm,
@@ -982,25 +1684,41 @@ final class FlashSafetyTests: XCTestCase {
             } else {
                 bri = peakBri + (minBri - peakBri) * ((phase - hold) / max(smoothness, 0.001))
             }
-            let isRise = bri > (lastBri ?? -1) + FS.flashRiseEpsilon
-            let needsGate = riseGated ? (idx != renderedIdx || isRise) : (idx != renderedIdx)
-            if needsGate {
-                // `streamUntilOnsetAdmitted`: hold the last streamed frame and
-                // ask again next frame. A refusal is a delay, never a skip.
-                var held = 0
-                while !ledger.tryOnset(at: Double(frame + held) * fd,
-                                       minPeriod: FS.minOnsetLedgerPeriod) {
-                    held += 1
-                    if frame + held >= frames { return rises }
-                }
-                frame += held
-                renderedIdx = idx
+            let palette = Self.partyPalette
+            return (palette[((idx % palette.count) + palette.count) % palette.count], bri, idx)
+        }
+
+        if riseGated {
+            while model.frame < frames {
+                let f = brightness(model.frame)
+                model.emit(f.bri, x: f.color.x, y: f.color.y)
             }
-            if isRise { rises.append(Double(frame) * fd) }
-            lastBri = bri
+            return realizedOnsets(model.wire)
+        }
+
+        while frame < frames {
+            let f = brightness(frame)
+            // The SHIPPED pre-fix gate: the cycle index, and nothing else.
+            if f.idx != renderedIdx {
+                while !ledger.tryOnset(at: Double(frame) * fd) {
+                    legacyWire.append(Emission(
+                        time: Double(frame) * fd,
+                        frame: FS.WireFrame(x: lastColor?.x ?? f.color.x,
+                                            y: lastColor?.y ?? f.color.y,
+                                            brightness: lastBri ?? minBri)))
+                    frame += 1
+                    if frame >= frames { return realizedOnsets(legacyWire) }
+                }
+                renderedIdx = f.idx
+            }
+            legacyWire.append(Emission(time: Double(frame) * fd,
+                                       frame: FS.WireFrame(x: f.color.x, y: f.color.y,
+                                                           brightness: f.bri)))
+            lastColor = f.color
+            lastBri = f.bri
             frame += 1
         }
-        return rises
+        return realizedOnsets(legacyWire)
     }
 
     /// Pure mirror of the beat branch of `runStrobeEntertainment`.
@@ -1013,37 +1731,48 @@ final class FlashSafetyTests: XCTestCase {
         peakBri: Double,
         minBriAt: (Int) -> Double
     ) -> [Double] {
-        let ledger = FS.OnsetLedger()
         let perCycle = BeatMath.wcagSafeBeatsPerCycle(requested: 1, bpm: snapshot.bpm,
                                                       maxHz: FS.entertainmentMaxLockHz)
-        var isBright = false
-        var lastBri: Double?
-        var rises: [Double] = []
-        var frame = 0
-        while frame < frames {
-            let minBri = minBriAt(frame)
+        func level(_ frame: Int) -> Double {
             let phase = BeatMath.cyclePhase(at: Double(frame) * fd, snapshot: snapshot,
                                             beatsPerCycle: perCycle)
-            let wantsBright = phase < dutyCycle
-            let bri = wantsBright ? peakBri : minBri
-            let isRise = bri > (lastBri ?? -1) + FS.flashRiseEpsilon
-            let edge = wantsBright && !isBright
-            let needsGate = riseGated ? (edge || isRise) : edge
-            if needsGate {
-                var held = 0
-                while !ledger.tryOnset(at: Double(frame + held) * fd,
-                                       minPeriod: FS.minOnsetLedgerPeriod) {
-                    held += 1
-                    if frame + held >= frames { return rises }
+            return phase < dutyCycle ? peakBri : minBriAt(frame)
+        }
+        func wantsBright(_ frame: Int) -> Bool {
+            BeatMath.cyclePhase(at: Double(frame) * fd, snapshot: snapshot,
+                                beatsPerCycle: perCycle) < dutyCycle
+        }
+
+        if riseGated {
+            let model = WireModel()
+            while model.frame < frames { model.emit(level(model.frame)) }
+            return realizedOnsets(model.wire)
+        }
+
+        let ledger = FS.OnsetLedger()
+        var wire: [Emission] = []
+        var isBright = false
+        var lastBri: Double?
+        var frame = 0
+        while frame < frames {
+            let bri = level(frame)
+            let edge = wantsBright(frame) && !isBright
+            if edge {
+                while !ledger.tryOnset(at: Double(frame) * fd) {
+                    wire.append(Emission(time: Double(frame) * fd,
+                                         frame: FS.WireFrame(x: 0.3127, y: 0.3290,
+                                                             brightness: lastBri ?? minBriAt(frame))))
+                    frame += 1
+                    if frame >= frames { return realizedOnsets(wire) }
                 }
-                frame += held
             }
-            if isRise { rises.append(Double(frame) * fd) }
-            isBright = wantsBright
+            wire.append(Emission(time: Double(frame) * fd,
+                                 frame: FS.WireFrame(x: 0.3127, y: 0.3290, brightness: bri)))
+            isBright = wantsBright(frame)
             lastBri = bri
             frame += 1
         }
-        return rises
+        return realizedOnsets(wire)
     }
 
     /// Frame-index gaps between successive rising edges of `isBright`, sampled

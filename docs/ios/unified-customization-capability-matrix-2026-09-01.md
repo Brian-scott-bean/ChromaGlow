@@ -50,7 +50,7 @@ Consumers are proven by the engine-read allowlist in `StudioParamCatalogTests.te
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `party.speed` | Speed | slider | essential | yes | party engine loop (allowlisted) | Entertainment only | immediate | active while streaming / staged on Room REST |
 | `party.brightness` | Brightness | slider | essential |  | party engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
-| `party.color` | Flash Color | colorPicker | color |  | UnifiedOrchestrator.swift:8362,8486 | Entertainment + Room REST | immediate | active while running |
+| `party.color` | Flash Color | colorPicker | color |  | UnifiedOrchestrator.swift:8439,8535 | Entertainment + Room REST | immediate | active while running |
 | `party.min_brightness` | Fade Floor | slider | support | yes | party engine loop (allowlisted) | Entertainment only | immediate | active while streaming / staged on Room REST |
 | `party.smoothness` | Smoothness | slider | essential |  | party engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
 
@@ -60,7 +60,7 @@ Consumers are proven by the engine-read allowlist in `StudioParamCatalogTests.te
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `strobe.speed` | Speed | slider | essential | yes | strobe engine loop (allowlisted) | Entertainment only | immediate | active while streaming / staged on Room REST |
 | `strobe.brightness` | Brightness | slider | essential |  | strobe engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
-| `strobe.flash_color` | Flash Color | colorPicker | color | yes | UnifiedOrchestrator.swift:8194 | Entertainment only | immediate | active while streaming / staged on Room REST |
+| `strobe.flash_color` | Flash Color | colorPicker | color | yes | UnifiedOrchestrator.swift:8278 | Entertainment only | immediate | active while streaming / staged on Room REST |
 | `strobe.min_brightness` | Min Brightness | slider | support |  | strobe engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
 | `strobe.duty_cycle` | Duty Cycle | slider | support | yes | strobe engine loop (allowlisted) | Entertainment only | immediate | active while streaming / staged on Room REST |
 
@@ -70,8 +70,8 @@ Consumers are proven by the engine-read allowlist in `StudioParamCatalogTests.te
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `thunderstorm.frequency` | Storm Intensity | slider | essential |  | thunderstorm engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
 | `thunderstorm.flash_intensity` | Flash Brightness | slider | essential |  | thunderstorm engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
-| `thunderstorm.ambient_color` | Ambient Color | colorPicker | color |  | UnifiedOrchestrator.swift:8579,8596,8630,8677,8718 | Entertainment + Room REST | immediate | active while running |
-| `thunderstorm.flash_color` | Flash Color | colorPicker | color |  | UnifiedOrchestrator.swift:8650,8719 | Entertainment + Room REST | immediate | active while running |
+| `thunderstorm.ambient_color` | Ambient Color | colorPicker | color |  | UnifiedOrchestrator.swift:8631,8672,8777 | Entertainment + Room REST | immediate | active while running |
+| `thunderstorm.flash_color` | Flash Color | colorPicker | color |  | UnifiedOrchestrator.swift:8695,8778 | Entertainment + Room REST | immediate | active while running |
 | `thunderstorm.min_brightness` | Ambient Level | slider | support |  | thunderstorm engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
 | `thunderstorm.strike_rate` | Strike Chance | slider | support |  | thunderstorm engine loop (allowlisted) | Entertainment + Room REST | immediate | active while running |
 | `thunderstorm.flash_length` | Flash Length | slider | support | yes | thunderstorm engine loop (allowlisted) | Entertainment only | immediate | active while streaming / staged on Room REST |
@@ -97,100 +97,100 @@ Rows are backed by the audit-§7 verified parameter profile (`EffectParameterPro
 
 | Control ID | Label | Primitive | Tier | Streaming-only | Runtime consumer | Transport | Mutation | Availability |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `candle.brightness` | Brightness | slider | essential |  | performBridgeSend brightness case (grouped light-state write, not an effect parameter) | grouped Room REST | debounced | active send (hardware-pending: visible scaling during an active firmware effect) |
-| `candle.speed` | Flicker Rate | slider | essential |  | performBridgeSend speed case (code-proven, v2-only — no legacy branch) | per-light effects_v2 | debounced | active on effects_v2 lights / unavailable on legacy-only |
-| `candle.warmth` | Warmth | slider | color |  | performBridgeSend warmth case (code-proven per-light v2 mirek; grouped fallback preserved) | per-light effects_v2 / grouped mirek fallback | debounced | active on effects_v2 lights with readable mirek range / approximation on legacy (hardware-pending) |
-| `candle.base_color` | Base Color | colorPicker | color |  | performBridgeSend base_color case (code-proven per-light v2; grouped xy fallback preserved) | per-light effects_v2 / grouped xy fallback | debounced | active on effects_v2 lights / approximation on legacy (hardware-pending: fallback vs running effect) |
+| `candle.brightness` | Brightness | slider | essential |  | performBridgeSend brightness branch (grouped light-state write, not an effect parameter) | grouped Room REST | debounced | active send (hardware-pending: visible scaling during an active firmware effect) |
+| `candle.speed` | Flicker Rate | slider | essential |  | performBridgeSend speed branch (code-proven, v2-only — no legacy branch) | per-light effects_v2 | debounced | active on effects_v2 lights / unavailable on legacy-only |
+| `candle.warmth` | Warmth | slider | color |  | performBridgeSend warmth branch (code-proven per-light v2 mirek; grouped fallback preserved) | per-light effects_v2 / grouped mirek fallback | debounced | active on effects_v2 lights with readable mirek range / approximation on legacy (hardware-pending) |
+| `candle.base_color` | Base Color | colorPicker | color |  | performBridgeSend base_color branch (code-proven per-light v2; grouped xy fallback preserved) | per-light effects_v2 / grouped xy fallback | debounced | active on effects_v2 lights / approximation on legacy (hardware-pending: fallback vs running effect) |
 | `candle.transition` | Smoothness | segmented | support |  | shapes dynamics.duration of subsequent sends — sends nothing itself | local | nextWrite | active as a modifier of later writes |
 
 ### `fire`
 
 | Control ID | Label | Primitive | Tier | Streaming-only | Runtime consumer | Transport | Mutation | Availability |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `fire.brightness` | Brightness | slider | essential |  | performBridgeSend brightness case (grouped light-state write, not an effect parameter) | grouped Room REST | debounced | active send (hardware-pending: visible scaling during an active firmware effect) |
-| `fire.speed` | Flicker Rate | slider | essential |  | performBridgeSend speed case (code-proven, v2-only — no legacy branch) | per-light effects_v2 | debounced | active on effects_v2 lights / unavailable on legacy-only |
-| `fire.warmth` | Warmth | slider | color |  | performBridgeSend warmth case (code-proven per-light v2 mirek; grouped fallback preserved) | per-light effects_v2 / grouped mirek fallback | debounced | active on effects_v2 lights with readable mirek range / approximation on legacy (hardware-pending) |
-| `fire.base_color` | Base Color | colorPicker | color |  | performBridgeSend base_color case (code-proven per-light v2; grouped xy fallback preserved) | per-light effects_v2 / grouped xy fallback | debounced | active on effects_v2 lights / approximation on legacy (hardware-pending: fallback vs running effect) |
+| `fire.brightness` | Brightness | slider | essential |  | performBridgeSend brightness branch (grouped light-state write, not an effect parameter) | grouped Room REST | debounced | active send (hardware-pending: visible scaling during an active firmware effect) |
+| `fire.speed` | Flicker Rate | slider | essential |  | performBridgeSend speed branch (code-proven, v2-only — no legacy branch) | per-light effects_v2 | debounced | active on effects_v2 lights / unavailable on legacy-only |
+| `fire.warmth` | Warmth | slider | color |  | performBridgeSend warmth branch (code-proven per-light v2 mirek; grouped fallback preserved) | per-light effects_v2 / grouped mirek fallback | debounced | active on effects_v2 lights with readable mirek range / approximation on legacy (hardware-pending) |
+| `fire.base_color` | Base Color | colorPicker | color |  | performBridgeSend base_color branch (code-proven per-light v2; grouped xy fallback preserved) | per-light effects_v2 / grouped xy fallback | debounced | active on effects_v2 lights / approximation on legacy (hardware-pending: fallback vs running effect) |
 | `fire.transition` | Smoothness | segmented | support |  | shapes dynamics.duration of subsequent sends — sends nothing itself | local | nextWrite | active as a modifier of later writes |
 
 ### `sparkle`
 
 | Control ID | Label | Primitive | Tier | Streaming-only | Runtime consumer | Transport | Mutation | Availability |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `sparkle.brightness` | Brightness | slider | essential |  | performBridgeSend brightness case (grouped light-state write, not an effect parameter) | grouped Room REST | debounced | active send (hardware-pending: visible scaling during an active firmware effect) |
-| `sparkle.speed` | Twinkle Rate | slider | essential |  | performBridgeSend speed case (code-proven, v2-only — no legacy branch) | per-light effects_v2 | debounced | active on effects_v2 lights / unavailable on legacy-only |
-| `sparkle.base_color` | Base Color | colorPicker | color |  | performBridgeSend base_color case (code-proven per-light v2; grouped xy fallback preserved) | per-light effects_v2 / grouped xy fallback | debounced | active on effects_v2 lights / approximation on legacy (hardware-pending: fallback vs running effect) |
+| `sparkle.brightness` | Brightness | slider | essential |  | performBridgeSend brightness branch (grouped light-state write, not an effect parameter) | grouped Room REST | debounced | active send (hardware-pending: visible scaling during an active firmware effect) |
+| `sparkle.speed` | Twinkle Rate | slider | essential |  | performBridgeSend speed branch (code-proven, v2-only — no legacy branch) | per-light effects_v2 | debounced | active on effects_v2 lights / unavailable on legacy-only |
+| `sparkle.base_color` | Base Color | colorPicker | color |  | performBridgeSend base_color branch (code-proven per-light v2; grouped xy fallback preserved) | per-light effects_v2 / grouped xy fallback | debounced | active on effects_v2 lights / approximation on legacy (hardware-pending: fallback vs running effect) |
 | `sparkle.transition` | Smoothness | segmented | support |  | shapes dynamics.duration of subsequent sends — sends nothing itself | local | nextWrite | active as a modifier of later writes |
 
 ### `prism`
 
 | Control ID | Label | Primitive | Tier | Streaming-only | Runtime consumer | Transport | Mutation | Availability |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `prism.brightness` | Brightness | slider | essential |  | performBridgeSend brightness case (grouped light-state write, not an effect parameter) | grouped Room REST | debounced | active send (hardware-pending: visible scaling during an active firmware effect) |
-| `prism.speed` | Speed | slider | essential |  | performBridgeSend speed case (code-proven, v2-only — no legacy branch) | per-light effects_v2 | debounced | active on effects_v2 lights / unavailable on legacy-only |
+| `prism.brightness` | Brightness | slider | essential |  | performBridgeSend brightness branch (grouped light-state write, not an effect parameter) | grouped Room REST | debounced | active send (hardware-pending: visible scaling during an active firmware effect) |
+| `prism.speed` | Speed | slider | essential |  | performBridgeSend speed branch (code-proven, v2-only — no legacy branch) | per-light effects_v2 | debounced | active on effects_v2 lights / unavailable on legacy-only |
 | `prism.transition` | Smoothness | segmented | support |  | shapes dynamics.duration of subsequent sends — sends nothing itself | local | nextWrite | active as a modifier of later writes |
 
 ### `opal`
 
 | Control ID | Label | Primitive | Tier | Streaming-only | Runtime consumer | Transport | Mutation | Availability |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `opal.brightness` | Brightness | slider | essential |  | performBridgeSend brightness case (grouped light-state write, not an effect parameter) | grouped Room REST | debounced | active send (hardware-pending: visible scaling during an active firmware effect) |
-| `opal.speed` | Speed | slider | essential |  | performBridgeSend speed case (code-proven, v2-only — no legacy branch) | per-light effects_v2 | debounced | active on effects_v2 lights / unavailable on legacy-only |
-| `opal.warmth` | Warmth | slider | color |  | performBridgeSend warmth case (code-proven per-light v2 mirek; grouped fallback preserved) | per-light effects_v2 / grouped mirek fallback | debounced | active on effects_v2 lights with readable mirek range / approximation on legacy (hardware-pending) |
-| `opal.base_color` | Base Color | colorPicker | color |  | performBridgeSend base_color case (code-proven per-light v2; grouped xy fallback preserved) | per-light effects_v2 / grouped xy fallback | debounced | active on effects_v2 lights / approximation on legacy (hardware-pending: fallback vs running effect) |
+| `opal.brightness` | Brightness | slider | essential |  | performBridgeSend brightness branch (grouped light-state write, not an effect parameter) | grouped Room REST | debounced | active send (hardware-pending: visible scaling during an active firmware effect) |
+| `opal.speed` | Speed | slider | essential |  | performBridgeSend speed branch (code-proven, v2-only — no legacy branch) | per-light effects_v2 | debounced | active on effects_v2 lights / unavailable on legacy-only |
+| `opal.warmth` | Warmth | slider | color |  | performBridgeSend warmth branch (code-proven per-light v2 mirek; grouped fallback preserved) | per-light effects_v2 / grouped mirek fallback | debounced | active on effects_v2 lights with readable mirek range / approximation on legacy (hardware-pending) |
+| `opal.base_color` | Base Color | colorPicker | color |  | performBridgeSend base_color branch (code-proven per-light v2; grouped xy fallback preserved) | per-light effects_v2 / grouped xy fallback | debounced | active on effects_v2 lights / approximation on legacy (hardware-pending: fallback vs running effect) |
 | `opal.transition` | Smoothness | segmented | support |  | shapes dynamics.duration of subsequent sends — sends nothing itself | local | nextWrite | active as a modifier of later writes |
 
 ### `glisten`
 
 | Control ID | Label | Primitive | Tier | Streaming-only | Runtime consumer | Transport | Mutation | Availability |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `glisten.brightness` | Brightness | slider | essential |  | performBridgeSend brightness case (grouped light-state write, not an effect parameter) | grouped Room REST | debounced | active send (hardware-pending: visible scaling during an active firmware effect) |
-| `glisten.speed` | Speed | slider | essential |  | performBridgeSend speed case (code-proven, v2-only — no legacy branch) | per-light effects_v2 | debounced | active on effects_v2 lights / unavailable on legacy-only |
-| `glisten.base_color` | Base Color | colorPicker | color |  | performBridgeSend base_color case (code-proven per-light v2; grouped xy fallback preserved) | per-light effects_v2 / grouped xy fallback | debounced | active on effects_v2 lights / approximation on legacy (hardware-pending: fallback vs running effect) |
+| `glisten.brightness` | Brightness | slider | essential |  | performBridgeSend brightness branch (grouped light-state write, not an effect parameter) | grouped Room REST | debounced | active send (hardware-pending: visible scaling during an active firmware effect) |
+| `glisten.speed` | Speed | slider | essential |  | performBridgeSend speed branch (code-proven, v2-only — no legacy branch) | per-light effects_v2 | debounced | active on effects_v2 lights / unavailable on legacy-only |
+| `glisten.base_color` | Base Color | colorPicker | color |  | performBridgeSend base_color branch (code-proven per-light v2; grouped xy fallback preserved) | per-light effects_v2 / grouped xy fallback | debounced | active on effects_v2 lights / approximation on legacy (hardware-pending: fallback vs running effect) |
 | `glisten.transition` | Smoothness | segmented | support |  | shapes dynamics.duration of subsequent sends — sends nothing itself | local | nextWrite | active as a modifier of later writes |
 
 ### `cosmos`
 
 | Control ID | Label | Primitive | Tier | Streaming-only | Runtime consumer | Transport | Mutation | Availability |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `cosmos.brightness` | Brightness | slider | essential |  | performBridgeSend brightness case (grouped light-state write, not an effect parameter) | grouped Room REST | debounced | active send (hardware-pending: visible scaling during an active firmware effect) |
-| `cosmos.speed` | Speed | slider | essential |  | performBridgeSend speed case (code-proven, v2-only — no legacy branch) | per-light effects_v2 | debounced | active on effects_v2 lights / unavailable on legacy-only |
-| `cosmos.base_color` | Tint | colorPicker | color |  | performBridgeSend base_color case (code-proven per-light v2; grouped xy fallback preserved) | per-light effects_v2 / grouped xy fallback | debounced | active on effects_v2 lights / approximation on legacy (hardware-pending: fallback vs running effect) |
+| `cosmos.brightness` | Brightness | slider | essential |  | performBridgeSend brightness branch (grouped light-state write, not an effect parameter) | grouped Room REST | debounced | active send (hardware-pending: visible scaling during an active firmware effect) |
+| `cosmos.speed` | Speed | slider | essential |  | performBridgeSend speed branch (code-proven, v2-only — no legacy branch) | per-light effects_v2 | debounced | active on effects_v2 lights / unavailable on legacy-only |
+| `cosmos.base_color` | Tint | colorPicker | color |  | performBridgeSend base_color branch (code-proven per-light v2; grouped xy fallback preserved) | per-light effects_v2 / grouped xy fallback | debounced | active on effects_v2 lights / approximation on legacy (hardware-pending: fallback vs running effect) |
 | `cosmos.transition` | Smoothness | segmented | support |  | shapes dynamics.duration of subsequent sends — sends nothing itself | local | nextWrite | active as a modifier of later writes |
 
 ### `enchant`
 
 | Control ID | Label | Primitive | Tier | Streaming-only | Runtime consumer | Transport | Mutation | Availability |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `enchant.brightness` | Brightness | slider | essential |  | performBridgeSend brightness case (grouped light-state write, not an effect parameter) | grouped Room REST | debounced | active send (hardware-pending: visible scaling during an active firmware effect) |
-| `enchant.speed` | Speed | slider | essential |  | performBridgeSend speed case (code-proven, v2-only — no legacy branch) | per-light effects_v2 | debounced | active on effects_v2 lights / unavailable on legacy-only |
-| `enchant.base_color` | Tint | colorPicker | color |  | performBridgeSend base_color case (code-proven per-light v2; grouped xy fallback preserved) | per-light effects_v2 / grouped xy fallback | debounced | active on effects_v2 lights / approximation on legacy (hardware-pending: fallback vs running effect) |
+| `enchant.brightness` | Brightness | slider | essential |  | performBridgeSend brightness branch (grouped light-state write, not an effect parameter) | grouped Room REST | debounced | active send (hardware-pending: visible scaling during an active firmware effect) |
+| `enchant.speed` | Speed | slider | essential |  | performBridgeSend speed branch (code-proven, v2-only — no legacy branch) | per-light effects_v2 | debounced | active on effects_v2 lights / unavailable on legacy-only |
+| `enchant.base_color` | Tint | colorPicker | color |  | performBridgeSend base_color branch (code-proven per-light v2; grouped xy fallback preserved) | per-light effects_v2 / grouped xy fallback | debounced | active on effects_v2 lights / approximation on legacy (hardware-pending: fallback vs running effect) |
 | `enchant.transition` | Smoothness | segmented | support |  | shapes dynamics.duration of subsequent sends — sends nothing itself | local | nextWrite | active as a modifier of later writes |
 
 ### `sunbeam`
 
 | Control ID | Label | Primitive | Tier | Streaming-only | Runtime consumer | Transport | Mutation | Availability |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `sunbeam.brightness` | Brightness | slider | essential |  | performBridgeSend brightness case (grouped light-state write, not an effect parameter) | grouped Room REST | debounced | active send (hardware-pending: visible scaling during an active firmware effect) |
-| `sunbeam.speed` | Speed | slider | essential |  | performBridgeSend speed case (code-proven, v2-only — no legacy branch) | per-light effects_v2 | debounced | active on effects_v2 lights / unavailable on legacy-only |
-| `sunbeam.base_color` | Tint | colorPicker | color |  | performBridgeSend base_color case (code-proven per-light v2; grouped xy fallback preserved) | per-light effects_v2 / grouped xy fallback | debounced | active on effects_v2 lights / approximation on legacy (hardware-pending: fallback vs running effect) |
+| `sunbeam.brightness` | Brightness | slider | essential |  | performBridgeSend brightness branch (grouped light-state write, not an effect parameter) | grouped Room REST | debounced | active send (hardware-pending: visible scaling during an active firmware effect) |
+| `sunbeam.speed` | Speed | slider | essential |  | performBridgeSend speed branch (code-proven, v2-only — no legacy branch) | per-light effects_v2 | debounced | active on effects_v2 lights / unavailable on legacy-only |
+| `sunbeam.base_color` | Tint | colorPicker | color |  | performBridgeSend base_color branch (code-proven per-light v2; grouped xy fallback preserved) | per-light effects_v2 / grouped xy fallback | debounced | active on effects_v2 lights / approximation on legacy (hardware-pending: fallback vs running effect) |
 | `sunbeam.transition` | Smoothness | segmented | support |  | shapes dynamics.duration of subsequent sends — sends nothing itself | local | nextWrite | active as a modifier of later writes |
 
 ### `underwater`
 
 | Control ID | Label | Primitive | Tier | Streaming-only | Runtime consumer | Transport | Mutation | Availability |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `underwater.brightness` | Brightness | slider | essential |  | performBridgeSend brightness case (grouped light-state write, not an effect parameter) | grouped Room REST | debounced | active send (hardware-pending: visible scaling during an active firmware effect) |
-| `underwater.speed` | Speed | slider | essential |  | performBridgeSend speed case (code-proven, v2-only — no legacy branch) | per-light effects_v2 | debounced | active on effects_v2 lights / unavailable on legacy-only |
-| `underwater.base_color` | Tint | colorPicker | color |  | performBridgeSend base_color case (code-proven per-light v2; grouped xy fallback preserved) | per-light effects_v2 / grouped xy fallback | debounced | active on effects_v2 lights / approximation on legacy (hardware-pending: fallback vs running effect) |
+| `underwater.brightness` | Brightness | slider | essential |  | performBridgeSend brightness branch (grouped light-state write, not an effect parameter) | grouped Room REST | debounced | active send (hardware-pending: visible scaling during an active firmware effect) |
+| `underwater.speed` | Speed | slider | essential |  | performBridgeSend speed branch (code-proven, v2-only — no legacy branch) | per-light effects_v2 | debounced | active on effects_v2 lights / unavailable on legacy-only |
+| `underwater.base_color` | Tint | colorPicker | color |  | performBridgeSend base_color branch (code-proven per-light v2; grouped xy fallback preserved) | per-light effects_v2 / grouped xy fallback | debounced | active on effects_v2 lights / approximation on legacy (hardware-pending: fallback vs running effect) |
 | `underwater.transition` | Smoothness | segmented | support |  | shapes dynamics.duration of subsequent sends — sends nothing itself | local | nextWrite | active as a modifier of later writes |
 
 ### `colorloop`
 
 | Control ID | Label | Primitive | Tier | Streaming-only | Runtime consumer | Transport | Mutation | Availability |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `colorloop.brightness` | Brightness | slider | essential |  | performBridgeSend brightness case (grouped light-state write, not an effect parameter) | grouped Room REST | debounced | active send (hardware-pending: visible scaling during an active firmware effect) |
-| `colorloop.speed` | Speed | slider | essential |  | performBridgeSend speed case (code-proven, v2-only — no legacy branch) | per-light effects_v2 | debounced | active on effects_v2 lights / unavailable on legacy-only |
+| `colorloop.brightness` | Brightness | slider | essential |  | performBridgeSend brightness branch (grouped light-state write, not an effect parameter) | grouped Room REST | debounced | active send (hardware-pending: visible scaling during an active firmware effect) |
+| `colorloop.speed` | Speed | slider | essential |  | performBridgeSend speed branch (code-proven, v2-only — no legacy branch) | per-light effects_v2 | debounced | active on effects_v2 lights / unavailable on legacy-only |
 | `colorloop.transition` | Smoothness | segmented | support |  | shapes dynamics.duration of subsequent sends — sends nothing itself | local | nextWrite | active as a modifier of later writes |
 
 ---

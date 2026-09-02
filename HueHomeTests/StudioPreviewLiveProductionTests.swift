@@ -710,6 +710,121 @@ final class StudioPreviewLiveProductionTests: XCTestCase {
                        "…and nothing was touched")
     }
 
+    // ── H2: a confirmation that starts nothing must RELEASE the audition ──
+
+    /// A confirmation can end without starting anything: a `.failed`
+    /// resolution, an unreadable bridge, a stale area choice, an owner that
+    /// changed into something the consent did not name, or a replayed apply
+    /// that simply refuses. Every one of those left the deferred audition
+    /// ARMED — `previewLive.isPreviewing` true with no `previewIdentity` — so
+    /// no surface could offer Keep It or Put It Back, nothing consumed the
+    /// machine, and EVERY OTHER ROOM's Preview Live was refused with "finish
+    /// the preview in Room A first" for the rest of the session.
+    func testAConfirmationThatStartsNothingReleasesTheDeferredAudition() async throws {
+        let target = room()
+        vm.selectedRoom = target
+        let candle = try card("candle")
+        await vm.apply(candle, roomOverride: target, preferEntertainmentOverride: nil)
+        XCTAssertEqual(vm.runningEffect(for: target)?.cardID, "candle")
+
+        // A Composer session owns the bridge, so the app-driven audition asks
+        // instead of starting: it is DEFERRED, and keeps its snapshot.
+        orchestrator.testStageEntertainmentOwner(roomID: "room-composer", bridgeID: "bridge-a")
+        let ambient = try card("ambient")
+        await vm.beginPreviewLive(card: ambient)
+        XCTAssertNotNil(vm.entertainmentHandoffPrompt, "the audition is waiting")
+        XCTAssertTrue(vm.previewLive.isPreviewing, "…with its snapshot armed")
+        XCTAssertFalse(vm.isPreviewingLive, "…and nothing offered as undoable yet")
+
+        // The replay asks the SECOND question — a third party holds the area —
+        // and the user agrees to take it over. The takeover then fails: the
+        // bridge cannot be read.
+        vm.entertainmentHandoffPrompt = nil
+        vm.foreignTakeoverRequest = StudioViewModel.ForeignTakeoverRequest(
+            plan: EntertainmentTakeoverPlan(
+                bridgeID: "bridge-a", roomID: target.id,
+                config: EntertainmentConfig(id: "area-a", name: "Living", channels: []),
+                channelIDs: [0]),
+            foreignConfigID: "foreign-1",
+            card: ambient, room: target, preferEntertainmentOverride: nil)
+        orchestrator.injectForTesting(clients: [:])
+        vm.studioNotice = nil
+
+        await vm.confirmForeignTakeover()
+
+        XCTAssertNil(vm.foreignTakeoverRequest, "the request was consumed")
+        XCTAssertNotNil(vm.studioNotice, "the failure is SAID — never a silent no-op")
+        XCTAssertFalse(vm.previewLive.isPreviewing, """
+            nothing started, so the deferred audition is released rather than \
+            left armed with no way to resolve it
+            """)
+        XCTAssertNil(vm.previewLive.previewIdentity)
+        XCTAssertNil(vm.previewLiveRoom)
+        XCTAssertFalse(vm.isPreviewingLive)
+        XCTAssertEqual(vm.runningEffect(for: target)?.cardID, "candle",
+                       "…and the look that was there is untouched")
+
+        // The proof that matters to the user: another room can be auditioned.
+        orchestrator.injectForTesting(clients: ["bridge-a": bridge])
+        let other = room("room-b")
+        vm.selectedRoom = other
+        vm.studioNotice = nil
+        await vm.beginPreviewLive(card: candle)
+
+        XCTAssertNotEqual(vm.studioNotice?.message,
+                          PreviewLiveCopy.finishPreviewFirst(in: target.name),
+                          "no phantom audition is blocking the rest of the app")
+        XCTAssertEqual(vm.runningEffect(for: other)?.cardID, "candle",
+                       "…and the new audition genuinely started")
+        XCTAssertTrue(vm.isPreviewingLive)
+    }
+
+    // ── The restore copies values, it does not invent them ──────
+
+    /// "Put It Back" seeds the card's persisted defaults from the snapshot —
+    /// the copy-once idiom. It must copy only what the previous instance
+    /// ACTUALLY held.
+    ///
+    /// A running set materialized with every catalog parameter made this write
+    /// a stored value for every control the user never touched. Warmth is the
+    /// one that shows: its apply-time sentinel is "a stored default exists ⇒
+    /// the user set it", so one Preview Live cancel was enough to make every
+    /// later start of that card ship a mirek nobody chose.
+    func testARestoreDoesNotInventPersistedDefaultsForUntouchedParams() async throws {
+        let target = room()
+        vm.selectedRoom = target
+        vm.valueScopes.clearDefaults(forCard: "candle")
+        let candle = try card("candle")
+        await vm.apply(candle, roomOverride: target, preferEntertainmentOverride: nil)
+        XCTAssertEqual(vm.runningEffect(for: target)?.cardID, "candle")
+
+        // The user moves exactly ONE control on the running instance.
+        let session = try XCTUnwrap(vm.beginParamEdit(cardID: "candle", paramID: "speed"))
+        vm.updateParamEdit(session, value: 80)
+        vm.endParamEdit(session)
+        XCTAssertNil(vm.valueScopes.defaults(forCard: "candle").numbers["warmth"],
+                     "warmth was never touched, so nothing stores one yet")
+
+        let fire = try card("fire")
+        await vm.beginPreviewLive(card: fire)
+        XCTAssertEqual(vm.runningEffect(for: target)?.cardID, "fire", "the audition started")
+
+        await vm.cancelPreviewLive()
+
+        XCTAssertEqual(vm.runningEffect(for: target)?.cardID, "candle",
+                       "the previous look is back")
+        vm.selectedRoom = target
+        XCTAssertEqual(vm.paramValue(for: "candle", paramID: "speed", default: -1), 80,
+                       "…with the value the user actually set")
+        XCTAssertNil(vm.valueScopes.defaults(forCard: "candle").numbers["warmth"], """
+            …and the restore did not invent a warmth default on the way, which \
+            would make every later start of this card send a mirek the user \
+            never chose
+            """)
+        XCTAssertNil(vm.valueScopes.defaults(forCard: "candle").numbers["brightness"],
+                     "…nor any other control they never touched")
+    }
+
     // ── M5: the restore reproduces the OBSERVED transport ───────
 
     /// Source shape, because the defect is a value the spy cannot see: the

@@ -202,18 +202,33 @@ enum BeatMath {
         /// the gate exists to catch.
         static let onsetComparisonTolerance = 1e-9
 
-        /// How far the rendered brightness may climb before the climb counts as a
-        /// flash ONSET rather than a fade artefact (2% of full scale).
+        /// How far the RENDERED brightness may climb **above the trough** before
+        /// the climb is a flash ONSET: 10 % of full scale — the WCAG general-flash
+        /// threshold, stated as the relative luminance change it actually is.
         ///
-        /// A flash-class loop's onset is not "the cycle index changed" — it is
-        /// "the light got brighter". Anything that moves the cycle phase BACKWARDS
-        /// (a BeatClock epoch correction from `driveFromTrack`/`ingest`, which
-        /// lands 1–2×/s while a track is playing; a phase nudge) or moves the
-        /// hold/fade split FORWARD (dragging smoothness down) restores peak
-        /// brightness inside the SAME cycle index. Gating the index alone lets
-        /// that rise through ungated, and the genuine boundary milliseconds later
-        /// is then admitted on top of it.
-        static let flashRiseEpsilon = 0.02
+        /// This replaces `flashRiseEpsilon` (2 %), which was a per-FRAME slew
+        /// limit wearing a flash threshold's name. Comparing each frame only with
+        /// the frame before it means any ramp that climbs less than the epsilon
+        /// per frame is never a candidate at all: at 50 fps a 0.019/frame ramp is
+        /// 0.95 of full scale per second and passed straight through (defect M3).
+        /// The comparison is now against `troughSinceOnset` — the LOWEST level
+        /// emitted since the last admitted onset — so the question is "how far has
+        /// the light climbed since it was last dark", not "how fast is it climbing
+        /// this frame". Cumulative ramps are gated structurally, with no
+        /// slew-rate constant anywhere.
+        static let onsetRiseThreshold = 0.10
+
+        /// How far a frame's chromaticity must move (CIE xy Euclidean distance)
+        /// for the move to be a palette STEP rather than tint drift. Two orders
+        /// of magnitude below any step Party renders (its closest palette pair is
+        /// 0.13 apart) and an order above the per-frame wobble a live tint slider
+        /// produces, so it separates the two without a per-effect special case.
+        static let onsetColorDelta = 0.02
+
+        /// Below this rendered level a colour change is not something a viewer can
+        /// perceive as a flash, so it is not an onset candidate. A brightness RISE
+        /// is judged at every level — that is `onsetRiseThreshold`'s job.
+        static let onsetVisibleBrightness = 0.02
 
         /// Finite-guarded `Int(_: Double)` for a value read out of a live param
         /// box. `Int(Double.nan)`, `Int(.infinity)` and `Int(1e300)` all TRAP —
@@ -275,10 +290,97 @@ enum BeatMath {
         /// A refusal means DELAY (stream a hold frame and ask again), never
         /// "skip this flash" — skipping would change the look, delaying only
         /// moves it by ≤ one frame.
+        /// One frame exactly as it reaches the wire: the CIE xy and the
+        /// brightness a loop asked to stream.
+        ///
+        /// The gate measures onsets on THESE, because the frame is what a
+        /// photosensitive viewer perceives. A loop's own notion of an onset — a
+        /// duty edge, a cycle-index change, a palette step — is a statement about
+        /// what the loop COMPUTED, and a loop puts frames on the wire that none of
+        /// those describe: gate hold frames, afterglow frames, ambient frames, the
+        /// first frame of a brand-new run. Every one of those is a real light
+        /// level, and every one of them used to escape the gate.
+        struct WireFrame: Equatable {
+            let x: Double
+            let y: Double
+            let brightness: Double
+
+            /// Total: a non-finite coordinate resolves to D65 white and a
+            /// non-finite brightness to 0, so a corrupt param box can neither
+            /// trap here nor poison the trough with a NaN (every NaN comparison
+            /// is false, so a NaN trough would answer "not a rise" forever).
+            init(x: Double, y: Double, brightness: Double) {
+                self.x = x.isFinite ? x : 0.3127
+                self.y = y.isFinite ? y : 0.3290
+                self.brightness = brightness.isFinite ? min(max(brightness, 0), 1) : 0
+            }
+
+            /// CIE xy Euclidean distance — the palette-step measure.
+            func chromaDistance(to other: WireFrame) -> Double {
+                let dx = x - other.x, dy = y - other.y
+                return (dx * dx + dy * dy).squareRoot()
+            }
+        }
+
+        /// What the caller must put on the wire for the frame it asked for.
+        ///
+        /// `.hold` carries the LAST EMITTED frame — colour AND brightness — so a
+        /// refusal repeats exactly what the bridge is already showing. The old
+        /// hold frame was assembled by the caller from `lastBri ?? minBri`, and on
+        /// a loop's first gate `lastBri` was nil: after a run at min 0 was replaced
+        /// by a run at min_brightness 50, the very frame streamed to REFUSE an
+        /// onset was itself an ungated rise to 0.50 (blocker B1). A hold frame can
+        /// never be a rise if it is the frame that is already on the wire.
+        enum FrameVerdict: Equatable {
+            /// Stream the requested frame — it is not a candidate, or the ledger
+            /// admitted it.
+            case emit(WireFrame)
+            /// Stream this instead and ask again next frame. A refusal is a
+            /// DELAY, never a skip.
+            case hold(WireFrame)
+
+            /// The frame to send. The only value a caller needs.
+            var frame: WireFrame {
+                switch self {
+                case .emit(let f), .hold(let f): return f
+                }
+            }
+
+            var wasAdmitted: Bool {
+                if case .emit = self { return true }
+                return false
+            }
+        }
+
         struct OnsetGate {
             private(set) var lastOnset: Double?
 
-            init(lastOnset: Double? = nil) { self.lastOnset = lastOnset }
+            /// The last frame this gate put on the wire. `nil` only before the
+            /// very first frame of a bridge's life.
+            private(set) var lastEmitted: WireFrame?
+
+            /// The LOWEST brightness EMITTED since the last admitted onset — the
+            /// floor a rise is measured from, reset to the emitted level at each
+            /// admission. Tracking the trough (rather than the previous frame) is
+            /// what makes a slow cumulative ramp a candidate: the ramp is judged
+            /// against where the light last was, not against where it was 20 ms ago.
+            private(set) var troughSinceOnset: Double
+
+            /// The brightness of the frame at the last ADMITTED onset (or of the
+            /// first frame, before there has been one). A colour change below it
+            /// is the decay side of a flash that was already admitted — the
+            /// storm returning from its white afterglow to its blue ambient —
+            /// and is not a new onset. A colour change at or above it is a
+            /// palette STEP, which is what Party does at constant brightness
+            /// when `brightness == min_brightness`.
+            private(set) var lastAdmittedBrightness: Double
+
+            init(lastOnset: Double? = nil, lastEmitted: WireFrame? = nil) {
+                self.lastOnset = lastOnset
+                self.lastEmitted = lastEmitted
+                self.troughSinceOnset = lastEmitted?.brightness ?? 0
+                self.lastAdmittedBrightness = lastEmitted?.brightness ?? 0
+            }
 
             /// `t` is a monotonic host time (CACurrentMediaTime). A NaN/infinite
             /// time is refused outright — an unmeasurable interval is not a
@@ -306,6 +408,94 @@ enum BeatMath {
                 lastOnset = t
                 return true
             }
+
+            /// Is this frame an onset CANDIDATE against the wire state?
+            ///
+            /// Two ways in, and only two:
+            ///
+            ///  1. **A rise from the trough** of at least `onsetRiseThreshold`.
+            ///     Measured against the lowest level emitted since the last
+            ///     admitted onset, so it catches the frame-to-frame jump AND the
+            ///     ramp that accumulates the same climb over twenty frames.
+            ///  2. **A palette step**: the chromaticity moves further than
+            ///     `onsetColorDelta`, at a level a viewer can see, and at or
+            ///     above the level of the last ADMITTED onset. Party can step its
+            ///     palette at constant brightness (peak == min), which rule 1
+            ///     cannot see, and there the step IS the onset. The storm's
+            ///     return from its white flash colour to its blue ambient is the
+            ///     decay side of a flash the ledger already admitted — it happens
+            ///     at or below the strike's own level, never above it — so it is
+            ///     part of that flash and not a new one. Comparing against the
+            ///     admitted level rather than against the previous FRAME is what
+            ///     separates the two: with the afterglow floored at
+            ///     `max(0.4 × flash_intensity, min_brightness)` the storm's
+            ///     afterglow → ambient step is exactly level, which a
+            ///     previous-frame test would have called a step.
+            func isOnsetCandidate(_ frame: WireFrame) -> Bool {
+                guard let last = lastEmitted else { return false }
+                let tol = FlashSafety.onsetComparisonTolerance
+                if frame.brightness - troughSinceOnset >= FlashSafety.onsetRiseThreshold - tol {
+                    return true
+                }
+                return frame.chromaDistance(to: last) > FlashSafety.onsetColorDelta
+                    && frame.brightness >= FlashSafety.onsetVisibleBrightness
+                    && frame.brightness >= lastAdmittedBrightness - tol
+            }
+
+            /// The frame-level gate: what should go on the wire for `frame`?
+            ///
+            /// Non-candidates (falls, sub-threshold rises, unchanged frames) pass
+            /// straight through and update the wire state. A candidate is admitted
+            /// only if `tryOnset` allows it; otherwise the verdict is `.hold` of
+            /// the last emitted frame and nothing moves — the trough and the wire
+            /// state are already correct, because the frame being re-sent is the
+            /// one that set them.
+            ///
+            /// **The first frame of a bridge's life** is always emitted: there is
+            /// no last frame to hold, so refusing it would mean streaming nothing,
+            /// and a paused DTLS stream lets the bridge fall back to its own light
+            /// state mid-effect. It is STAMPED, though, if it is at or above the
+            /// threshold — the prior wire state is unknown, and the conservative
+            /// reading of "unknown" is black, which makes a 0.90 first frame a
+            /// 0.90 rise. Stamping costs at most one 0.34 s delay at the very
+            /// first frame after a bridge's ledger is created, and it closes the
+            /// hole the alternative leaves: a two-frame run followed by a card
+            /// switch would otherwise realize its first MEASURED rise 0.06 s after
+            /// its first emitted peak. A first frame below the threshold (the
+            /// storm's 0.05 ambient) is not stamped, so the first strike of a
+            /// session is never delayed.
+            mutating func admit(frame: WireFrame, at t: Double,
+                                minPeriod: Double = FlashSafety.minOnsetLedgerPeriod) -> FrameVerdict {
+                guard let last = lastEmitted else {
+                    if frame.brightness >= FlashSafety.onsetRiseThreshold
+                                            - FlashSafety.onsetComparisonTolerance {
+                        _ = tryOnset(at: t, minPeriod: minPeriod)
+                    }
+                    record(frame, resettingTrough: true)
+                    return .emit(frame)
+                }
+                guard isOnsetCandidate(frame) else {
+                    record(frame, resettingTrough: false)
+                    return .emit(frame)
+                }
+                guard tryOnset(at: t, minPeriod: minPeriod) else {
+                    return .hold(last)
+                }
+                record(frame, resettingTrough: true)
+                return .emit(frame)
+            }
+
+            /// Records what actually reached the wire. An admission re-bases the
+            /// trough to the emitted level (a further climb above the peak just
+            /// admitted is a NEW onset); anything else lowers it if the frame is
+            /// darker than the darkest frame so far.
+            private mutating func record(_ frame: WireFrame, resettingTrough: Bool) {
+                lastEmitted = frame
+                troughSinceOnset = resettingTrough
+                    ? frame.brightness
+                    : min(troughSinceOnset, frame.brightness)
+                if resettingTrough { lastAdmittedBrightness = frame.brightness }
+            }
         }
 
         /// Thread-safe, reference-typed ledger (mirrors `BeatBindingBox`): one
@@ -324,10 +514,39 @@ enum BeatMath {
                 return gate.lastOnset
             }
 
+            /// The last frame this bridge put on the wire.
+            var lastEmitted: WireFrame? {
+                lock.lock(); defer { lock.unlock() }
+                return gate.lastEmitted
+            }
+
+            /// The lowest brightness emitted since the last admitted onset.
+            var troughSinceOnset: Double {
+                lock.lock(); defer { lock.unlock() }
+                return gate.troughSinceOnset
+            }
+
+            /// The brightness of the frame at the last admitted onset.
+            var lastAdmittedBrightness: Double {
+                lock.lock(); defer { lock.unlock() }
+                return gate.lastAdmittedBrightness
+            }
+
             func tryOnset(at t: Double,
                           minPeriod: Double = FlashSafety.minOnsetLedgerPeriod) -> Bool {
                 lock.lock(); defer { lock.unlock() }
                 return gate.tryOnset(at: t, minPeriod: minPeriod)
+            }
+
+            /// Decide AND record in one critical section. Two calls (ask, then
+            /// note what was sent) would leave a window in which the other loop
+            /// instance alive during the un-awaited cancel window could interleave
+            /// its own frame between them, and the trough this gate measures rises
+            /// from would then belong to neither loop.
+            func admit(frame: WireFrame, at t: Double,
+                       minPeriod: Double = FlashSafety.minOnsetLedgerPeriod) -> FrameVerdict {
+                lock.lock(); defer { lock.unlock() }
+                return gate.admit(frame: frame, at: t, minPeriod: minPeriod)
             }
         }
 

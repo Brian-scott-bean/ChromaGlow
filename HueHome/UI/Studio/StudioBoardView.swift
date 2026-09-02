@@ -153,6 +153,13 @@ struct StudioBoardView: View {
                         Text(note)
                             .font(HueFont.stageTag)
                             .tracking(0.8)
+                            // The caption is a caption. Uncapped, the capability
+                            // copy wrapped to four-plus lines under a knob in a
+                            // three-column grid and became the loudest thing on
+                            // the board; two lines with a small scale floor keeps
+                            // it legible without letting it take over.
+                            .lineLimit(2)
+                            .minimumScaleFactor(0.85)
                             .foregroundStyle(HuePalette.amber.opacity(0.65))
                             .accessibilityLabel("\(param.label): \(note)")
                     }
@@ -244,6 +251,8 @@ struct StudioBoardView: View {
                             Text(note)
                                 .font(HueFont.stageTag)
                                 .tracking(0.8)
+                                .lineLimit(2)
+                                .minimumScaleFactor(0.85)
                                 .foregroundStyle(HuePalette.amber.opacity(0.65))
                                 .accessibilityLabel("\(param.label): \(note)")
                         }
