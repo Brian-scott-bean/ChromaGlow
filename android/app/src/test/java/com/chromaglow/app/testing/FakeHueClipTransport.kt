@@ -55,6 +55,9 @@ class FakeHueClipTransport(
     var getCount = 0
     var putCount = 0
 
+    /** When set, every GET suspends on it first (lets a test hold a load in flight). */
+    var getGate: CompletableDeferred<Unit>? = null
+
     fun puts(): List<WireRecord> = wire.filter { it.method == "PUT" }
 
     fun putsTo(id: ResourceId): List<WireRecord> = puts().filter { it.id == id }
@@ -77,6 +80,7 @@ class FakeHueClipTransport(
     override suspend fun getResources(type: ResourceType): ClipResult<ClipDocument> {
         getCount++
         wire += WireRecord("GET", type, null, null, now())
+        getGate?.await()
         return collections[type] ?: ClipResult.Ok(ClipDocument(emptyList()))
     }
 
