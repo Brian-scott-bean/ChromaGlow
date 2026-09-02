@@ -26,6 +26,8 @@ import androidx.compose.ui.unit.dp
 import com.chromaglow.app.core.identity.ResourceKey
 import com.chromaglow.app.core.session.GroupKind
 import com.chromaglow.app.ui.components.ConnectionStrip
+import com.chromaglow.app.ui.components.FeedbackHost
+import com.chromaglow.app.ui.components.MutationFeedbackUi
 import com.chromaglow.app.ui.components.EmptyState
 import com.chromaglow.app.ui.components.GroupCard
 import com.chromaglow.app.ui.components.LocalReduceMotion
@@ -78,9 +80,12 @@ fun HomeScreen(
     onGroupPower: (GroupCardUi, Boolean) -> Unit,
     onGroupBrightness: (GroupCardUi, Int) -> Unit,
     modifier: Modifier = Modifier,
+    feedback: MutationFeedbackUi? = null,
+    onFeedbackShown: (MutationFeedbackUi) -> Unit = {},
 ) {
+    FeedbackHost(feedback = feedback, onShown = onFeedbackShown, modifier = modifier) {
     LazyColumn(
-        modifier = modifier
+        modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
             .testTag(HOME_LIST_TAG),
@@ -154,6 +159,7 @@ fun HomeScreen(
                 }
             }
         }
+    }
     }
 }
 

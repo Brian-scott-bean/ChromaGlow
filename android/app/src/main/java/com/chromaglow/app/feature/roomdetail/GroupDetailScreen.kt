@@ -32,6 +32,8 @@ import com.chromaglow.app.feature.home.GroupCardUi
 import com.chromaglow.app.ui.components.ColorMath
 import com.chromaglow.app.ui.components.ColorPad
 import com.chromaglow.app.ui.components.ConnectionStrip
+import com.chromaglow.app.ui.components.FeedbackHost
+import com.chromaglow.app.ui.components.MutationFeedbackUi
 import com.chromaglow.app.ui.components.EmptyState
 import com.chromaglow.app.ui.components.GroupCard
 import com.chromaglow.app.ui.components.LightCard
@@ -92,11 +94,14 @@ fun GroupDetailScreen(
     onLightPower: (LightCardUi, Boolean) -> Unit,
     onLightBrightness: (LightCardUi, Int) -> Unit,
     modifier: Modifier = Modifier,
+    feedback: MutationFeedbackUi? = null,
+    onFeedbackShown: (MutationFeedbackUi) -> Unit = {},
     onGroupColor: (CieXy) -> Unit = {},
     onGroupColorTemperature: (Int) -> Unit = {},
 ) {
+    FeedbackHost(feedback = feedback, onShown = onFeedbackShown, modifier = modifier) {
     LazyColumn(
-        modifier = modifier
+        modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
             .testTag(GROUP_DETAIL_LIST_TAG),
@@ -247,5 +252,6 @@ fun GroupDetailScreen(
                 onBrightnessCommit = { onLightBrightness(light, it) },
             )
         }
+    }
     }
 }
