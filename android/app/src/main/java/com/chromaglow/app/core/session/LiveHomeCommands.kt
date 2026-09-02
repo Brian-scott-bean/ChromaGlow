@@ -42,7 +42,7 @@ class LiveHomeCommands(
     override fun stopEffect(target: TargetRef) = dispatch(target) { LiveMutation.StopEffect(it) }
 
     override fun startTimedEffect(target: TargetRef, effect: TimedEffect, durationMillis: Long) =
-        dispatch(target) { LiveMutation.StartTimedEffect(it, effect, durationMillis.coerceIn(0L, LiveMutation.MAX_TIMED_EFFECT_MILLIS)) }
+        dispatch(target) { LiveMutation.StartTimedEffect(it, effect, durationMillis.coerceIn(LiveMutation.MIN_TIMED_EFFECT_MILLIS, LiveMutation.MAX_TIMED_EFFECT_MILLIS)) }
 
     override fun cancelTimedEffect(target: TargetRef) = dispatch(target) { LiveMutation.CancelTimedEffect(it) }
 
