@@ -2051,6 +2051,14 @@ hc_commit=$(echo "$hc_gate" | awk '/mutating func commit\(_ reservation: Reserva
     || fail "slice3-flash" "commit no longer ends the in-flight hold on both the rollback and the delivered branch"
 echo "$hc_commit" | grep -q 'if lastOnsetOwner == reservation.sequence { lastOnsetOwner = reservation.priorOwner }' \
     || fail "slice3-flash" "a rolled-back stamp still owns the clock — the sweep whose stamp is current again must regain it (round 5)"
+# Round 6 (HIGH): the rollback's in-flight clear sits ABOVE the interleaving
+# early exit, or a wholly failed sweep with a co-active DTLS loop leaves the
+# stamp in flight for the life of the process — every source held forever.
+hc_rb_clear=$(echo "$hc_commit" | grep -n 'if unrealizedStamp == reservation.sequence { unrealizedStamp = nil }' | head -1 | cut -d: -f1)
+hc_rb_owner=$(echo "$hc_commit" | grep -n 'if lastOnsetOwner == reservation.sequence { lastOnsetOwner = reservation.priorOwner }' | head -1 | cut -d: -f1)
+hc_rb_exit=$(echo "$hc_commit" | grep -n 'guard sequence == reservation.sequence else {' | head -1 | cut -d: -f1)
+[[ -n "$hc_rb_clear" && -n "$hc_rb_owner" && -n "$hc_rb_exit" && "$hc_rb_clear" -lt "$hc_rb_exit" && "$hc_rb_owner" -lt "$hc_rb_exit" ]] \
+    || fail "slice3-flash" "commit's rollback clears the in-flight stamp / restores the owner BELOW the interleaved-admit early exit — a leaked stamp holds every source forever (round 6, HIGH)"
 echo "$hc_gate" | grep -q 'guard var wire = wires\[source\], wire.lastEmitted != nil else { return }' \
     || fail "slice3-flash" "correctWire would resurrect a forgotten wire"
 echo "$hc_gate" | grep -q 'wire.trough = min(wire.trough, frame.relativeLuminance)' \
@@ -2061,7 +2069,7 @@ echo "$hc_gate" | grep -q 'forgetSequence = sequence' \
     || fail "slice3-flash" "OnsetGate.forgetWire no longer records the forget's sequence"
 
 # The REST model and its regression tests exist in the flash suite.
-for t in emitRESTComposition testPulseAtTwoFortyBpmRealizesAboveThreeHzOverUngatedREST testPulseAtTwoFortyBpmIsGatedToThreeHzOverREST testARestartInsideThePeriodCannotFlashOnceTheWireIsForgotten testAColdRefusalHoldsTheLastKnownChromaticity testALateRollbackCannotRestoreAWireAForgetPredates testAStaleSliceRiseIsMeasuredOnTheProjectedField testTheProjectedFieldIsWhatTheWireShows testTwoSourcesOnOneBridgeAreJudgedAgainstTheirOwnWires testEntertainmentAndRESTSourcesShareTheClockNotTheWire testARESTSweepsClockMovesToWhenItsLampsRose testASweepThatLostTheClockSendsNoFurtherBatch testAPartialDeliveryCorrectsTheSourceWire testAnUnrealizedStampHoldsEveryOtherSource; do
+for t in emitRESTComposition testPulseAtTwoFortyBpmRealizesAboveThreeHzOverUngatedREST testPulseAtTwoFortyBpmIsGatedToThreeHzOverREST testARestartInsideThePeriodCannotFlashOnceTheWireIsForgotten testAColdRefusalHoldsTheLastKnownChromaticity testALateRollbackCannotRestoreAWireAForgetPredates testAStaleSliceRiseIsMeasuredOnTheProjectedField testTheProjectedFieldIsWhatTheWireShows testTwoSourcesOnOneBridgeAreJudgedAgainstTheirOwnWires testEntertainmentAndRESTSourcesShareTheClockNotTheWire testARESTSweepsClockMovesToWhenItsLampsRose testASweepThatLostTheClockSendsNoFurtherBatch testAPartialDeliveryCorrectsTheSourceWire testAnUnrealizedStampHoldsEveryOtherSource testARollbackBehindAnInterleavedAdmitStillEndsTheInFlightHold; do
     grep -q "$t" HueHomeTests/FlashSafetyTests.swift \
         || fail "slice3-flash" "FlashSafetyTests no longer carries $t"
 done

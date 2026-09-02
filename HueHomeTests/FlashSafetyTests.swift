@@ -3464,14 +3464,16 @@ final class FlashSafetyTests: XCTestCase {
         let sweep = ledger.admit(frame: bright, source: rest, at: 0.00)
         XCTAssertTrue(sweep.wasAdmitted)
         XCTAssertTrue(ledger.noteRealized(sweep, at: 0.08))
-        // A stalled second batch; the Strobe's onset at 0.42 is legitimately
-        // 0.34 s after the lamps that HAVE risen — admitted, the clock is its.
+        // A second batch whose every PUT REPORTED failure (so it never opened
+        // the in-flight hold's realization and never moved the clock); the
+        // Strobe's onset at 0.42 is legitimately 0.34 s after the lamps that
+        // are known to have risen — admitted, the clock is its.
         r = ledger.admit(frame: bright, source: ent, at: 0.42)
         XCTAssertTrue(r.wasAdmitted)
         ledger.commit(r, delivered: true, at: 0.42)
-        // A batch already in flight lands at 0.45: 0.03 s after the Strobe's
-        // onset. Its rise IS recorded — the clock moves to 0.45 — and the
-        // sweep learns it no longer owns the clock.
+        // …but that batch's lamps DID rise (a lost response), and the sweep
+        // learns so at 0.45: the rise is recorded — the clock moves to 0.45,
+        // whoever owns it — and the sweep learns it no longer owns the clock.
         XCTAssertFalse(ledger.noteRealized(sweep, at: 0.45),
             "a sweep that lost the clock between batches went on lighting lamps inside the other onset's period")
         XCTAssertEqual(ledger.lastOnset ?? -1, 0.45, accuracy: 1e-9,
@@ -3544,6 +3546,42 @@ final class FlashSafetyTests: XCTestCase {
         let next = ledger.admit(frame: bright, source: rest, at: 1.67)
         XCTAssertTrue(next.wasAdmitted, "a rolled-back stamp must not hold the wire hostage")
         ledger.commit(next, delivered: true, at: 1.73)
+    }
+
+    /// Safety round 6 (HIGH): a rollback that finds a FOREIGN admit
+    /// interleaved since its reservation (the DTLS loop admits every 20 ms)
+    /// takes `commit`'s early exit and forgets the wire — and before round 6
+    /// it left the in-flight stamp set, so every source on the bridge was
+    /// refused every onset for the life of the process. The clear is keyed
+    /// on the reservation's own sequence and happens before the exit.
+    func testARollbackBehindAnInterleavedAdmitStillEndsTheInFlightHold() {
+        let white = (x: 0.3127, y: 0.3290)
+        let ledger = BeatMath.FlashSafety.OnsetLedger()
+        let ent = BeatMath.FlashSafety.entertainmentSource
+        let rest = BeatMath.FlashSafety.restSource(roomID: "room-r")
+        let dark = BeatMath.FlashSafety.WireFrame(x: white.x, y: white.y, brightness: 0)
+        let bright = BeatMath.FlashSafety.WireFrame(x: white.x, y: white.y, brightness: 1)
+        var r = ledger.admit(frame: dark, source: ent, at: -0.5); ledger.commit(r, delivered: true, at: -0.5)
+        r = ledger.admit(frame: dark, source: rest, at: -0.4); ledger.commit(r, delivered: true, at: -0.34)
+        // The room's rise is admitted (stamped, in flight) at 0.00 …
+        let sweep = ledger.admit(frame: bright, source: rest, at: 0.00)
+        XCTAssertTrue(sweep.wasAdmitted)
+        // … the Strobe's dark frames keep admitting meanwhile (not rises) …
+        r = ledger.admit(frame: dark, source: ent, at: 0.02); ledger.commit(r, delivered: true, at: 0.02)
+        r = ledger.admit(frame: dark, source: ent, at: 0.04); ledger.commit(r, delivered: true, at: 0.04)
+        // … and every PUT of the sweep fails: the terminal rolls it back
+        // behind those interleaved admits.
+        ledger.commit(sweep, delivered: false, at: 0.30)
+        // The bridge is forgotten (safe) — and NOT held hostage: one period
+        // on, the Strobe's cold rise is admitted.
+        r = ledger.admit(frame: bright, source: ent, at: 0.36)
+        XCTAssertTrue(r.wasAdmitted,
+            "a rolled-back stamp behind an interleaved admit stayed in flight — every onset on this bridge refused forever")
+        ledger.commit(r, delivered: true, at: 0.36)
+        // …and the room's retry a period later too.
+        let retry = ledger.admit(frame: bright, source: rest, at: 0.72)
+        XCTAssertTrue(retry.wasAdmitted)
+        ledger.commit(retry, delivered: true, at: 0.78)
     }
 
     /// A rising sweep that half-landed: two of four lamps refused the PUT.

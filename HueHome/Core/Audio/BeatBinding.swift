@@ -1066,6 +1066,17 @@ enum BeatMath {
                                  at deliveredAt: Double) {
                 currentSource = reservation.source
                 guard delivered else {
+                    // Nothing rose: the rise is no longer in flight, and the
+                    // clock belongs to whoever owned it before this stamp, so
+                    // a sweep whose stamp is current again may go on with its
+                    // batches. FIRST, above the interleaving exit below: both
+                    // are keyed on this reservation's own sequence and are
+                    // right whatever else was admitted meanwhile — and a
+                    // stamp left in flight past its rollback would hold every
+                    // source on this bridge for the life of the process
+                    // (safety round 6, HIGH).
+                    if unrealizedStamp == reservation.sequence { unrealizedStamp = nil }
+                    if lastOnsetOwner == reservation.sequence { lastOnsetOwner = reservation.priorOwner }
                     // An interleaved admit (the un-awaited cancel window) means
                     // this reservation is no longer the gate's latest word about
                     // the wire, and restoring a state two frames stale would be
@@ -1077,12 +1088,6 @@ enum BeatMath {
                     if let stamped = reservation.stampedAt, lastOnset == stamped {
                         lastOnset = reservation.priorLastOnset
                     }
-                    // Nothing rose: the rise is no longer in flight, and the
-                    // clock — restored above — belongs to whoever owned it
-                    // before this stamp, so a sweep whose stamp is current
-                    // again may go on with its batches.
-                    if unrealizedStamp == reservation.sequence { unrealizedStamp = nil }
-                    if lastOnsetOwner == reservation.sequence { lastOnsetOwner = reservation.priorOwner }
                     // A rollback restores the wire model ONLY if nothing has
                     // declared the wire unknown since the reservation was
                     // taken: `stopCompositionMode` forgets AFTER deactivating
