@@ -92,6 +92,9 @@ sealed interface LiveMutation {
         /** CLIP v2 timed_effects duration cap: 6 hours. */
         const val MAX_TIMED_EFFECT_MILLIS: Long = 21_600_000L
 
+        /** Shortest timed effect the coordinator accepts: a ramp slower than this is a long transition, not a flash (E-08). */
+        const val MIN_TIMED_EFFECT_MILLIS: Long = 60_000L
+
         /** Protocol point cap; the per-lamp cap is min(points_capable, this). */
         const val MAX_GRADIENT_POINTS: Int = 5
     }
@@ -105,6 +108,9 @@ enum class RefusalReason {
     EFFECT_DENIED_BY_SAFETY_REGISTER,
     TARGET_UNKNOWN,
     SESSION_CLOSED,
+
+    /** A timed effect shorter than [LiveMutation.MIN_TIMED_EFFECT_MILLIS]: an instantaneous rise the ledger cannot score (E-08). */
+    UNSAFE_DURATION,
 }
 
 /** An opaque handle for one accepted mutation; rollback is keyed on it, never on the target alone. */

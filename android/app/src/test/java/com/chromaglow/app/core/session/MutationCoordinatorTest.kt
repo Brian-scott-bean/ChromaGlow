@@ -10,8 +10,10 @@ import com.chromaglow.app.core.identity.ResourceType
 import com.chromaglow.app.core.session.safety.DefaultRiseLedger
 import com.chromaglow.app.core.session.safety.DeliveryOutcome
 import com.chromaglow.app.core.session.safety.EffectSafetyRegister
+import com.chromaglow.app.core.session.safety.LedgerWriteKind
 import com.chromaglow.app.testing.CoordinatorHarness
 import com.chromaglow.app.testing.SpyLedger
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
@@ -348,6 +350,187 @@ class MutationCoordinatorTest {
         assertEquals(RefusalReason.SESSION_CLOSED, refused(h.coordinator.submit(LiveMutation.SetPower(h.colorLamp, true))))
         advanceUntilIdle()
         assertEquals(1, h.transport.putCount)
+    }
+
+    // --- fix batch: E-03/B-02/B-03, E-04, E-05, E-07, E-08, E-09, E-10, B-09 ---------------------
+
+    @Test
+    fun b02_ambiguousTimeout_keepsTheOverlay_releasesAuthority_andSchedulesRefresh() = runTest {
+        val h = CoordinatorHarness(this)
+        h.transport.putResult = ClipResult.Err(ClipError.Timeout(afterTransmission = true))
+        val token = accepted(h.coordinator.submit(LiveMutation.SetBrightness(h.colorLamp, 90)))
+        advanceUntilIdle()
+        assertEquals("the lamp may hold the new value: no rollback", 90.0, h.light(h.colorLamp).brightness!!, 0.0)
+        assertNull("authority released so truth can reconcile", h.authority.owner(h.colorLamp, FieldGroup.DIMMING))
+        assertEquals(listOf(RefreshReason.POST_MUTATION), h.refreshes)
+        assertTrue(token.value > 0)
+    }
+
+    @Test
+    fun e03_transportFailureAfterTransmission_settlesAmbiguous_andKeepsTheRiseCommitted() = runTest {
+        val spy = SpyLedger(DefaultRiseLedger(com.chromaglow.app.core.identity.BridgeId("001788FFFE112233")))
+        val h = CoordinatorHarness(this, ledgerFactory = { spy })
+        h.store.update { s -> s.copy(lights = s.lights.mapValues { it.value.copy(isOn = false) }) }
+        h.transport.putResults[ResourceType.LIGHT to h.colorLamp.id] = ClipResult.Err(ClipError.Transport(afterTransmission = true))
+        accepted(h.coordinator.submit(LiveMutation.SetPower(h.colorLamp, true)))
+        advanceUntilIdle()
+        assertEquals(listOf(DeliveryOutcome.AMBIGUOUS_AFTER_TRANSMISSION), spy.settles)
+        assertTrue("overlay kept", h.light(h.colorLamp).isOn)
+        accepted(h.coordinator.submit(LiveMutation.SetPower(h.ctLamp, true)))
+        advanceUntilIdle()
+        val puts = h.transport.puts()
+        assertTrue("next rise waits the whole period", puts[1].atMillis!! - puts[0].atMillis!! >= 340)
+    }
+
+    @Test
+    fun e03_transportFailureBeforeTransmission_stillReleases_andRollsBack() = runTest {
+        val spy = SpyLedger(DefaultRiseLedger(com.chromaglow.app.core.identity.BridgeId("001788FFFE112233")))
+        val h = CoordinatorHarness(this, ledgerFactory = { spy })
+        h.transport.putResults[ResourceType.LIGHT to h.colorLamp.id] = ClipResult.Err(ClipError.Transport(afterTransmission = false))
+        accepted(h.coordinator.submit(LiveMutation.SetBrightness(h.colorLamp, 90)))
+        advanceUntilIdle()
+        assertEquals(listOf(DeliveryOutcome.FAILED_BEFORE_TRANSMISSION), spy.settles)
+        assertEquals(50.0, h.light(h.colorLamp).brightness!!, 0.0)
+    }
+
+    @Test
+    fun e05_rateLimited_isNotApplied_rollsBack_andTheRetriedRiseIsStillHeld() = runTest {
+        val spy = SpyLedger(DefaultRiseLedger(com.chromaglow.app.core.identity.BridgeId("001788FFFE112233")))
+        val h = CoordinatorHarness(this, ledgerFactory = { spy })
+        h.store.update { s -> s.copy(lights = s.lights.mapValues { it.value.copy(brightness = 1.0) }) }
+        h.transport.putResults[ResourceType.LIGHT to h.colorLamp.id] = ClipResult.Err(ClipError.RateLimited)
+        accepted(h.coordinator.submit(LiveMutation.SetBrightness(h.colorLamp, 100)))
+        advanceUntilIdle()
+        assertEquals(listOf(DeliveryOutcome.NOT_APPLIED), spy.settles)
+        assertEquals("rolled back: the lamp stayed dark", 1.0, h.light(h.colorLamp).brightness!!, 0.0)
+        h.transport.putResults.remove(ResourceType.LIGHT to h.colorLamp.id)
+        accepted(h.coordinator.submit(LiveMutation.SetBrightness(h.colorLamp, 100)))
+        advanceUntilIdle()
+        val puts = h.transport.puts()
+        assertTrue("the real rise is held to the period from the 429'd stamp", puts[1].atMillis!! - puts[0].atMillis!! >= 340)
+    }
+
+    @Test
+    fun http5xx_isAmbiguous_butHttp4xx_isNotApplied() = runTest {
+        val spy = SpyLedger(DefaultRiseLedger(com.chromaglow.app.core.identity.BridgeId("001788FFFE112233")))
+        val h = CoordinatorHarness(this, ledgerFactory = { spy })
+        h.transport.putResults[ResourceType.LIGHT to h.colorLamp.id] = ClipResult.Err(ClipError.Http(503))
+        h.transport.putResults[ResourceType.LIGHT to h.ctLamp.id] = ClipResult.Err(ClipError.Http(404))
+        accepted(h.coordinator.submit(LiveMutation.SetBrightness(h.colorLamp, 90)))
+        accepted(h.coordinator.submit(LiveMutation.SetBrightness(h.ctLamp, 90)))
+        advanceUntilIdle()
+        assertEquals(listOf(DeliveryOutcome.AMBIGUOUS_AFTER_TRANSMISSION, DeliveryOutcome.NOT_APPLIED), spy.settles)
+        assertEquals(90.0, h.light(h.colorLamp).brightness!!, 0.0)
+        assertEquals(50.0, h.light(h.ctLamp).brightness!!, 0.0)
+    }
+
+    @Test
+    fun e04_aLampInCtMode_isJudgedAsWhite_notByItsStaleBlueXy() = runTest {
+        val spy = SpyLedger(DefaultRiseLedger(com.chromaglow.app.core.identity.BridgeId("001788FFFE112233")))
+        val h = CoordinatorHarness(this, ledgerFactory = { spy })
+        h.store.update { s -> s.copy(lights = s.lights + (h.ctModeLamp to s.lights.getValue(h.ctModeLamp).copy(brightness = 1.0))) }
+        accepted(h.coordinator.submit(LiveMutation.SetBrightness(h.ctModeLamp, 100)))
+        advanceUntilIdle()
+        val frame = spy.writes.single().frame
+        assertTrue("stale blue would score 0.07; CT mode must score as white (${frame.relativeLuminance})", frame.relativeLuminance > 0.9)
+        assertFalse(frame.isSaturatedRed)
+    }
+
+    @Test
+    fun e10_aStripIsJudgedByItsBrightestPoint() = runTest {
+        val spy = SpyLedger(DefaultRiseLedger(com.chromaglow.app.core.identity.BridgeId("001788FFFE112233")))
+        val h = CoordinatorHarness(this, ledgerFactory = { spy })
+        accepted(h.coordinator.submit(LiveMutation.SetBrightness(h.redStrip, 100)))
+        advanceUntilIdle()
+        val frame = spy.writes.single().frame
+        assertTrue("first point is blue (0.07); the white point (1.0) must win (${frame.relativeLuminance})", frame.relativeLuminance > 0.9)
+    }
+
+    @Test
+    fun e07_effectAndTimedInitiationOnADarkLamp_areJudgedAsFullRises() = runTest {
+        val spy = SpyLedger(DefaultRiseLedger(com.chromaglow.app.core.identity.BridgeId("001788FFFE112233")))
+        val h = CoordinatorHarness(this, ledgerFactory = { spy })
+        h.store.update { s -> s.copy(lights = s.lights.mapValues { it.value.copy(isOn = false) }) }
+        accepted(h.coordinator.submit(LiveMutation.SelectEffect(h.colorLamp, "candle")))
+        accepted(h.coordinator.submit(LiveMutation.StartTimedEffect(h.ctLamp, TimedEffect.SUNRISE, 900_000L)))
+        advanceUntilIdle()
+        assertEquals(setOf(LedgerWriteKind.INITIATION), spy.writes.map { it.kind }.toSet())
+        assertTrue(spy.writes.all { it.frame.relativeLuminance == 1.0 })
+        assertEquals(2, h.transport.putCount)
+        val puts = h.transport.puts()
+        assertTrue("second initiation is held to the period", puts[1].atMillis!! - puts[0].atMillis!! >= 340)
+    }
+
+    @Test
+    fun e08_aTimedEffectShorterThanSixtySeconds_isRefused() = runTest {
+        val h = CoordinatorHarness(this)
+        assertEquals(RefusalReason.UNSAFE_DURATION, refused(h.coordinator.submit(LiveMutation.StartTimedEffect(h.colorLamp, TimedEffect.SUNRISE, 0L))))
+        assertEquals(RefusalReason.UNSAFE_DURATION, refused(h.coordinator.submit(LiveMutation.StartTimedEffect(h.colorLamp, TimedEffect.SUNRISE, 59_999L))))
+        accepted(h.coordinator.submit(LiveMutation.StartTimedEffect(h.colorLamp, TimedEffect.SUNRISE, 60_000L)))
+        advanceUntilIdle()
+        assertEquals(1, h.transport.putCount)
+    }
+
+    @Test
+    fun e09_groupedAndSceneWrites_pacedAtOneSecond_perLightAtHundredMillis() = runTest {
+        val h = CoordinatorHarness(this)
+        accepted(h.coordinator.submit(LiveMutation.SetBrightness(h.room, 40)))
+        accepted(h.coordinator.submit(LiveMutation.SetBrightness(h.room2, 40)))
+        accepted(h.coordinator.submit(LiveMutation.SetBrightness(h.colorLamp, 40)))
+        accepted(h.coordinator.submit(LiveMutation.SetBrightness(h.ctLamp, 40)))
+        advanceUntilIdle()
+        val puts = h.transport.puts()
+        val grouped = puts.filter { it.type == ResourceType.GROUPED_LIGHT }
+        val lights = puts.filter { it.type == ResourceType.LIGHT }
+        assertEquals(2, grouped.size)
+        assertTrue("grouped gap ${grouped[1].atMillis!! - grouped[0].atMillis!!}", grouped[1].atMillis!! - grouped[0].atMillis!! >= 1_000)
+        assertTrue("light gap", lights[1].atMillis!! - lights[0].atMillis!! in 100..339)
+    }
+
+    @Test
+    fun b09_theFenceIsReStampedAtSend_soAHeldWriteIsStillPendingWhenItLeaves() = runTest {
+        val h = CoordinatorHarness(this)
+        h.store.update { s -> s.copy(lights = s.lights.mapValues { it.value.copy(isOn = false) }) }
+        val gate = h.transport.holdNextPut()
+        accepted(h.coordinator.submit(LiveMutation.SetPower(h.colorLamp, true)))
+        runCurrent()
+        // Second rise is held ~340 ms behind the first; wait 1.4 s from submit, still before it can leave.
+        accepted(h.coordinator.submit(LiveMutation.SetPower(h.ctLamp, true)))
+        advanceTimeBy(1_400)
+        gate.complete(ClipResult.Ok(ClipDocument(emptyList())))
+        advanceUntilIdle()
+        val sentAt = h.transport.putsTo(h.ctLamp.id).single().atMillis!!
+        assertTrue("still pending shortly after send", h.authority.isPending(h.ctLamp, FieldGroup.POWER, sentAt + 1_000))
+        assertFalse(h.authority.isPending(h.ctLamp, FieldGroup.POWER, sentAt + 1_600))
+    }
+
+    @Test
+    fun mutationEvents_applied_failedRolledBack_failedNotRolledBack() = runTest {
+        val h = CoordinatorHarness(this)
+        val events = mutableListOf<MutationEvent>()
+        val job = backgroundScope.launch(h.dispatcher) { h.env.mutationEvents.collect { events += it } }
+        runCurrent()
+        accepted(h.coordinator.submit(LiveMutation.SetPower(h.colorLamp, false)))
+        advanceUntilIdle()
+        h.transport.putResult = ClipResult.Err(ClipError.BridgeRejected(listOf("nope")))
+        accepted(h.coordinator.submit(LiveMutation.SetBrightness(h.colorLamp, 90)))
+        advanceUntilIdle()
+        val gate = h.transport.holdNextPut()
+        h.transport.putResult = ClipResult.Ok(ClipDocument(emptyList()))
+        accepted(h.coordinator.submit(LiveMutation.SetBrightness(h.ctLamp, 30)))
+        advanceUntilIdle()                       // the 30 is on the wire, held by the gate
+        assertEquals(3, h.transport.putCount)
+        accepted(h.coordinator.submit(LiveMutation.SetBrightness(h.ctLamp, 70)))
+        gate.complete(ClipResult.Err(ClipError.Http(404)))
+        advanceUntilIdle()
+        assertTrue(events[0] is MutationEvent.Applied)
+        assertEquals(MutationFailure.REJECTED_BY_BRIDGE, (events[1] as MutationEvent.Failed).failure)
+        assertTrue((events[1] as MutationEvent.Failed).rolledBack)
+        val superseded = events.filterIsInstance<MutationEvent.Failed>().singleOrNull { it.failure == MutationFailure.HTTP_ERROR }
+            ?: throw AssertionError("no HTTP_ERROR failure among $events")
+        assertFalse("a superseded write's failure does not roll back", superseded.rolledBack)
+        assertEquals(30, (superseded.mutation as LiveMutation.SetBrightness).percent)
+        job.cancel()
     }
 
     @Test

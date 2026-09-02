@@ -111,28 +111,33 @@ class OkHttpHueClipClient(
     private suspend fun execute(method: String, segments: List<String>, body: String?): ClipResult<ClipDocument> {
         val key = keys.applicationKey()?.takeIf { !it.isCleared } ?: return ClipResult.Err(ClipError.MissingCredentials)
         val transmission = Transmission().apply { hasBody = body != null }
-        val url = HttpUrl.Builder().scheme("https").host(host).port(port).apply {
-            segments.forEach { addPathSegment(it) }
-        }.build()
-        val request = key.withHeaderValue { headerValue ->
-            Request.Builder()
-                .url(url)
-                .header(APPLICATION_KEY_HEADER, headerValue)
-                .header("Accept", "application/json")
-                .tag(Transmission::class.java, transmission)
-                .apply {
-                    if (body != null) method(method, body.toRequestBody(JSON)) else method(method, null)
-                }
-                .build()
-        }
         val label = "$method /${segments.joinToString("/")}"
         return withContext(ioDispatcher) {
             try {
+                // URL construction stays INSIDE the try: a hostile/damaged record host must become a
+                // typed Transport failure, never an uncaught IllegalArgumentException (A-01).
+                val url = HttpUrl.Builder().scheme("https").host(host).port(port).apply {
+                    segments.forEach { addPathSegment(it) }
+                }.build()
+                val request = key.withHeaderValue { headerValue ->
+                    Request.Builder()
+                        .url(url)
+                        .header(APPLICATION_KEY_HEADER, headerValue)
+                        .header("Accept", "application/json")
+                        .tag(Transmission::class.java, transmission)
+                        .apply {
+                            if (body != null) method(method, body.toRequestBody(JSON)) else method(method, null)
+                        }
+                        .build()
+                }
                 client.newCall(request).await().use { response -> classify(response, label) }
             } catch (e: IOException) {
                 val error = mapIo(e, transmission)
                 diagnostics(Redactor.redact("$label -> ${error::class.simpleName} (${e::class.simpleName})"))
                 ClipResult.Err(error)
+            } catch (e: IllegalArgumentException) {
+                diagnostics(Redactor.redact("$label -> Transport (invalid host)"))
+                ClipResult.Err(ClipError.Transport(afterTransmission = false))
             }
         }
     }
@@ -167,19 +172,16 @@ class OkHttpHueClipClient(
         return source.readUtf8()
     }
 
+    /**
+     * Every IOException is classified with the transmission facts: once the body (or, for a
+     * bodiless call, the headers) was handed to the socket, the bridge MAY have applied the
+     * request, and the error says so (E-03). Only a hostname-verifier rejection is TlsIdentity.
+     */
     private fun mapIo(e: IOException, transmission: Transmission): ClipError = when {
         transmission.identityRejected || e.isIdentityRejection() -> ClipError.TlsIdentity
-        e is InterruptedIOException -> ClipError.Timeout(afterTransmission = transmission.transmitted)
-        else -> {
-            // OkHttp wraps the call timeout as an InterruptedIOException("timeout"); the hostname
-            // verifier failure surfaces as SSLPeerUnverifiedException. Anything else (reset, DNS,
-            // handshake to an untrusted CA) is a plain transport failure — never a credential event.
-            if (e.message?.contains("timeout", ignoreCase = true) == true) {
-                ClipError.Timeout(afterTransmission = transmission.transmitted)
-            } else {
-                ClipError.Transport
-            }
-        }
+        e is InterruptedIOException || e.message?.contains("timeout", ignoreCase = true) == true ->
+            ClipError.Timeout(afterTransmission = transmission.transmitted)
+        else -> ClipError.Transport(afterTransmission = transmission.transmitted)
     }
 
     /** Coroutine bridge for OkHttp's async call; cancelling the coroutine cancels the call. */

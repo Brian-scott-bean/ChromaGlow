@@ -111,15 +111,17 @@ class ClipBodiesTest {
 
     // iOS testTimedEffectsBodyClampsToSixHours
     @Test
-    fun timedEffects_clampsToSixHours_andNeverNegative() {
+    fun timedEffects_clampsToSixHours_andToTheSixtySecondFloor() {
         assertEquals(
             """{"timed_effects":{"effect":"sunset","duration":21600000},"effects":{"effect":"no_effect"}}""",
             s(ClipBodies.timedEffect("sunset", 99_999_999L)),
         )
+        // E-08: a 0 s "sunset" would be an instantaneous full-scale step; the body floors at 60 s.
         assertEquals(
-            """{"timed_effects":{"effect":"sunset","duration":0},"effects":{"effect":"no_effect"}}""",
+            """{"timed_effects":{"effect":"sunset","duration":60000},"effects":{"effect":"no_effect"}}""",
             s(ClipBodies.timedEffect("sunset", -1L)),
         )
+        assertEquals(LiveMutation.MIN_TIMED_EFFECT_MILLIS, ClipBodies.MIN_TIMED_EFFECT_MILLIS)
     }
 
     @Test

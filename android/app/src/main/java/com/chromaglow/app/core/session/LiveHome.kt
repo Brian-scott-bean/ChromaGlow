@@ -1,6 +1,8 @@
 package com.chromaglow.app.core.session
 
 import com.chromaglow.app.core.identity.BridgeId
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 
 /**
@@ -21,6 +23,9 @@ interface BridgeSession {
 
     /** Cancels every job owned by the session. Idempotent. Requires no network. */
     fun close()
+
+    /** Post-admission feedback for this bridge's mutations (C-1, additive; default emits nothing). */
+    val mutationEvents: SharedFlow<MutationEvent> get() = MutationEvents.NONE
 }
 
 /** The merged view the Home screen renders: every bridge's snapshot and connection, by id. */
@@ -56,4 +61,10 @@ interface LiveHome {
     fun remove(bridgeId: BridgeId)
 
     fun close()
+
+    /** Merged post-admission feedback across bridges, plus Refused for every refused submit (C-1, additive). */
+    val mutationEvents: SharedFlow<MutationEvent> get() = MutationEvents.NONE
+
+    /** Display names of the paired bridges from their records (C-3, additive); never from model/product data. */
+    val bridgeNames: StateFlow<Map<BridgeId, String>> get() = MutableStateFlow(emptyMap())
 }

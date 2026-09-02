@@ -74,7 +74,10 @@ class EventStreamRunner(
                             if (everConnected) env.requestRefresh(RefreshReason.STREAM_RECONNECTED)
                             everConnected = true
                         }
-                        is SseFrame.Data -> env.store.update { s -> reducer(s, frame.payload, authority, env.clock.nowMillis()) }
+                        is SseFrame.Data -> {
+                            env.store.update { s -> reducer(s, frame.payload, authority, env.clock.nowMillis()) }
+                            env.onStreamEvent()
+                        }
                     }
                 }
             } catch (cancelled: CancellationException) {
