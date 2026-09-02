@@ -1,17 +1,14 @@
 package com.chromaglow.app.ui.components
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -28,40 +25,36 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 
-fun groupCardTag(composeKey: String): String = "group_card_$composeKey"
-fun groupHeaderTag(composeKey: String): String = "group_header_$composeKey"
-fun groupSwitchTag(composeKey: String): String = "group_switch_$composeKey"
-fun groupFaderTag(composeKey: String): String = "group_fader_$composeKey"
+fun lightCardTag(composeKey: String): String = "light_card_$composeKey"
+fun lightHeaderTag(composeKey: String): String = "light_header_$composeKey"
+fun lightSwitchTag(composeKey: String): String = "light_switch_$composeKey"
+fun lightFaderTag(composeKey: String): String = "light_fader_$composeKey"
 
 /**
- * One room or zone as a single instrument. The header row is the open-detail target (≥ 48 dp,
- * `Role.Button`, spoken as "Open <name>"), the Switch carries its own on/off state description,
- * and the fader names the target it controls. When [controlsEnabled] is false the Switch is
- * disabled and the fader refuses gestures; [disabledReason] explains why in words.
- *
- * Off state dims tokens individually (fill, text) — never the whole card — so contrast holds.
+ * Compact per-light instrument for Room/Zone detail: name, a swatch of the current colour or
+ * warmth, glyph labels for capabilities that are KNOWN (never for Unknown/Absent), a Switch, and
+ * a brightness fader. Header (≥ 48 dp) opens Light detail.
  */
 @Composable
-fun GroupCard(
+fun LightCard(
     composeKey: String,
     name: String,
-    subtitle: String,
+    statusLine: String,
     isOn: Boolean,
     brightness: Int?,
+    swatch: Color?,
+    knownGlyphs: List<String>,
     controlsEnabled: Boolean,
     disabledReason: String?,
-    onOpen: (() -> Unit)?,
+    onOpen: () -> Unit,
     onPower: (Boolean) -> Unit,
-    onBrightnessPreview: (Int) -> Unit,
     onBrightnessCommit: (Int) -> Unit,
     modifier: Modifier = Modifier,
-    badge: String? = null,
-    swatch: Color? = null,
 ) {
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .testTag(groupCardTag(composeKey)),
+            .testTag(lightCardTag(composeKey)),
         shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.surface,
     ) {
@@ -75,70 +68,47 @@ fun GroupCard(
                     modifier = Modifier
                         .weight(1f)
                         .defaultMinSize(minHeight = 48.dp)
-                        .testTag(groupHeaderTag(composeKey))
-                        .then(
-                            if (onOpen != null) {
-                                Modifier.clickable(
-                                    onClickLabel = "Open $name",
-                                    role = Role.Button,
-                                    onClick = onOpen,
-                                )
-                            } else {
-                                Modifier
-                            },
-                        )
+                        .testTag(lightHeaderTag(composeKey))
+                        .clickable(onClickLabel = "Open $name", role = Role.Button, onClick = onOpen)
                         .semantics(mergeDescendants = true) {
                             contentDescription = buildString {
                                 append(name)
-                                if (badge != null) append(", $badge")
                                 append(", ")
                                 append(if (isOn) "on" else "off")
                                 append(", ")
-                                append(subtitle)
+                                append(statusLine)
+                                if (knownGlyphs.isNotEmpty()) append(", supports ${knownGlyphs.joinToString(", ")}")
                             }
                         },
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(14.dp)
-                            .background(
-                                color = when {
-                                    !isOn -> MaterialTheme.colorScheme.outline
-                                    swatch != null -> swatch
-                                    else -> MaterialTheme.colorScheme.primary
-                                },
-                                shape = CircleShape,
-                            )
-                            .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape),
-                    )
+                    ColorDot(color = if (isOn) swatch else null, modifier = Modifier.size(14.dp))
                     Column(modifier = Modifier.weight(1f)) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            Text(
-                                text = name,
-                                style = MaterialTheme.typography.titleMedium,
-                                color = MaterialTheme.colorScheme.onSurface,
-                            )
-                            if (badge != null) {
-                                Text(
-                                    text = badge,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier
-                                        .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(6.dp))
-                                        .padding(horizontal = 6.dp, vertical = 2.dp),
-                                )
-                            }
-                        }
                         Text(
-                            text = subtitle,
+                            text = name,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Text(
+                            text = statusLine,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        if (knownGlyphs.isNotEmpty()) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 4.dp)) {
+                                knownGlyphs.forEach { glyph ->
+                                    Text(
+                                        text = glyph,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier
+                                            .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(6.dp))
+                                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
                 Switch(
@@ -146,7 +116,7 @@ fun GroupCard(
                     onCheckedChange = if (controlsEnabled) onPower else null,
                     enabled = controlsEnabled,
                     modifier = Modifier
-                        .testTag(groupSwitchTag(composeKey))
+                        .testTag(lightSwitchTag(composeKey))
                         .semantics {
                             contentDescription = "$name power"
                             stateDescription = when {
@@ -159,7 +129,7 @@ fun GroupCard(
             }
             StageFader(
                 value = brightness ?: 1,
-                onPreview = onBrightnessPreview,
+                onPreview = {},
                 onCommit = onBrightnessCommit,
                 label = "$name brightness",
                 enabled = controlsEnabled && brightness != null,
@@ -169,16 +139,8 @@ fun GroupCard(
                     else -> null
                 },
                 fillColor = if (isOn) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.testTag(groupFaderTag(composeKey)),
+                modifier = Modifier.testTag(lightFaderTag(composeKey)),
             )
-            if (!controlsEnabled && disabledReason != null) {
-                Text(
-                    text = disabledReason,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 4.dp),
-                )
-            }
         }
     }
 }
