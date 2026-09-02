@@ -136,6 +136,38 @@ class SetupViewModel internal constructor(
         }
     }
 
+    /**
+     * Explicit, user-authorised local reset of unreadable saved-bridge metadata. Available only
+     * from the [BridgePairingUiState.Recovery] state that offers it; touches no credential.
+     */
+    fun resetSavedBridges() {
+        val recovery = uiState.pairing as? BridgePairingUiState.Recovery ?: return
+        if (!recovery.canResetSavedBridges) return
+        viewModelScope.launch {
+            uiState = uiState.copy(
+                pairing = when (workflow.resetMetadata()) {
+                    ForgetResult.Forgotten -> BridgePairingUiState.None
+                    ForgetResult.CleanupFailed -> BridgePairingUiState.Recovery(
+                        message = RESET_FAILED_MESSAGE,
+                        canResetSavedBridges = true,
+                    )
+                },
+            )
+        }
+    }
+
+    /**
+     * Stop LAN discovery and release its multicast lock now (audit L-55). The view model is
+     * Activity-scoped, so leaving Setup (demo entry, and later the live Home hand-off) must call
+     * this explicitly instead of waiting for [onCleared] at Activity destruction.
+     */
+    fun stopDiscovery() {
+        discovery.stop()
+        if (uiState.isScanning) {
+            uiState = uiState.copy(isScanning = false)
+        }
+    }
+
     override fun onCleared() {
         discovery.stop()
     }
@@ -157,7 +189,10 @@ class SetupViewModel internal constructor(
                 message = NEEDS_REPAIR_MESSAGE,
                 forgettableBridgeId = bridge.bridgeId,
             )
-            RestoredState.Unavailable -> BridgePairingUiState.Recovery(message = UNAVAILABLE_MESSAGE)
+            RestoredState.Unavailable -> BridgePairingUiState.Recovery(
+                message = UNAVAILABLE_MESSAGE,
+                canResetSavedBridges = true,
+            )
         }
 
     private fun PairingErrorReason.toMessage(): String =
@@ -182,9 +217,11 @@ class SetupViewModel internal constructor(
         const val NEEDS_REPAIR_MESSAGE =
             "Your saved bridge needs to be set up again. Forget it, then pair to reconnect."
         const val UNAVAILABLE_MESSAGE =
-            "Your saved bridge couldn't be restored. Scan or enter its address to pair again."
+            "Your saved bridge data couldn't be read. Reset it, then scan or enter the address to pair again."
         const val FORGET_FAILED_MESSAGE =
             "Couldn't remove the saved bridge from this device. Try again."
+        const val RESET_FAILED_MESSAGE =
+            "Couldn't reset the saved bridge data on this device. Try again."
 
         /** Production factory: wires the real transport, Keystore store, registry, and discovery. */
         fun factory(

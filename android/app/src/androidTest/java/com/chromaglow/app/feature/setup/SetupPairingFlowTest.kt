@@ -1,6 +1,7 @@
 package com.chromaglow.app.feature.setup
 
 import androidx.activity.ComponentActivity
+import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -143,6 +144,54 @@ class SetupPairingFlowTest {
 
         waitForText(TITLE_CONNECTED)
         composeTestRule.onNodeWithText(LABEL_FORGET).assertIsDisplayed()
+    }
+
+    @Test
+    fun enterDemoMode_stopsDiscovery() {
+        // L-55: entering demo from a scanning Setup must release discovery (and its multicast lock)
+        // immediately, not at Activity destruction.
+        val discovery = FakeBridgeDiscoveryService()
+        val workflow = LivePairingWorkflow(
+            pairingClient = FakeHuePairingClient(HuePairingResult.LinkButtonNotPressed),
+            credentialStore = FakeCredentialStore(),
+            bridgeRegistry = FakeBridgeRegistry(),
+            ioDispatcher = Dispatchers.IO,
+        )
+        val viewModel = SetupViewModel(workflow, discovery)
+        var demoEntered = false
+        composeTestRule.setContent {
+            ChromaGlowTheme { SetupRoute(viewModel = viewModel, onEnterDemoMode = { demoEntered = true }) }
+        }
+
+        composeTestRule.onNodeWithText(LABEL_SCAN).performClick()
+        composeTestRule.waitUntil(timeoutMillis = 5_000) { discovery.startCount == 1 }
+        val stopsBefore = discovery.stopCount
+
+        composeTestRule.onNodeWithText(LABEL_DEMO).performClick()
+
+        composeTestRule.waitUntil(timeoutMillis = 5_000) { demoEntered }
+        assertTrue(discovery.stopCount > stopsBefore)
+    }
+
+    @Test
+    fun startupRestore_unreadableMetadata_offersLocalReset_andKeepsCredentials() {
+        val store = FakeCredentialStore().apply { tokens[bridgeId] = username }
+        val registry = FakeBridgeRegistry().apply {
+            readResult = com.chromaglow.app.core.bridge.BridgeRegistryResult.Corrupt
+        }
+        render(harness(HuePairingResult.LinkButtonNotPressed, store = store, registry = registry))
+
+        waitForText(LABEL_RESET_SAVED)
+        composeTestRule.onNodeWithText(RESET_IS_LOCAL_NOTE).assertIsDisplayed()
+        // Classification only: nothing was deleted by merely restoring.
+        assertEquals(username, store.tokens[bridgeId])
+
+        composeTestRule.onNodeWithText(LABEL_RESET_SAVED).performClick()
+
+        // Metadata reset returns Setup to its entry state; the credential is still untouched.
+        waitForText(LABEL_SCAN)
+        composeTestRule.onNodeWithText(LABEL_RESET_SAVED).assertDoesNotExist()
+        assertEquals(username, store.tokens[bridgeId])
     }
 
     @Test

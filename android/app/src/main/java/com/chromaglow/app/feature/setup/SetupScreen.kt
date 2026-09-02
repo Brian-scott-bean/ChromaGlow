@@ -38,6 +38,8 @@ internal const val LABEL_PAIR = "Pair"
 internal const val LABEL_PAIRING = "Pairing…"
 internal const val LABEL_FORGET = "Forget Bridge"
 internal const val LABEL_TRY_AGAIN = "Try Again"
+internal const val LABEL_RESET_SAVED = "Reset Saved Bridge Data"
+internal const val RESET_IS_LOCAL_NOTE = "This clears saved bridge data on this device only."
 internal const val TITLE_CONNECTED = "Bridge connected"
 internal const val INSTRUCTION_PRESS_BUTTON = "Press the link button on your Hue bridge, then tap Pair."
 internal const val FORGET_IS_LOCAL_NOTE = "This removes the bridge from this device only."
@@ -63,7 +65,12 @@ fun SetupRoute(
         onPair = viewModel::pair,
         onTryAgain = viewModel::tryAgain,
         onForget = viewModel::forget,
-        onEnterDemoMode = onEnterDemoMode,
+        onResetSavedBridges = viewModel::resetSavedBridges,
+        // L-55: leaving Setup for demo must release discovery + the multicast lock immediately.
+        onEnterDemoMode = {
+            viewModel.stopDiscovery()
+            onEnterDemoMode()
+        },
         modifier = modifier,
     )
 }
@@ -87,6 +94,7 @@ fun SetupScreen(
     onForget: () -> Unit,
     onEnterDemoMode: () -> Unit,
     modifier: Modifier = Modifier,
+    onResetSavedBridges: () -> Unit = {},
 ) {
     val pairing = state.pairing
     // The scan/manual entry controls are shown unless a bridge is actively selected, pairing, or
@@ -139,7 +147,12 @@ fun SetupScreen(
                 is BridgePairingUiState.Pairing -> PairingBridgeCard(pairing)
                 is BridgePairingUiState.Paired -> PairedBridgeCard(pairing, onForget = onForget)
                 is BridgePairingUiState.Recovery ->
-                    RecoveryCard(pairing, onTryAgain = onTryAgain, onForget = onForget)
+                    RecoveryCard(
+                        pairing,
+                        onTryAgain = onTryAgain,
+                        onForget = onForget,
+                        onResetSavedBridges = onResetSavedBridges,
+                    )
             }
 
             Button(onClick = onEnterDemoMode) {
@@ -313,6 +326,7 @@ private fun RecoveryCard(
     state: BridgePairingUiState.Recovery,
     onTryAgain: () -> Unit,
     onForget: () -> Unit,
+    onResetSavedBridges: () -> Unit,
 ) {
     BridgeCardSurface {
         Text(
@@ -329,6 +343,16 @@ private fun RecoveryCard(
             OutlinedButton(onClick = onForget) {
                 Text(text = LABEL_FORGET)
             }
+        }
+        if (state.canResetSavedBridges) {
+            OutlinedButton(onClick = onResetSavedBridges) {
+                Text(text = LABEL_RESET_SAVED)
+            }
+            Text(
+                text = RESET_IS_LOCAL_NOTE,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

@@ -31,12 +31,16 @@ sealed interface BridgePairingUiState {
 
     /**
      * Recovery/error: static, user-safe [message] only. [retryBridge] (when set) offers Try Again
-     * back to [Selected]; [forgettableBridgeId] (when set) offers a local Forget Bridge.
+     * back to [Selected]; [forgettableBridgeId] (when set) offers a local Forget Bridge;
+     * [canResetSavedBridges] (when true) offers the explicit local metadata reset for the case
+     * where saved bridge data is unreadable and no bridge id exists to forget. Neither affordance
+     * ever runs without a user tap, and no credential is deleted by the reset.
      */
     data class Recovery(
         val message: String,
         val retryBridge: BridgeEndpoint? = null,
         val forgettableBridgeId: String? = null,
+        val canResetSavedBridges: Boolean = false,
     ) : BridgePairingUiState
 }
 
