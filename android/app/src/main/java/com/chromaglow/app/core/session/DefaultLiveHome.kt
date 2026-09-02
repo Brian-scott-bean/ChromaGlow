@@ -175,8 +175,9 @@ class DefaultLiveHome(
         eventJobs.remove(bridgeId)?.cancel()
         names.value = names.value - bridgeId
         session?.close()
-        // Forget is local-only and complete: the cached snapshot of that bridge goes too (B-07).
-        if (cache != null) scope.launch { cache.clear() }
+        // Forget is local-only and complete: the cached snapshot of that bridge goes too (B-07). A
+        // last-bridge Forget closes this home right after remove(); the clear must still run (B-18).
+        if (cache != null) scope.launch(kotlinx.coroutines.NonCancellable) { cache.clear() }
         if (session != null) rebuildMerge()
     }
 
