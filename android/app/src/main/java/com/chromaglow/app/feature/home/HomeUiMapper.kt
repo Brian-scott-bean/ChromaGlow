@@ -25,14 +25,14 @@ import kotlin.math.roundToInt
  */
 object HomeUiMapper {
 
-    fun map(home: HomeSnapshot, nowMillis: Long): HomeUiState {
+    fun map(home: HomeSnapshot, nowMillis: Long, names: Map<BridgeId, String> = emptyMap()): HomeUiState {
         if (home.bridges.isEmpty()) {
             return HomeUiState(HomePhase.NO_BRIDGES, emptyList(), emptyList(), emptyList())
         }
         val multi = home.bridges.size > 1
         val strip = home.bridges.keys
             .sortedBy { it.value }
-            .map { id -> connectionRow(id, home.connections[id] ?: ConnectionState.Connecting, nowMillis, multi) }
+            .map { id -> connectionRow(id, home.connections[id] ?: ConnectionState.Connecting, nowMillis, multi, names[id]) }
 
         val rooms = mutableListOf<GroupCardUi>()
         val zones = mutableListOf<GroupCardUi>()
@@ -102,8 +102,9 @@ object HomeUiMapper {
         connection: ConnectionState,
         nowMillis: Long,
         multi: Boolean,
+        name: String? = null,
     ): ConnectionRowUi {
-        val label = bridgeLabel(bridgeId, multi)
+        val label = bridgeLabel(bridgeId, multi, name)
         return when (connection) {
             ConnectionState.Connecting -> ConnectionRowUi(label, "Connecting", ConnectionTone.WORKING)
             ConnectionState.Connected -> ConnectionRowUi(label, "Connected", ConnectionTone.LIVE)
@@ -119,9 +120,15 @@ object HomeUiMapper {
         }
     }
 
-    /** Bridge label for Home. Never the full id; the last four characters only when disambiguating. */
-    fun bridgeLabel(bridgeId: BridgeId, multi: Boolean): String =
-        if (multi) "Bridge …${bridgeId.value.takeLast(4)}" else "Bridge"
+    /**
+     * Bridge label. The bridge's own name when the session knows it (C-3); otherwise never the
+     * full id — the last four characters only when disambiguating.
+     */
+    fun bridgeLabel(bridgeId: BridgeId, multi: Boolean, name: String? = null): String {
+        val trimmed = name?.trim()?.takeIf { it.isNotEmpty() }
+        if (trimmed != null) return trimmed
+        return if (multi) "Bridge …${bridgeId.value.takeLast(4)}" else "Bridge"
+    }
 
     fun staleFor(elapsedMillis: Long): String {
         val minutes = (elapsedMillis.coerceAtLeast(0) / 60_000L)

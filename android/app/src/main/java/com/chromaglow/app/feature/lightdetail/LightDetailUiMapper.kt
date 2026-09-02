@@ -3,6 +3,7 @@ package com.chromaglow.app.feature.lightdetail
 import com.chromaglow.app.core.hue.capability.Capability
 import com.chromaglow.app.core.hue.capability.CieXy
 import com.chromaglow.app.core.hue.capability.Evidence
+import com.chromaglow.app.core.identity.BridgeId
 import com.chromaglow.app.core.identity.ResourceKey
 import com.chromaglow.app.core.session.ConnectionState
 import com.chromaglow.app.core.session.HomeSnapshot
@@ -30,9 +31,10 @@ object LightDetailUiMapper {
         edits: LightEdits,
         register: EffectSafetyRegister,
         nowMillis: Long,
+        names: Map<BridgeId, String> = emptyMap(),
     ): LightDetailUiState {
         val connection = home.connections[lightKey.bridgeId] ?: ConnectionState.Connecting
-        val strip = listOf(HomeUiMapper.connectionRow(lightKey.bridgeId, connection, nowMillis, home.bridges.size > 1))
+        val strip = listOf(HomeUiMapper.connectionRow(lightKey.bridgeId, connection, nowMillis, home.bridges.size > 1, names[lightKey.bridgeId]))
         val light = home.bridges[lightKey.bridgeId]?.lights?.get(lightKey)
             ?: return LightDetailUiState.missing(strip)
         val (enabled, reason) = HomeUiMapper.interaction(connection)

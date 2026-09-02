@@ -22,13 +22,13 @@ data class PairedBridgeRowUi(
 )
 
 object LiveSettingsUiMapper {
-    fun map(home: HomeSnapshot, appVersion: String, confirmingForget: BridgeId?, nowMillis: Long): LiveSettingsUiState {
+    fun map(home: HomeSnapshot, appVersion: String, confirmingForget: BridgeId?, nowMillis: Long, names: Map<BridgeId, String> = emptyMap()): LiveSettingsUiState {
         val multi = home.bridges.size > 1
         val bridges = home.bridges.keys.sortedBy { it.value }.map { id ->
             PairedBridgeRowUi(
                 bridgeId = id,
-                label = HomeUiMapper.bridgeLabel(id, multi),
-                row = HomeUiMapper.connectionRow(id, home.connections[id] ?: ConnectionState.Connecting, nowMillis, multi),
+                label = HomeUiMapper.bridgeLabel(id, multi, names[id]),
+                row = HomeUiMapper.connectionRow(id, home.connections[id] ?: ConnectionState.Connecting, nowMillis, multi, names[id]),
             )
         }
         return LiveSettingsUiState(

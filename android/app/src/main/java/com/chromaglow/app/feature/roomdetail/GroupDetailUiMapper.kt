@@ -1,5 +1,6 @@
 package com.chromaglow.app.feature.roomdetail
 
+import com.chromaglow.app.core.identity.BridgeId
 import com.chromaglow.app.core.identity.ResourceKey
 import com.chromaglow.app.core.identity.TargetRef
 import com.chromaglow.app.core.session.BridgeSnapshot
@@ -14,10 +15,10 @@ import kotlin.math.roundToInt
 /** Pure mapping for Room/Zone detail. Membership follows the freeze rule: child rid == light OR owner. */
 object GroupDetailUiMapper {
 
-    fun map(home: HomeSnapshot, groupKey: ResourceKey, nowMillis: Long): GroupDetailUiState {
+    fun map(home: HomeSnapshot, groupKey: ResourceKey, nowMillis: Long, names: Map<BridgeId, String> = emptyMap()): GroupDetailUiState {
         val snapshot = home.bridges[groupKey.bridgeId]
         val connection = home.connections[groupKey.bridgeId] ?: ConnectionState.Connecting
-        val strip = listOf(HomeUiMapper.connectionRow(groupKey.bridgeId, connection, nowMillis, home.bridges.size > 1))
+        val strip = listOf(HomeUiMapper.connectionRow(groupKey.bridgeId, connection, nowMillis, home.bridges.size > 1, names[groupKey.bridgeId]))
         val group = snapshot?.let { it.rooms[groupKey] ?: it.zones[groupKey] }
             ?: return GroupDetailUiState(found = false, group = null, lights = emptyList(), coverage = emptyList(), strip = strip)
         val (enabled, reason) = HomeUiMapper.interaction(connection)
