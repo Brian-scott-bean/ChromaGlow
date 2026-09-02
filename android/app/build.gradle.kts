@@ -13,7 +13,7 @@ android {
         targetSdk = 36
         // versionCode increments every device round so a stale APK is distinguishable at install
         // (audit M-19 / D-020). versionName stays the approved product version.
-        versionCode = 3
+        versionCode = 4
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
