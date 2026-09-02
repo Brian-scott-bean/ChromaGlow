@@ -411,6 +411,26 @@ class MutationCoordinatorTest {
     }
 
     @Test
+    fun bridgeRejected_isAmbiguousForTheLedger_butStillRollsBackAndReportsRejected() = runTest {
+        // Frank residual: the LEDGER treats a 2xx-with-errors as ambiguous (stamp kept, wire unknown —
+        // strictly more conservative), while the UI still rolls back and reports REJECTED_BY_BRIDGE
+        // (the Failed/rolledBack event itself is pinned by mutationEvents_applied_failedRolledBack_*).
+        val spy = SpyLedger(DefaultRiseLedger(com.chromaglow.app.core.identity.BridgeId("001788FFFE112233")))
+        val h = CoordinatorHarness(this, ledgerFactory = { spy })
+        h.store.update { s -> s.copy(lights = s.lights.mapValues { it.value.copy(isOn = false) }) }
+        h.transport.putResults[ResourceType.LIGHT to h.colorLamp.id] = ClipResult.Err(ClipError.BridgeRejected(listOf("nope")))
+        accepted(h.coordinator.submit(LiveMutation.SetPower(h.colorLamp, true)))
+        advanceUntilIdle()
+        assertEquals(listOf(DeliveryOutcome.AMBIGUOUS_AFTER_TRANSMISSION), spy.settles)
+        assertFalse("the UI still rolls back a bridge refusal", h.light(h.colorLamp).isOn)
+        // Conservative: the next rise on another lamp waits the whole period behind the ambiguous one.
+        accepted(h.coordinator.submit(LiveMutation.SetPower(h.ctLamp, true)))
+        advanceUntilIdle()
+        val puts = h.transport.puts()
+        assertTrue("gap ${puts[1].atMillis!! - puts[0].atMillis!!}", puts[1].atMillis!! - puts[0].atMillis!! >= 340)
+    }
+
+    @Test
     fun http5xx_isAmbiguous_butHttp4xx_isNotApplied() = runTest {
         val spy = SpyLedger(DefaultRiseLedger(com.chromaglow.app.core.identity.BridgeId("001788FFFE112233")))
         val h = CoordinatorHarness(this, ledgerFactory = { spy })
