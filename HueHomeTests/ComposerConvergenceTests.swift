@@ -538,6 +538,280 @@ final class ComposerConvergenceTests: XCTestCase {
         XCTAssertFalse(schemaless.isInteractive("temperature"))
     }
 
+    // MARK: - Exact-state fencing (S3-5): the Composer edit session
+
+    private func session(_ vm: StudioViewModel, on target: RoomDisplayItem) -> ComposerEditSession {
+        vm.selectedRoom = target
+        let s = vm.composerEditSession()
+        XCTAssertNotNil(s, "a composition is running on \(target.id) with a live box")
+        return s!
+    }
+
+    /// Room A vs room B, room vs zone, bridge 1 vs bridge 2: the SAME preset
+    /// running on each holds its own box, and a commit through one target's
+    /// session leaves every other target's box byte-identical.
+    func testAnEditOnOneTargetLeavesEveryOtherTargetsBoxUntouched() {
+        let vm = StudioViewModel()
+        let p = preset()
+        let a = room("room-a", bridge: "bridge-a")
+        let b = room("room-b", bridge: "bridge-a")
+        let zoneA = room("room-a", bridge: "bridge-a", kind: .zone)     // same id, other kind
+        let aOnB = room("room-a", bridge: "bridge-b")                   // same id, other bridge
+        let others = [b, zoneA, aOnB]
+        let boxA = stageRunningComposition(p, on: a, in: vm).box
+        let otherBoxes = others.map { stageRunningComposition(p, on: $0, in: vm).box }
+        XCTAssertTrue(otherBoxes.allSatisfy { $0 !== boxA }, "four targets, four boxes")
+
+        let sA = session(vm, on: a)
+        XCTAssertTrue(sA.box === boxA)
+        // Move the selection elsewhere BEFORE the write lands — the shape of
+        // every "wrote to the wrong room" defect.
+        vm.selectedRoom = b
+        let verdict = vm.commitComposerEdit(sA) { box in
+            box.motion.speed = 99
+            box.envelope.bpm = 200
+            box.palette.mode = .spectrum
+        }
+        XCTAssertEqual(verdict, .commit)
+        XCTAssertEqual(boxA.motion.speed, 99, "the write landed on the box the gesture began on")
+        for (other, box) in zip(others, otherBoxes) {
+            XCTAssertEqual(box.motion.speed, p.motion.speed, "\(other.kind) \(other.id)@\(other.bridgeID ?? "-") moved")
+            XCTAssertEqual(box.envelope.bpm, p.envelope.bpm)
+            XCTAssertEqual(box.palette.mode, p.palette.mode)
+        }
+    }
+
+    /// Stop is authoritative: a session captured before the stop drops as
+    /// `.nothingRunning` and the (evicted) box is not mutated.
+    func testAStopFencesTheSessionCapturedBeforeIt() {
+        let vm = StudioViewModel()
+        let a = room("room-a")
+        let staged = stageRunningComposition(preset(), on: a, in: vm)
+        let s = session(vm, on: a)
+        // What `stopEffect` does first, before any suspension (Slice 2 fence-first).
+        vm.stopRunningScopes(forRowAt: StudioSelectionKey(room: a))
+        let verdict = vm.commitComposerEdit(s) { $0.motion.speed = 99 }
+        XCTAssertEqual(verdict, .drop(.nothingRunning))
+        XCTAssertEqual(staged.box.motion.speed, MotionConfig().speed, "a stopped run's box did not move")
+    }
+
+    /// A REPLACEMENT on the same place (a different composition applied to
+    /// the room) retires the predecessor's scope: its session drops, and the
+    /// successor's fresh box never receives the predecessor's edit.
+    func testAReplacementOnTheSamePlaceFencesThePredecessor() {
+        let vm = StudioViewModel()
+        let a = room("room-a")
+        let first = stageRunningComposition(preset(), on: a, in: vm)
+        let sOld = session(vm, on: a)
+        let second = stageRunningComposition(preset(), on: a, in: vm)   // new preset, same place
+        XCTAssertTrue(second.box !== first.box)
+        let verdict = vm.commitComposerEdit(sOld) { $0.motion.speed = 99 }
+        XCTAssertFalse(verdict.isCommit, "the predecessor's edit landed: \(verdict)")
+        XCTAssertEqual(second.box.motion.speed, MotionConfig().speed, "the successor's box is untouched")
+        XCTAssertEqual(first.box.motion.speed, MotionConfig().speed, "…and so is the evicted one")
+        // A fresh session addresses the successor and commits.
+        let sNew = session(vm, on: a)
+        XCTAssertTrue(sNew.box === second.box)
+        XCTAssertEqual(vm.commitComposerEdit(sNew) { $0.motion.speed = 42 }, .commit)
+        XCTAssertEqual(second.box.motion.speed, 42)
+    }
+
+    /// A RESTART of the same look on the same place is a new generation: the
+    /// old session is stale, the new one commits, and the box is the new run's.
+    func testARestartOfTheSameLookFencesTheOldGeneration() {
+        let vm = StudioViewModel()
+        let a = room("room-a")
+        let p = preset()
+        let first = stageRunningComposition(p, on: a, in: vm)
+        let sOld = session(vm, on: a)
+        let second = stageRunningComposition(p, on: a, in: vm)         // same preset, same place
+        XCTAssertNotEqual(first.identity.generation, second.identity.generation)
+        XCTAssertEqual(first.identity.targetKey, second.identity.targetKey, "same look, same place")
+        XCTAssertEqual(vm.commitComposerEdit(sOld) { $0.motion.speed = 99 }, .drop(.staleGeneration))
+        XCTAssertEqual(second.box.motion.speed, MotionConfig().speed)
+        XCTAssertEqual(vm.commitComposerEdit(session(vm, on: a)) { $0.motion.speed = 42 }, .commit)
+        XCTAssertEqual(second.box.motion.speed, 42)
+    }
+
+    /// A transport failover (DTLS → REST) rekeys the running instance: writes
+    /// authored against the streaming run drop; the look never stopped and
+    /// the NEXT gesture captures the new identity and commits.
+    func testATransportFailoverFencesInFlightEditsWithoutStoppingTheLook() {
+        let vm = StudioViewModel()
+        let a = room("room-a")
+        let staged = stageRunningComposition(preset(), on: a, in: vm)
+        let sOld = session(vm, on: a)
+        vm.rekeyRunningInstance(at: StudioSelectionKey(room: a), reason: .transportChanged)
+        XCTAssertEqual(vm.commitComposerEdit(sOld) { $0.motion.speed = 99 }, .drop(.staleGeneration))
+        XCTAssertEqual(staged.box.motion.speed, MotionConfig().speed)
+        let sNew = session(vm, on: a)
+        XCTAssertTrue(sNew.box === staged.box, "the same box — the look never stopped")
+        XCTAssertEqual(vm.commitComposerEdit(sNew) { $0.motion.speed = 42 }, .commit)
+    }
+
+    // MARK: - Revert to Saved / Save
+
+    private func storeWith(_ presets: [CompositionPreset]) -> CompositionStore {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("composer-convergence-\(UUID().uuidString).json")
+        let store = CompositionStore(fileURL: url, loadsSynchronously: true)
+        presets.forEach { store.save($0) }
+        return store
+    }
+
+    /// Revert restores the SAVED document — all four layers — into the live
+    /// box, fences the edit that was in flight against the pre-revert run,
+    /// hands the next gesture a fresh identity, and leaves other targets alone.
+    func testRevertRestoresTheSavedDocumentAndFencesInFlightEdits() {
+        let vm = StudioViewModel()
+        var motion = MotionConfig(); motion.speed = 33; motion.pattern = .wave
+        var envelope = EnvelopeConfig(); envelope.bpm = 90
+        let saved = preset(motion: motion, envelope: envelope)
+        vm.injectForTesting(compositionStore: storeWith([saved]))
+        let a = room("room-a")
+        let b = room("room-b")
+        let boxA = stageRunningComposition(saved, on: a, in: vm).box
+        let boxB = stageRunningComposition(saved, on: b, in: vm).box
+
+        // Unsaved edits on A and on B.
+        let sA = session(vm, on: a)
+        XCTAssertEqual(vm.commitComposerEdit(sA) { $0.motion.speed = 77; $0.palette.mode = .spectrum }, .commit)
+        XCTAssertEqual(vm.commitComposerEdit(session(vm, on: b)) { $0.motion.speed = 55 }, .commit)
+        let before = vm.runningEffect(for: a)?.identity
+
+        vm.selectedRoom = a
+        vm.revertActiveComposition()
+
+        XCTAssertEqual(boxA.motion.speed, 33, "speed came back from the saved document")
+        XCTAssertEqual(boxA.motion.pattern, .wave)
+        XCTAssertEqual(boxA.palette.mode, saved.palette.mode, "the palette layer reverted too")
+        XCTAssertEqual(boxA.envelope.bpm, 90)
+        XCTAssertEqual(boxB.motion.speed, 55, "room B's unsaved edit is untouched by room A's revert")
+        XCTAssertTrue(vm.statusMessage.contains("Reverted to saved"))
+
+        // The pre-revert session is stale; a fresh one commits.
+        XCTAssertEqual(vm.commitComposerEdit(sA) { $0.motion.speed = 99 }, .drop(.staleGeneration))
+        XCTAssertEqual(boxA.motion.speed, 33, "the in-flight edit did not land on top of the revert")
+        let after = vm.runningEffect(for: a)?.identity
+        XCTAssertNotEqual(before?.generation, after?.generation, "revert minted a new generation")
+        XCTAssertEqual(before?.targetKey, after?.targetKey, "…on the same look and place")
+        XCTAssertTrue(vm.valueScopes.isCurrent(after!), "the row's identity is the live one")
+        XCTAssertEqual(vm.commitComposerEdit(session(vm, on: a)) { $0.motion.speed = 12 }, .commit)
+    }
+
+    /// Revert refuses the "+ Create" draft (nothing saved to revert to) and
+    /// never touches the box.
+    func testRevertRefusesTheStarterDraft() {
+        let vm = StudioViewModel()
+        let a = room("room-a")
+        let card = vm.starterCompositionCard()
+        let identity = vm.installRunningIdentity(
+            room: a, card: card, execution: .composition(presetID: StudioViewModel.composerStarterDraftPresetID))
+        vm.runningEffects[StudioSelectionKey(room: a)] = RunningEffect(
+            cardID: card.id, card: card, room: a, lightIDs: ["L1"],
+            isEntertainment: false, requestedTransport: nil, transportFallback: false, identity: identity)
+        let box = CompositionParamBox(preset: preset())
+        vm.testInstallCompositionBox(box, at: StudioSelectionKey(room: a))
+        XCTAssertEqual(vm.commitComposerEdit(session(vm, on: a)) { $0.motion.speed = 77 }, .commit)
+        vm.revertActiveComposition()
+        XCTAssertEqual(box.motion.speed, 77, "the draft kept its edits")
+        XCTAssertEqual(vm.runningEffect(for: a)?.identity.generation, identity.generation,
+                       "a refused revert bumps nothing")
+    }
+
+    /// Save persists EXACTLY the live edits as a NEW preset (save-as), leaves
+    /// the running box and other targets untouched, and sanitises the name
+    /// and icon the way the sheet relies on.
+    func testSavePersistsExactEditsAsANewPresetAndTouchesNothingElse() throws {
+        let vm = StudioViewModel()
+        let store = storeWith([])
+        vm.injectForTesting(compositionStore: store)
+        let a = room("room-a")
+        let b = room("room-b")
+        let boxA = stageRunningComposition(preset(), on: a, in: vm).box
+        let boxB = stageRunningComposition(preset(), on: b, in: vm).box
+        XCTAssertEqual(vm.commitComposerEdit(session(vm, on: a)) {
+            $0.motion.speed = 88; $0.envelope.shape = .pulse; $0.reaction.source = .beat
+        }, .commit)
+
+        vm.selectedRoom = a
+        let saved = try XCTUnwrap(vm.saveActiveComposition(
+            name: "   ", icon: "definitely.not.a.symbol", preferredTransport: nil, category: .all))
+        XCTAssertEqual(saved.name, "My Composition", "an empty name gets the default")
+        XCTAssertEqual(saved.icon, "sparkles", "an unknown symbol falls back")
+        XCTAssertEqual(saved.category, .myCreations, "`.all` is a filter, never a preset's category")
+        XCTAssertEqual(saved.motion.speed, 88)
+        XCTAssertEqual(saved.envelope.shape, .pulse)
+        XCTAssertEqual(saved.reaction.source, .beat)
+        XCTAssertTrue(store.presets.contains { $0.id == saved.id }, "persisted")
+        XCTAssertEqual(boxA.motion.speed, 88, "saving does not disturb the running box")
+        XCTAssertEqual(boxB.motion.speed, MotionConfig().speed, "…or another target's")
+        XCTAssertTrue(vm.valueScopes.isCurrent(vm.runningEffect(for: a)!.identity),
+                      "save does not restart or rekey the running look")
+    }
+
+    // MARK: - Perform
+
+    /// Entering Perform threads the LIVE box (deck A is the same instance the
+    /// editor writes), records the backing preset — nil for the starter draft
+    /// — and leaving it hands the same box back untouched: no duplicate
+    /// runtime, no copy.
+    func testPerformThreadsTheLiveBoxAndLeavesItIntactOnExit() async {
+        let orchestrator = await makeDemoOrchestrator()
+        let vm = StudioViewModel()
+        let a = room("room-a")
+        let p = preset()
+        let staged = stageRunningComposition(p, on: a, in: vm)
+        XCTAssertEqual(vm.commitComposerEdit(session(vm, on: a)) { $0.motion.speed = 64 }, .commit)
+
+        // Exactly what MixerTrayView's Perform button builds.
+        var presetID: UUID? = nil
+        if case .composition(let pid) = staged.card.strategy,
+           pid != StudioViewModel.composerStarterDraftPresetID { presetID = pid }
+        var performVM: PerformanceViewModel? = PerformanceViewModel(
+            orchestrator: orchestrator, room: a, liveBox: staged.box,
+            liveName: staged.card.name, presetID: presetID, compositionStore: vm.compositionStore)
+        XCTAssertTrue(performVM!.mix.deckA === staged.box, "Perform performs THE live box, not a copy")
+        XCTAssertEqual(performVM!.presetID, p.id)
+        XCTAssertEqual(performVM!.room.id, a.id)
+
+        performVM = nil   // exit: the cover's item goes nil
+        XCTAssertEqual(staged.box.motion.speed, 64, "the edit survived Perform")
+        XCTAssertTrue(vm.composerEditSession()!.box === staged.box, "the editor still addresses the same box")
+        XCTAssertTrue(vm.valueScopes.isCurrent(staged.identity), "Perform neither stopped nor rekeyed the look")
+
+        // The starter draft performs as unsaved.
+        let starter = vm.starterCompositionCard()
+        var draftID: UUID? = nil
+        if case .composition(let pid) = starter.strategy,
+           pid != StudioViewModel.composerStarterDraftPresetID { draftID = pid }
+        XCTAssertNil(draftID)
+    }
+
+    // MARK: - Host identity
+
+    /// The customization host keys its subtree on the exact target and look,
+    /// without the generation: two targets running the same preset never
+    /// share view identity; a same-look restart or Revert keeps it.
+    func testHostIdentityIsPerTargetAndSurvivesAGenerationBump() {
+        let vm = StudioViewModel()
+        let p = preset()
+        let a = room("room-a", bridge: "bridge-a")
+        let aOnB = room("room-a", bridge: "bridge-b")
+        let zoneA = room("room-a", bridge: "bridge-a", kind: .zone)
+        let idA = stageRunningComposition(p, on: a, in: vm).identity
+        let idB = stageRunningComposition(p, on: aOnB, in: vm).identity
+        let idZ = stageRunningComposition(p, on: zoneA, in: vm).identity
+        XCTAssertEqual(idA.cardID, idB.cardID, "the bare cardID — the old host key — cannot tell these apart")
+        let ids = Set([idA.targetKey.stableID, idB.targetKey.stableID, idZ.targetKey.stableID])
+        XCTAssertEqual(ids.count, 3, "same preset, three targets, three view identities")
+
+        let restarted = stageRunningComposition(p, on: a, in: vm).identity
+        XCTAssertNotEqual(restarted.generation, idA.generation)
+        XCTAssertEqual(restarted.targetKey.stableID, idA.targetKey.stableID,
+                       "a generation bump does not tear the surface down")
+    }
+
     // MARK: - Hosting (for the presentation probe)
 
     private var windows: [UIWindow] = []

@@ -924,7 +924,8 @@ final class StudioViewModel {
         // save that did not happen.
         let outcome = await orchestrator.saveLookToBridge(
             room: room, paramBox: box,
-            gamutOverride: activeCompositionGamut, preset: preset)
+            gamutOverride: activeCompositionGamuts[StudioSelectionKey(room: room)] ?? .c,
+            preset: preset)
 
         applyBridgeSaveOutcome(
             outcome, room: room, presetName: preset.name,
@@ -1520,7 +1521,18 @@ final class StudioViewModel {
     private let aiGenerator = AICompositionGenerator()
     var isGeneratingAIComposition = false
     var aiGenerationErrorMessage: String?
-    var activeCompositionGamut: HueColorUtils.Gamut = .c
+    /// The dominant Hue gamut of each running composition's target, keyed by
+    /// the EXACT place (Slice 3): one slot per target, not one global slot
+    /// that the last apply overwrote for every composition on screen. The
+    /// engine starts with this value and the editor clamps to it — one truth
+    /// per target.
+    private var activeCompositionGamuts: [StudioSelectionKey: HueColorUtils.Gamut] = [:]
+    /// The gamut for the SELECTED target's composition (`.c`, the widest
+    /// authoring gamut, when nothing is known).
+    var activeCompositionGamut: HueColorUtils.Gamut {
+        guard let room = selectedRoom else { return .c }
+        return activeCompositionGamuts[StudioSelectionKey(room: room)] ?? .c
+    }
     // `roomHasColorLights` is GONE (Slice 3, S3-4). It was a two-state answer
     // to a three-state question — a default of `true` collapsed "not read yet"
     // into "yes" — held in ONE slot for every running composition. Composer
@@ -1577,6 +1589,48 @@ final class StudioViewModel {
     var activeCompositionBox: CompositionParamBox? {
         guard let room = selectedRoom else { return nil }
         return activeCompositionBoxes[StudioSelectionKey(room: room)]
+    }
+
+    // ── Composer edit session (Slice 3, S3-5: exact-state fencing) ──
+    //
+    // Every Composer write used to be `activeCompositionBox?.field = value`,
+    // which RE-RESOLVES the box from `selectedRoom` at the moment of the
+    // write. After a stop the write no-opped (safe by accident, silently);
+    // after a same-room replacement, or a room change under a live keyboard,
+    // an edit authored against composition A landed in composition B's box.
+    // `StudioParam` writes have been fenced since Slice 1; these are the
+    // Composer's equivalent, on the Composer's own domain model — the fence
+    // guards the IDENTITY, the four config structs stay in the box.
+
+    /// The session for a running composition: its exact identity and its
+    /// live box, captured NOW and never re-resolved. Nil when the row has no
+    /// live box (a bridge-optimized one-shot, a recovered mirror).
+    func composerEditSession(for effect: RunningEffect) -> ComposerEditSession? {
+        guard case .composition = effect.card.strategy,
+              effect.recovered == nil,
+              let box = activeCompositionBoxes[StudioSelectionKey(room: effect.room)]
+        else { return nil }
+        return ComposerEditSession(identity: effect.identity, box: box)
+    }
+
+    /// The session for the SELECTED target's running composition.
+    func composerEditSession() -> ComposerEditSession? {
+        currentRoomEffect.flatMap { composerEditSession(for: $0) }
+    }
+
+    /// Commit one Composer edit through the fence. `mutate` runs against the
+    /// CAPTURED box only when the captured identity is still the live one on
+    /// its target; a stop, a replacement, a restart, a transport failover or
+    /// a Revert in between drops it with the reason a test can assert on.
+    @discardableResult
+    func commitComposerEdit(_ session: ComposerEditSession,
+                            _ mutate: (CompositionParamBox) -> Void) -> CustomizationFenceVerdict {
+        let verdict = CustomizationFence.verdict(
+            captured: session.identity,
+            live: valueScopes.liveIdentity(for: session.identity))
+        guard verdict.isCommit else { return verdict }
+        mutate(session.box)
+        return .commit
     }
 
     // ── Status ────────────────────────────────────────────────
@@ -1966,18 +2020,38 @@ final class StudioViewModel {
     }
 
     /// Copy the backing preset's four layer configs back into the live box —
-    /// the composer's "revert to saved".
+    /// the composer's "revert to saved". REVERT, not reset: the destination is
+    /// the user's saved document, never factory defaults (spec §22).
+    ///
+    /// Slice 3: the copy-back goes through the edit session, and the running
+    /// instance is REKEYED afterwards — the same fence a transport failover
+    /// applies — so an edit still in flight against the pre-revert run (a
+    /// typed draft committing on focus loss, a pad sample, the export task)
+    /// drops as `.staleGeneration` instead of landing on top of the revert.
+    /// `rekey`, not `reset`: the look never stopped, and the new identity is
+    /// written back into the row so the next gesture captures it. Session
+    /// memory is keyed without the generation, so the layer tab, expansions
+    /// and scroll position survive.
     func revertActiveComposition() {
-        guard let box = activeCompositionBox,
-              let effect = currentRoomEffect,
+        guard let effect = currentRoomEffect,
+              let session = composerEditSession(for: effect),
               case .composition(let pid) = effect.card.strategy,
               pid != Self.composerStarterDraftPresetID,
               let preset = compositionStore.presets.first(where: { $0.id == pid }) else { return }
-        box.palette = preset.palette
-        box.motion = preset.motion
-        box.envelope = preset.envelope
-        box.reaction = preset.reaction
-        box.triggerRESTBurst()
+        let verdict = commitComposerEdit(session) { box in
+            box.palette = preset.palette
+            box.motion = preset.motion
+            box.envelope = preset.envelope
+            box.reaction = preset.reaction
+            box.triggerRESTBurst()
+        }
+        guard verdict.isCommit else { return }
+        retirePendingSends(for: effect.identity.targetKey)
+        if let newIdentity = valueScopes.rekey(
+            effect.identity, to: generationCounter.bump(.reset)) {
+            runningEffects[StudioSelectionKey(room: effect.room)]?.identity = newIdentity
+        }
+        bumpLiveValuesTick()
         statusMessage = "Reverted to saved '\(preset.name)'"
     }
 
@@ -3193,7 +3267,8 @@ final class StudioViewModel {
                 }()
                 // Prefer completing mic handoff before blocking on gamut result — bridge fetch still runs in parallel.
                 await micHeadStart
-                activeCompositionGamut = await gamutTask
+                let dominantGamut = await gamutTask
+                activeCompositionGamuts[StudioSelectionKey(room: room)] = dominantGamut
                 let box = CompositionParamBox(preset: preset)
                 activeCompositionBoxes[StudioSelectionKey(room: room)] = box
                 // Restore persisted harmony rule for re-edit
@@ -3221,7 +3296,7 @@ final class StudioViewModel {
                     await orchestrator.startCompositionMode(
                         room: room,
                         paramBox: box,
-                        gamutOverride: activeCompositionGamut,
+                        gamutOverride: dominantGamut,
                         preferEntertainment: requestedEntertainment,
                         tier: tier,
                         preset: preset,
@@ -3384,6 +3459,7 @@ final class StudioViewModel {
             // Keyed by the STOPPING row's EXACT bridge + room (round 4e) — the
             // room-id removal used to evict another bridge's same-room-id box.
             activeCompositionBoxes.removeValue(forKey: rowKey)
+            activeCompositionGamuts.removeValue(forKey: rowKey)
             if isExplicitStop, let api, let groupedLightID {
                 // Ensure composition cards (including bridge one-shot tier)
                 // fully release control and don't appear "stuck on".

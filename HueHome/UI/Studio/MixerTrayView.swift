@@ -102,7 +102,14 @@ struct StudioCustomizationHost: View {
         // Hue room id produced the SAME view identity, so SwiftUI reused this
         // subtree across a real room change and carried the previous bridge's
         // state into it.
-        .id(vm.currentRoomEffect?.cardID
+        //
+        // Slice 3: the running branch used to key on the bare `cardID`, so the
+        // SAME look on two targets (one preset on two rooms, or on a room and
+        // a zone sharing an id) shared one view identity and carried the
+        // first target's gesture/focus state into the second. The target key
+        // (bridge + kind + group + card + execution, no generation) is the
+        // identity the comment above always claimed.
+        .id(vm.currentRoomEffect.map { $0.identity.targetKey.stableID }
             ?? vm.selectedRoom.map { StudioSelectionKey(room: $0).stableID })
     }
 

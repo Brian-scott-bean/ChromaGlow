@@ -52,6 +52,19 @@ struct StudioParamSession {
     let bridgeNativeEffectName: String?
 }
 
+/// A Composer edit, captured when the gesture begins (Slice 3, S3-5).
+///
+/// The Composer's counterpart to `StudioParamSession`, on the Composer's own
+/// domain model: the exact running identity is the fence, and the live
+/// `CompositionParamBox` is captured BY REFERENCE so a committed edit mutates
+/// the box the gesture began on — never a box re-resolved from whatever
+/// `selectedRoom` happens to be when the write lands. Nothing here is a
+/// `StudioParam`; the four config structs stay in the box (spec §20).
+struct ComposerEditSession {
+    let identity: RunningLookIdentity
+    let box: CompositionParamBox
+}
+
 /// Everything one debounce window accumulated for one exact target (R4D).
 ///
 /// The routing facts come from the LATEST session in the window — they are

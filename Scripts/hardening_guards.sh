@@ -1336,6 +1336,19 @@ r36_tab_id=$(grep -nE '\.id\(activeCompositionTab\)' "$R36_PANEL" 2>/dev/null \
 if [[ -n "$r36_tab_id" ]]; then
     fail "studio-one-surface" $'the Composer tab subtree is keyed by `.id(activeCompositionTab)` again — a tab change tears down in-flight exact entry, and the tiers split lifetimes:\n'"$r36_tab_id"
 fi
+# (f) Slice 3 (S3-5): the host's view identity is the EXACT target key. The
+# running branch keyed on the bare `cardID`, so the same preset on two targets
+# (two rooms; a room and a zone sharing an id; two bridges) shared one SwiftUI
+# identity and carried the first target's gesture/focus state into the second.
+# `RunningLookTargetKey.stableID` carries bridge + kind + group + card +
+# execution and NO generation — a restart, a failover or a Revert must not
+# tear the surface down (the fence handles the write side).
+r36_host_id=$(grep -nE '\.id\(' "$R36_HOST" 2>/dev/null | grep -vE '^[0-9]+:[[:space:]]*//' || true)
+echo "$r36_host_id" | grep -qF 'identity.targetKey.stableID' \
+    || fail "studio-one-surface" $'the customization host no longer keys its identity on the running target key (identity.targetKey.stableID) — the same look on two targets would share one view identity again:\n'"$r36_host_id"
+r36_card_id=$(echo "$r36_host_id" | grep -E 'currentRoomEffect\?\.cardID|\.id\(vm\.currentRoomEffect\?\.cardID' || true)
+[[ -z "$r36_card_id" ]] || fail "studio-one-surface" $'the host keys on the bare cardID again:\n'"$r36_card_id"
+
 # The migration proof exists and runs: the render test that walks every
 # catalog control id per layer/gating state and asserts each one is on the
 # page, with no "Advanced" text and no colour popover.
