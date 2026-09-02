@@ -1020,10 +1020,15 @@ final class MultiBridgeRoutingTests: XCTestCase {
         vm.configure(orchestrator: orchestrator)
         let compositionRoom = roomOnBridgeB(id: owningRoomID, name: "Aurora Room")
         let compositionCard = vm.studioCard(for: makePreset(named: "Aurora Drift"))
-        vm.runningEffects[RoomEffectKey(room: compositionRoom)] = RunningEffect(
+        vm.runningEffects[StudioSelectionKey(room: compositionRoom)] = RunningEffect(
             cardID: compositionCard.id, card: compositionCard, room: compositionRoom,
             lightIDs: [], isEntertainment: true,
-            requestedTransport: .entertainmentArea, transportFallback: false
+            requestedTransport: .entertainmentArea, transportFallback: false,
+            identity: RunningLookIdentity(
+                bridgeID: compositionRoom.bridgeID, groupID: compositionRoom.id,
+                kind: compositionRoom.kind, cardID: compositionCard.id,
+                execution: .composition(presetID: UUID()),
+                generation: vm.generationCounter.bump(.cardReplaced))
         )
         return (vm, compositionCard)
     }
@@ -2032,9 +2037,11 @@ final class MultiBridgeRoutingTests: XCTestCase {
         }
 
         let orchestratorClosures = try enqueuedClosureBodies("HueHome/Core/Network/UnifiedOrchestrator.swift")
-        let studioClosures = try enqueuedClosureBodies("HueHome/UI/Studio/StudioViewModel.swift")
+        // Slice 2 moved the Studio send bodies into the customization-wiring
+        // extension (`performBridgeSend`) — the guard's remit follows the code.
+        let studioClosures = try enqueuedClosureBodies("HueHome/UI/Studio/StudioViewModel+CustomizationWiring.swift")
         XCTAssertFalse(orchestratorClosures.isEmpty, "UnifiedOrchestrator must still enqueue REST work")
-        XCTAssertFalse(studioClosures.isEmpty, "StudioViewModel must still enqueue REST work")
+        XCTAssertFalse(studioClosures.isEmpty, "the Studio customization wiring must still enqueue REST work")
 
         // (a) No enqueued closure may guard on Task.isCancelled.
         for (label, closures) in [("UnifiedOrchestrator", orchestratorClosures),
@@ -2058,9 +2065,17 @@ final class MultiBridgeRoutingTests: XCTestCase {
         let perLightClosures = studioClosures.filter { body in
             body.contains(where: { $0.contains("gate.send(") })
         }
-        XCTAssertEqual(perLightClosures.count, 3, """
-            the three paced per-light Studio loops (warmth, speed, base colour) \
-            are the cancellable ones — a new per-light site needs a guard too
+        // R4D coalesced the three separate paced sweeps (warmth, speed, base
+        // colour) into ONE: a single debounced window now emits one
+        // `EffectsV2Body` per light carrying every field that changed, so there
+        // is one per-light loop left instead of three. The safety property this
+        // guard exists for is UNCHANGED and still enforced below — every
+        // `gate.send` is immediately preceded by a `stillCurrent()` probe — and
+        // the count is still a tight pin: a new per-light site would make it 2
+        // and fail here.
+        XCTAssertEqual(perLightClosures.count, 1, """
+            the one paced per-light Studio loop (the coalesced v2 body) is the \
+            cancellable one — a new per-light site needs a guard too
             """)
         for body in perLightClosures {
             let sendLines = body.indices.filter { body[$0].hasPrefix("_ = await gate.send(") }
@@ -4536,10 +4551,14 @@ final class MultiBridgeRoutingTests: XCTestCase {
     ) -> UnifiedOrchestrator.BridgeNativeOwnershipToken {
         let token = orchestrator.beginBridgeNativeOwnership(
             roomID: room.id, bridgeID: room.bridgeID)
-        vm.runningEffects[RoomEffectKey(room: room)] = RunningEffect(
+        vm.runningEffects[StudioSelectionKey(room: room)] = RunningEffect(
             cardID: card.id, card: card, room: room,
             lightIDs: lightIDs, isEntertainment: false,
             requestedTransport: nil, transportFallback: false,
+            identity: RunningLookIdentity(
+                bridgeID: room.bridgeID, groupID: room.id, kind: room.kind,
+                cardID: card.id, execution: .bridgeNative(effect: "candle"),
+                generation: vm.generationCounter.bump(.cardReplaced)),
             v2CapableLightIDs: [], bridgeNativeOwnership: token)
         return token
     }
@@ -8210,8 +8229,13 @@ final class MultiBridgeRoutingTests: XCTestCase {
         XCTAssertTrue(vmSource.contains("foreignConsent: EntertainmentConsent? = nil"),
             "which is only safe because the parameter defaults to nil")
 
+        // R4B: `apply(_:roomOverride:…)` is now a thin `serialized { }` wrapper
+        // and the body it used to hold is `applyCore`. This guard is about that
+        // BODY — where the preflight sits and what may be gated on
+        // `skipHandoffConfirmation` — so it follows the code, exactly as the
+        // Slice 2 note above does for the enqueued Studio closures.
         let applyBody = try XCTUnwrap(
-            functionBody(vmSource, startingWith: "func apply(_ card: StudioCard, roomOverride:"))
+            functionBody(vmSource, startingWith: "func applyCore(_ card: StudioCard, roomOverride:"))
         let preflightIndex = try XCTUnwrap(
             applyBody.firstIndex { $0.contains("foreignTakeoverPreflight(") },
             "apply must still call the foreign preflight")
@@ -11956,19 +11980,19 @@ final class MultiBridgeRoutingTests: XCTestCase {
         await vm.apply(party, roomOverride: streamRoomOnB(), preferEntertainmentOverride: true)
 
         vm.selectedRoom = streamRoomOnA()
-        vm.setParamValue(for: party.id, paramID: "speed", value: 97)
+        vm.commitParam(cardID: party.id, paramID: "speed", value: 97)
         XCTAssertEqual(orchestrator.testStudioParamBoxValues(forBridge: "bridge-a")?["speed"], 97,
             "the edit landed on the selected room's bridge")
 
         vm.selectedRoom = streamRoomOnB()
-        vm.setParamValue(for: party.id, paramID: "speed", value: 12)
+        vm.commitParam(cardID: party.id, paramID: "speed", value: 12)
         XCTAssertEqual(orchestrator.testStudioParamBoxValues(forBridge: "bridge-b")?["speed"], 12,
             "selecting the other room routes to the other bridge")
         XCTAssertEqual(orchestrator.testStudioParamBoxValues(forBridge: "bridge-a")?["speed"], 97,
             "…without touching the first bridge's live box")
 
         vm.selectedRoom = streamRoomOnA()
-        vm.setParamValue(for: party.id, paramID: "speed", value: 33)
+        vm.commitParam(cardID: party.id, paramID: "speed", value: 33)
         XCTAssertEqual(orchestrator.testStudioParamBoxValues(forBridge: "bridge-a")?["speed"], 33,
             "…and back again")
         XCTAssertEqual(orchestrator.testStudioParamBoxValues(forBridge: "bridge-b")?["speed"], 12,

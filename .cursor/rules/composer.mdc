@@ -12,7 +12,7 @@ globs:
 ## What's Already Built (DO NOT RECREATE)
 - `CompositionModels.swift` — PaletteConfig, MotionConfig, EnvelopeConfig, ReactionConfig, CodableColor, CompositionPreset
 - `CompositionEngine.swift` — `CompositionEngine.render()` + `CompositionParamBox`
-- `CompositionStore.swift` — JSON persistence + 20 built-in presets
+- `CompositionStore.swift` — JSON persistence + 66 built-in presets
 - `StudioViewModel.swift` — `.composition(presetID:)` strategy + `composerStudioCards`
 - `UnifiedOrchestrator.swift` — `startCompositionMode()` with DTLS 25fps / REST 5fps
 
@@ -23,6 +23,13 @@ vm.activeCompositionBox?.palette.saturation = newValue
 ```
 No debounce. No API call. The render loop reads the box each frame (25-50fps).
 
+`activeCompositionBox` is a get-only, selection-derived accessor over
+`activeCompositionBoxes: [StudioSelectionKey: CompositionParamBox]` — it returns
+the box for the CURRENTLY SELECTED room (`StudioSelectionKey(room:)`). Mutation
+works because `CompositionParamBox` is a class. There is no single global box:
+two rooms running compositions at once own separate boxes, and callers holding
+only bridge + group id resolve through the fail-closed unique-match helper.
+
 ## Preset Categories
 - `.ambient` — Slow, warm, relaxing (Sunset, Ocean, Aurora, Cozy, Heartbeat)
 - `.energetic` — Fast, vivid, reactive (Bass Drop, Club Mode, Storm Chase)
@@ -30,4 +37,4 @@ No debounce. No API call. The render loop reads the box each frame (25-50fps).
 - `.myCreations` — User-saved compositions
 
 ## Built-in Preset IDs
-Built-in presets use deterministic UUIDs (`00000001-...` through `00000003-...`). Never generate random UUIDs for built-ins.
+Built-in presets use deterministic UUIDs (`00000001-...` through `00000009-...`). Never generate random UUIDs for built-ins.

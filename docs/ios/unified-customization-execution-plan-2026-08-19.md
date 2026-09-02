@@ -623,6 +623,77 @@ Check:
 
 Do not proceed until all Studio instrument behavior is stable and no known fake/dead control remains.
 
+### Slice 2 status — 2026-09-01: **IMPLEMENTED on `feat/unified-customization-studio-instrument` (PR open, unmerged)**
+
+| Deliverable | Status |
+| --- | --- |
+| Production truth wiring (§9 invariant) | **Done** — `CustomizationValueScopes` + generation fencing are production-active; card-global `paramValues`, bridge-only `updateStudioParams`, and the global debounce slot are deleted; `runningEffects` is kind-aware (`StudioSelectionKey`); gestures capture `StudioParamSession` identity |
+| Shared instrument primitives (§12) | **Done** — StageKnob/StageFader/StageSteppedEncoder + `InstrumentControlMath` (adaptive fine control, semantic ticks, clamps), StageColorEditor (B+ inline), StageBeatSection (BeatPanelView reuse) |
+| Per-look boards, no Advanced (§17/§18) | **Done** — `StudioBoardCatalog` descriptor with designed heroes for all 15 cards; `ParamTier.advanced` retired (→ `.support` prominence metadata); profile-driven availability on bridge-native boards; entOnly expanded 3→7 from the engine reverse-audit |
+| Rolodex/session manager (§13) | **Done** — PLAYING NOW-first picker with exact per-row Stop, instant active-target console switch (`modeOnRoomChange` policy fn), per-target session working memory, Apply Current Look copy-once |
+| Stop hierarchy (§14) | **Done** — always-visible Stop All octagon, header selected-target Stop, session-row Stop; pending writes fenced after every stop |
+| Look browser + Preview Live (§15/§16) | **Done, with a recorded spec §16.5 deviation** — Favorites/Recents band (local-first store), card star + long-press, INLINE Details & Setup (no sheet), `PreviewLiveMachine` exact fenced restore through the normal apply path. **Deviation:** §16.5 says "canceling restores the previous running look exactly"; a *fenced* cancel restores **nothing**. If the audition's target changed, was stopped, or was replaced between begin and cancel, `cancelVerdict` returns `.drop` and the machine touches nothing — the world it would restore into has moved on, and a cross-target restore would be worse than no restore. The user is told rather than left guessing: a dropped restore posts `PreviewLiveCopy.restoreDropped` (`7d8d14e`), it is no longer a silent no-op. Navigating away from the browser does **not** cancel: the audition keeps playing on its target and is cancelled or committed explicitly. **Preview Live is also refused outright over a composition with live edits and over a recovered row** (`2200e98`) — there is no exact previous state to snapshot, so an audition would be a restore promise the machine could not keep; a chained audition on a *different* room is refused and names the armed room. `119aa4b` then fixed a stranded deferred audition: it was left behind on every confirmation early return and every non-prompt refusal, which **locked Preview Live out on every other room**; one release helper now runs on every exit. Production-path tests now exist: `StudioPreviewLiveProductionTests` (**19** tests at `2200e98`; **34** at `b06df67`, driving the real `apply()` path against the recording bridge client, no timing waits) landed in `7d8d14e` and grew in `2200e98`; the pre-existing `PreviewLiveTests` (9) exercise the machine only |
+| Tests | Slice 1 57 + Slice 2 additions (production wiring 17, profiles 10, control math 14, preview 9, library/session 6, structural/probes updated). The 2026-09-01 remediation, across **five** review rounds, brings `FlashSafetyTests` to **75**, `StudioBoardAvailabilityTests` to **53**, `StudioProductionWiringTests` from 17 to **47**, `StudioPreviewLiveProductionTests` to **34**, `StudioLifecycleSerializationTests` to **7**, plus additions to `CustomizationResolverTests` and `CustomizationIdentityTests` (**31** each by file) — every new production test drives the real `apply()` path against the recording bridge client with no timing waits. Focused runs on `119aa4b`: flash 132/132, colour 107/107, lifecycle 523/523. Full registered suite recorded in DEVLOG |
+| Hardware | **NOT run** — master checklist §V-B rows 37–65 |
+
+Guard updates (deliberate, recorded): Guard 12 pins the stronger `bridgeID+roomID` update
+signature and the new room-change policy function; the customization suites joined the
+no-timing-wait lists. Guard 13's rule was unchanged and its anchors did not move, although the host
+file itself (`MixerTrayView.swift`, which holds `StudioCustomizationHost`) was rewritten — the
+one-surface rule held across the rewrite. The 2026-09-01 remediation adds Guard 14 (the
+realized-frame flash invariant) and Guard 15 (the single board availability funnel), extends
+Guard 13(a) to the six new instrument files, and re-hardens two Guard 12 anchors the Slice 2 PR had
+loosened (the `updateStudioParams` signature literal is scoped to its body; the room-change rule must
+*return* `.decks` on the non-customization branch). The second review round (`2200e98`) hardens them
+again: Guard 14's symbol checks are declaration-shaped so a comment can no longer satisfy them, and
+it additionally pins a `liveLock` count of ≥ 1 per loop, the helper body shape (no numeric bail-out,
+the ledger period), the per-bridge ledger at every call site, `Budget` declared before the loop, and
+the rise-gated conditions; Guard 15 gains sub-checks (f)–(j); Guard 12(d) pins the conjunction (an
+`||` no longer passes); Guard 13(a) and the global-slot check use anchored comment filters; and a
+suite **missing** from the no-timing-wait list now fails instead of being silently skipped. The third
+round (`119aa4b`) hardens them once more: Guard 12(d) accepts either operand order and cannot be
+satisfied from a trailing comment; Guard 13 anchors its comment filters and counts both `ScrollView`
+spellings; Guard 14 gains sub-check **(h)**, pinning the emit helper and the ledger shape and banning
+any numeric hold bail-out in either spelling; Guard 15 gains **(h)**, **(c)** and **(k)** — the editor
+floor is scoped to the `StageColorEditor` call, its filter is anchored, and the funnel's answers
+(disabled, opacity, note) must be applied in **all three** renderers. The matrix generator gains
+`verify_send_path`: every bridge-native "code-proven" citation is verified against the
+`performBridgeSend` body. The fourth round (`14a0cac`) pins commit-after-send, the `Bool` return and the
+luminance symbols in Guard 14, anchors Guard 13(c), and pins non-shadowed funnel bindings in Guard 15(k);
+the fifth round (`b06df67`) adds no-exit-between-send-and-commit, `commit(at: CACurrentMediaTime())` and
+the restore-on-drop / silence-clock declarations to Guard 14, counts `.send(channels:` as a direct send,
+pins read → stop → read **order** in Guard 12(b), fails a bare-literal binding in Guard 15(k), bans
+`.popover(` in Guard 13(a), and makes the generator's `verify_send_path` require a non-nil assignment to
+the payload symbol rather than a read of the key. Every sub-check mutation-tested on a scratch copy.
+
+Capability-matrix wording: the generated matrix reports four separate figures, never one score —
+**code-proven send path 57 / 68**, **no code-proven send path (hardware-pending evidence)
+11 / 68**, **pending 0 / 68**, and **23 / 68 code-proven rows that still owe a hardware behaviour
+check** (`base_color` ×9, `speed` ×11, `warmth` ×3; a subset of the 57, not a fourth bucket).
+Code-proven means the write provably leaves the app. 68 is the catalog size. Nothing in this plan
+may be read as "68/68 proven" — audit §7 still owes physical evidence. `--check` verifies every
+citation, strips comments before matching, fails on any uncited or drifting loop read, and
+cross-checks each row's evidence class and the pending-hardware list against
+`EffectParameterProfiles.swift`; `--refresh-citations` re-finds the line numbers.
+
+**Accepted debt carried into Slice 3 (recorded, not fixed here)**
+
+- **Warmth authoring range is not snapshot-driven.** Availability is snapshot-honest (the
+  `mirek_schema` intersection; a schemaless CT light resolves unknown, never a fake clamp), but the
+  knob's range is still the catalog's `153...500` for all four Warmth params (grep
+  `kind: .slider(min: 153, max: 500)` in `StudioViewModel.swift`) and the board's slider control
+  reads its range from `param.kind` in its own `range` computed property (`StudioBoardView.swift`),
+  not from the snapshot's `MirekRange`. On a narrower fixture the knob travels further than the
+  device can go. The *availability* half of the app-driven warmth gap was closed in `2200e98`
+  (app-driven warmth now requires `colorTemperature` instead of resolving `.none`); the authoring
+  range was not. Owner: Slice 3. Checklist row: §V-B 58.
+- `EffectEngine.swift`'s dead loops still declare unsafe ranges (no production caller; delete in
+  Slice 3).
+- `EFFECT_PROFILES` / `profile(effect:paramID:)` are keyed by paramID only.
+- `targetSnapshot` hardcodes `entertainmentAvailable: .unknown`.
+- Deck `effectCoverage` is still card-keyed; the `""` vs `"legacy"` bridge-key sentinel split
+  remains.
+
 ---
 
 # SLICE 3 — Composer Convergence + Cleanup + Final Hardening
@@ -728,9 +799,20 @@ Run deterministic tests for every critical race:
 - old card vs replacement;
 - same-card multi-bridge independence;
 - Preview Live cancel/restore;
-- transport changes;
+- transport changes — **transport fallback and Entertainment session loss are wired through
+  `studioRuntimeEventHandler` (`7d8d14e`)**: the orchestrator seam tells the view
+  model, so the running row and the resolver's transport stop disagreeing after an ENT→REST
+  failover or a lost session;
 - room deletion;
-- bridge reconnect;
+- bridge reconnect — **not wired by design, not proven by test**: SSE reconnect and capability
+  refresh deliberately do not rekey, because they leave the running instance's identity unchanged
+  (same bridge, group, kind, card, generation); only transport fallback and session loss change what
+  the identity means. The ownership argument is recorded at the `UnifiedOrchestrator` seam and in the
+  `bump()` doc comment of `HueHome/Core/CustomizationIdentity.swift` (`7d8d14e`), which lists only
+  the reasons production actually bumps: `.cardReplaced`, `.stopped`, `.reset`, `.transportChanged`.
+  **No test proves the argument** — it is an ownership argument about code, and membership staleness
+  is recorded there as an accepted gap in it (`2200e98`). Hardware §V-B rows **59** and **63** remain
+  **UNPROVEN** and are what would actually settle it;
 - recovered composition with no live box.
 
 ---
@@ -777,7 +859,9 @@ Do not claim unrun physical validation.
 
 > The checklist file is `docs/ios/master-on-device-checklist.md`. Its §V-A Track A block is still marked
 > **UNPROVEN / zero hardware rows executed** as of 2026-09-01 — the new block should be added without
-> disturbing that outstanding debt.
+> disturbing that outstanding debt. The Slice 2 block is §V-B, rows 37–65; the reconnect /
+> background-foreground / room-deletion / transport-loss cases required by audit §27 are rows
+> 59–64, and the Warmth range debt above is row 58. All of them are **UNPROVEN**.
 
 ---
 
@@ -800,11 +884,14 @@ Before final PR:
 Do not assume an old test script/destination is valid without verifying current repo conventions.
 
 > **Verified 2026-09-01 — scheme name.** The iOS scheme is **`HueHome 1`**, not `HueHome`.
-> `run_tests.sh` still names the wrong scheme, so pass it explicitly:
+> **Correction (Slice 2, 2026-09-01):** `run_tests.sh` now targets the correct scheme and resolves a
+> deterministic destination (preferred model at the highest installed OS; `CHROMAGLOW_TEST_UDID` /
+> `CHROMAGLOW_TEST_MODEL` overrides). A bare `name=iPhone 17 Pro` destination is ambiguous — several
+> simulators share the name across OS runtimes — so invoke xcodebuild with an exact `id=`:
 >
 > ```bash
 > xcodebuild test -project HueHome.xcodeproj -scheme "HueHome 1" \
->   -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
+>   -destination "platform=iOS Simulator,id=<udid from run_tests.sh discovery or simctl>"
 > ```
 >
 > Also per repo convention: bump `CURRENT_PROJECT_VERSION` across all 12 `project.pbxproj` entries for

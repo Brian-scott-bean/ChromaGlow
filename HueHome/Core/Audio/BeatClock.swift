@@ -332,16 +332,26 @@ final class BeatClock {
 
         let audioLastBeat = endTime - estimate.lastBeatOffset
 
+        // The mic's estimate is clamped to the SAME 20…300 BPM window `tap()`
+        // and `driveFromTrack` hold themselves to. It was not, and every
+        // downstream consumer assumes it is: `BeatMath.cycleIndex` evaluates
+        // `Int(floor(...))` on a position derived from `60 / bpm`, so a
+        // pathological estimate (a near-zero BPM out of a noisy autocorrelation,
+        // or an absurd one) makes the position enormous and the conversion TRAP
+        // — on the render path, once per frame. The `> 0` guard above stops NaN
+        // and negatives; it does nothing about 0.001 or 1e6.
+        let clampedBPM = min(300, max(20, estimate.bpm))
+
         if bpm == 0 || source != .audio {
             // First audio lock: adopt tempo + phase outright.
-            bpm = estimate.bpm
+            bpm = clampedBPM
             beatEpoch = audioLastBeat
             source = .audio
             publishMirror()
             return
         }
 
-        bpm = estimate.bpm
+        bpm = clampedBPM
 
         // Gentle phase correction: move the epoch toward the audio-observed
         // beat by at most maxPhaseCorrection — never a visible jump.

@@ -41,6 +41,7 @@ Treat these existing large iOS files as high-risk protected surfaces:
 - `HueHome/Core/Network/UnifiedOrchestrator.swift`
 - `HueHome/UI/Studio/StudioView.swift`
 - `HueHome/UI/Studio/StudioViewModel.swift`
+- `HueHome/UI/Studio/StudioViewModel+CustomizationWiring.swift`
 - `HueHome/UI/Dashboard/DashboardView.swift`
 - `HueHome/UI/RoomDetail/RoomDetailView.swift`
 

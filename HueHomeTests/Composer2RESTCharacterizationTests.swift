@@ -299,17 +299,16 @@ final class Composer2RESTCharacterizationTests: XCTestCase {
     }
 
     /// Studio live-param writes DO use the gate, and every one of them opts
-    /// out of its retry: a superseded frame must not be resent.
+    /// out of its retry: a superseded frame must not be resent. Slice 2 moved
+    /// the send bodies into the customization-wiring extension.
     func testCurrentStudioParamWritesOptOutOfGateRetry() throws {
-        let path = "HueHome/UI/Studio/StudioViewModel.swift"
+        let path = "HueHome/UI/Studio/StudioViewModel+CustomizationWiring.swift"
         let src = try productionSource(path)
-        for signature in ["func sendParam(cardID:", "func sendColorParam(cardID:"] {
-            let body = try requireBody(signature, in: src, of: path)
-            requireContains("gate.send(retry: false)", in: body,
-                            "\(signature) opts out of gate retry")
-            requireAbsent("gate.send(retry: true)", in: body,
-                          "\(signature) never opts into gate retry")
-        }
+        let body = try requireBody("private func performBridgeSend(", in: src, of: path)
+        requireContains("gate.send(retry: false)", in: body,
+                        "performBridgeSend opts out of gate retry")
+        requireAbsent("gate.send(retry: true)", in: body,
+                      "performBridgeSend never opts into gate retry")
     }
 
     // ──────────────────────────────────────────────

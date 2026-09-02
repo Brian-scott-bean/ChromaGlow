@@ -838,7 +838,8 @@ iOS — active follow-ups (in order):
    ModelContainer; dead Sync-engine stack deletion (extract the live `RestSender` from
    `SyncModeEngine.swift` first + pbxproj edits); `CompositionEngine.render` off main-actor
    (cheap per measurement; `CompositionParamBox` is MainActor-confined, audit I-10); MoreView
-   `connectionStatus` re-render trimming; fix `run_tests.sh` stale `SCHEME="HueHome"`.
+   `connectionStatus` re-render trimming. (`run_tests.sh` scheme fixed — it targets
+   `HueHome 1` and resolves a deterministic simulator destination as of 2026-09-01.)
 
 Process/docs:
 

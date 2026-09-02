@@ -206,10 +206,59 @@ struct CustomizationGeneration: Hashable, Sendable, Comparable {
 
 /// Issues generations. One instance per Studio session.
 ///
-/// `bump()` is called for every event that can invalidate an in-flight write:
-/// selection change, card replacement, stop, reset, capability refresh,
-/// transport change, and bridge reconnect. Callers name the reason so the fence
-/// can report *why* a write was dropped rather than only that it was.
+/// `bump()` names the reason so the fence can report *why* a write was dropped
+/// rather than only that it was. The reason list below is the vocabulary; what
+/// is actually WIRED in production is narrower, and this comment lists both,
+/// because an aspirational "every event bumps" sentence is exactly how a
+/// missing seam hides in plain sight.
+///
+/// WIRED (a production path calls `bump` with this reason today):
+///
+///  * `.cardReplaced`      — `installRunningIdentity`, every `apply()` arm.
+///  * `.stopped`           — `stopEffect` and `stopAll`.
+///  * `.reset`             — `resetParams`.
+///  * `.transportChanged`  — the composition Entertainment→REST failover, via
+///                           `StudioRuntimeEvent.compositionFellBackToREST` →
+///                           `rekeyRunningInstance(at:reason:)`. The Studio
+///                           session-lost event removes the row outright
+///                           instead (there is nothing left to rekey).
+///
+/// DELIBERATELY NOT WIRED, with the proof:
+///
+///  * `.bridgeReconnected` — an SSE reconnect changes no component of a
+///    `RunningLookIdentity`: bridge id, group id, kind, card, execution and
+///    generation are all app-side facts, and a re-registered client keeps the
+///    same ip/token. The mutation authority for an app-driven look is the
+///    bridge+room engine box, which SSE never touches. Availability is
+///    re-resolved at render from the light cache, so a reconnect that changes
+///    capability is already visible without a fence bump. Per-light SSE
+///    patches arrive constantly; bumping on them would drop every drag the
+///    user is in the middle of. A bridge genuinely going away is a different
+///    event — `removeBridge` stops the rows first via
+///    `stopEffectsForRemovedGroups`, which bumps `.stopped`.
+///  * `.capabilityRefreshed` — same argument: a capability refresh re-reads
+///    lights, and the resolver re-resolves from that cache at render. No
+///    identity component moves, and no in-flight write becomes wrong.
+///  * `.selectionChanged`  — the selection is not part of the identity by
+///    design (that is the whole point of capturing identity at gesture start);
+///    a selection move must not invalidate the OTHER target's pending writes.
+///  * `.roomRemoved`       — reached as `.stopped` through the row teardown
+///    above, so a second reason for the same event would double-bump.
+
+/// ACCEPTED GAP, named rather than implied: room MEMBERSHIP changes.
+///
+/// `RunningEffect.lightIDs` and `v2CapableLightIDs` are APPLY-TIME snapshots.
+/// A light moved into or out of the room (or a fixture that gains or loses
+/// `effects_v2` after a firmware update) changes neither the identity nor the
+/// generation, so writes captured before the change keep passing the fence and
+/// keep addressing the light set the apply resolved. The consequences are
+/// bounded: a light ADDED to the room is not driven until the look is
+/// restarted, and a light REMOVED receives a write it answers with a 400 that
+/// the send path already discards. Nothing lands on a target the user did not
+/// aim at — the bridge+group+kind key is unchanged by membership — which is
+/// why this is a staleness gap and not a routing defect. Closing it needs a
+/// membership feed the app does not have yet (SSE reports light state, not
+/// group composition); until then, restarting the look is the answer.
 @MainActor
 final class CustomizationGenerationCounter {
     private(set) var current: CustomizationGeneration = .initial

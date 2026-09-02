@@ -429,6 +429,77 @@ final class CustomizationIdentityTests: XCTestCase {
         XCTAssertEqual(live.numbers["brightness"], 90, "untouched default shows through")
     }
 
+    /// SCOPE 2's FLOOR IS FROZEN. An instance reads the defaults as they were
+    /// when it started, not as they are now.
+    ///
+    /// This is the cross-instance leak stated at the pure layer: `live(for:)`
+    /// layered an instance's own values over the CURRENT defaults, and defaults
+    /// track last-used — so a param this instance never wrote resolved against
+    /// whatever another instance had since pushed into scope 1.
+    func testAnInstanceReadsTheDefaultsAsTheyWereWhenItStarted() {
+        let scopes = Scopes()
+        scopes.setDefaults(CustomizationValueSet(numbers: ["speed": 50]), forCard: "party")
+        let running = identity(bridge: "b")
+        scopes.startRunning(running)
+
+        // Another instance's edit moves the shared defaults afterwards.
+        scopes.setDefaults(CustomizationValueSet(numbers: ["speed": 90]), forCard: "party")
+
+        XCTAssertEqual(scopes.live(for: running).numbers["speed"], 50, """
+            the running instance stands on its own frozen base — the dictionary \
+            everything else writes cannot move it
+            """)
+    }
+
+    /// The running set stays SPARSE: it holds what the instance was actually
+    /// given, so anything that copies a live set back into the persisted
+    /// defaults copies only real choices.
+    ///
+    /// A complete catalog seed also closes the leak, at a worse price: every
+    /// untouched control becomes a stored "the user set this", and the
+    /// bridge-native apply reads exactly that as consent to send a mirek.
+    func testAStartedInstanceOwnsNothingItWasNotGiven() {
+        let scopes = Scopes()
+        scopes.setDefaults(CustomizationValueSet(numbers: ["speed": 50]), forCard: "party")
+        let running = identity(bridge: "b")
+        scopes.startRunning(running)
+        scopes.commit(captured: running, control: speed(), number: 20)
+
+        let live = scopes.live(for: running)
+        XCTAssertEqual(live.numbers["speed"], 20)
+        XCTAssertNil(live.numbers["warmth"], """
+            a control nobody has ever set has NO value here — not a catalog \
+            placeholder that later reads as a deliberate choice
+            """)
+    }
+
+    /// Reset re-freezes the base against the defaults as they are NOW, which on
+    /// the production path is immediately after they were cleared. The reset
+    /// instance is then immune to every later write to that card's defaults —
+    /// writing `defaults(forCard:)` into the running set instead re-attached it
+    /// to the very dictionary the reset had just cleared.
+    func testAResetInstanceIsImmuneToLaterDefaultWrites() {
+        let scopes = Scopes()
+        scopes.setDefaults(CustomizationValueSet(numbers: ["speed": 50]), forCard: "party")
+        let running = identity(bridge: "b")
+        scopes.startRunning(running)
+        scopes.commit(captured: running, control: speed(), number: 20)
+
+        // The production reset: clear scope 1, then reset the instance.
+        scopes.clearDefaults(forCard: "party")
+        let reset = scopes.reset(running, newGeneration: CustomizationGeneration(2))
+        XCTAssertNil(scopes.live(for: reset).numbers["speed"],
+                     "nothing is stored, so the UI falls through to the catalog default")
+
+        // Another instance of the same card is edited, writing scope 1.
+        scopes.setDefaults(CustomizationValueSet(numbers: ["speed": 77]), forCard: "party")
+
+        XCTAssertNil(scopes.live(for: reset).numbers["speed"], """
+            the reset instance does not follow it — a reset that leaves the \
+            instance reading the shared defaults has reset nothing
+            """)
+    }
+
     func testClearingDefaultsDoesNotStopARunningInstance() {
         let scopes = Scopes()
         scopes.setDefaults(CustomizationValueSet(numbers: ["speed": 50]), forCard: "party")

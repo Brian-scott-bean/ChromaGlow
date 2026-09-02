@@ -176,6 +176,41 @@ final class BeatMathTests: XCTestCase {
         clock.setBeatsPerBar(0)
         XCTAssertEqual(clock.beatsPerBar, 1)
     }
+
+    // MARK: - BeatClock.ingest (audio) — the 20…300 BPM clamp
+
+    /// The audio-ingest path assigned `estimate.bpm` raw while every other way
+    /// into the clock held itself to 20…300. It is not a cosmetic difference:
+    /// `BeatMath.cycleIndex` evaluates `Int(floor(...))` on a position derived
+    /// from `60 / bpm`, so a 0.001 BPM estimate out of a noisy autocorrelation
+    /// makes that position enormous and the conversion TRAPS on the render path.
+    /// The `bpm > 0` guard upstream stops NaN and negatives and nothing else.
+    ///
+    /// Deterministic and audio-free: `ingest` is a pure state transition given a
+    /// `TempoEstimate` and an end time.
+    @MainActor
+    func testAudioIngestClampsAThousandthOfABPMUpAndAMillionDown() {
+        let slow = BeatClock()
+        slow.clear()
+        slow.ingest(estimate: TempoEstimate(bpm: 0.001, confidence: 1.0, lastBeatOffset: 0),
+                    endTime: 10.0)
+        XCTAssertEqual(slow.bpm, 20)
+
+        let fast = BeatClock()
+        fast.clear()
+        fast.ingest(estimate: TempoEstimate(bpm: 1_000_000, confidence: 1.0, lastBeatOffset: 0),
+                    endTime: 10.0)
+        XCTAssertEqual(fast.bpm, 300)
+
+        // An estimate already inside the window is adopted unchanged.
+        let inWindow = BeatClock()
+        inWindow.clear()
+        inWindow.ingest(estimate: TempoEstimate(bpm: 137.5, confidence: 1.0, lastBeatOffset: 0),
+                        endTime: 10.0)
+        XCTAssertEqual(inWindow.bpm, 137.5, accuracy: 1e-12)
+
+        slow.clear(); fast.clear(); inWindow.clear()
+    }
 }
 
 // MARK: - CompositionMixerTests (Round 3 C: Perform)

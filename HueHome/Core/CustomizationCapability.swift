@@ -6,12 +6,18 @@
 //
 //  WHAT THIS REPLACES
 //  ──────────────────
-//  Today a control's hardware requirement is one boolean: `StudioParam.entOnly`
-//  (`StudioViewModel.swift:86`, consumed by `StudioParamControls.swift:119`,
-//  set on exactly three params — strobe.speed, strobe.flash_color,
-//  strobe.duty_cycle). One bit cannot express "needs colour", "needs a real CT
-//  range", "needs effects_v2 on at least one light", "works on some of these
-//  lights", or — critically — "we do not KNOW yet".
+//  A control's hardware requirement started as one boolean: `StudioParam.entOnly`
+//  (declared `StudioViewModel.swift:86`, set on seven params after the Slice 2
+//  engine reverse-audit — party.speed, party.min_brightness, strobe.speed,
+//  strobe.flash_color, strobe.duty_cycle, thunderstorm.flash_length,
+//  thunderstorm.afterglow). The flag is now catalog metadata only: its single
+//  live consumer is `StudioBoardAvailability.descriptor(card:param:)`, which
+//  translates it into `.transport(.entertainment)` so the resolver — not a view
+//  body — decides. (The old citation here, `StudioParamControls.swift:119`, is
+//  dead: `StudioParamRow`/`StudioParamSheet` have no production caller.)
+//  One bit cannot express "needs colour", "needs a real CT range", "needs
+//  effects_v2 on at least one light", "works on some of these lights", or —
+//  critically — "we do not KNOW yet".
 //
 //  Execution plan §8 asks for composable requirement metadata instead. This is
 //  it. A requirement is a small predicate tree; a target is a snapshot of what
@@ -145,8 +151,30 @@ struct CustomizationTargetSnapshot: Hashable, Sendable {
     /// Intersected CT range across the CT-capable lights, if any.
     let mirekRange: MirekRange?
     let gradient: CapabilityCoverage
-    /// Lights whose firmware accepted `effects_v2`.
+    /// Lights this target's live `effects_v2` write can actually reach.
+    ///
+    /// EFFECT-SPECIFIC while a bridge-native look is running, not generic
+    /// `effects_v2` support. The send fans out to exactly the lights whose
+    /// `effects_v2.action.effect_values` contain THIS effect's name, so a room
+    /// where one light lists `cosmos` and two list only `candle`/`fire` has
+    /// generic support 3/3 and a real reach of 1/3 while Cosmos runs. Reporting
+    /// the generic number let `base_color`/`warmth`/`speed` claim the whole
+    /// room while two of its three lights never moved.
+    ///
+    /// With nothing bridge-native running there is no effect to be specific
+    /// about, and this is the generic support count.
     let effectsV2: CapabilityCoverage
+    /// Effect-specific `effects_v2` lights that are ALSO colour-capable, when
+    /// the intersection is known. Nil where it was never computed (an
+    /// unreadable target, or no bridge-native effect running).
+    ///
+    /// The two sets are not nested: a light can take the effect without doing
+    /// colour, and vice versa. `min(effectsV2, color)` therefore OVERSTATES
+    /// the reach of a colour control whenever they only partly overlap — this
+    /// is the true count.
+    let effectV2ColorLights: Int?
+    /// The same intersection for colour temperature.
+    let effectV2CTLights: Int?
     /// Per-effect verified parameter support, keyed by effect id. Absent key
     /// means "not verified" — which resolves to `.unknown`, never to yes.
     let verifiedEffectParameters: [String: Set<String>]
@@ -165,6 +193,8 @@ struct CustomizationTargetSnapshot: Hashable, Sendable {
          mirekRange: MirekRange? = nil,
          gradient: CapabilityCoverage,
          effectsV2: CapabilityCoverage,
+         effectV2ColorLights: Int? = nil,
+         effectV2CTLights: Int? = nil,
          verifiedEffectParameters: [String: Set<String>] = [:],
          entertainmentAvailable: CapabilityEvidence,
          transport: CustomizationTransport,
@@ -178,6 +208,8 @@ struct CustomizationTargetSnapshot: Hashable, Sendable {
         self.mirekRange = mirekRange
         self.gradient = gradient
         self.effectsV2 = effectsV2
+        self.effectV2ColorLights = effectV2ColorLights
+        self.effectV2CTLights = effectV2CTLights
         self.verifiedEffectParameters = verifiedEffectParameters
         self.entertainmentAvailable = entertainmentAvailable
         self.transport = transport

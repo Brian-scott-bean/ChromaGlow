@@ -800,6 +800,83 @@ final class UnifiedOrchestrator {
     /// @ObservationIgnored: infrastructure, never read by views.
     @ObservationIgnored var studioRecoveredHydrationHandler: (@MainActor () -> Void)?
 
+    // ── Runtime truth corrections (R4A) ───────────────────────────────
+    //
+    // Two runtime events used to change what the orchestrator knows without
+    // ever reaching Studio's mirror, so a row went on claiming a transport
+    // that no longer existed:
+    //
+    //   * a Studio Entertainment session dying mid-look — the orchestrator
+    //     removed the runtime and the Now-Playing entry, but `runningEffects`
+    //     kept a row with `isEntertainment: true` and no engine behind it;
+    //   * a composition failing over DTLS→REST — the orchestrator moved the
+    //     transport claim to `.rest`, but the row's `isEntertainment` was an
+    //     apply-time snapshot nothing ever re-set, so the customization
+    //     resolver kept resolving controls against `.entertainment`.
+
+    /// One of the two corrections above, named exactly.
+    enum StudioRuntimeEvent: Equatable, Sendable {
+        /// A Studio app-driven engine's Entertainment session was lost and the
+        /// orchestrator has already retired its runtime. Nothing streams there.
+        case entertainmentSessionLost(bridgeID: String?, roomID: String)
+        /// A composition's Entertainment session failed over to the REST
+        /// scheduler and the exact playback claim now reads `.rest`.
+        ///
+        /// `boxID` identifies the param box the failover's re-entry actually
+        /// installed. The `.rest` claim the emit gates on is set by that same
+        /// re-entry, so it proves only that SOMETHING is on REST there — a
+        /// user who stopped C1 and started C2 across the failover's two long
+        /// awaits would have C2's row rekeyed and relabelled by C1's event.
+        /// The box is the exact state that distinguishes them: Studio requires
+        /// the room's live box to be this one before it mutates anything.
+        /// Carried as an `ObjectIdentifier` so the event stays `Sendable` and
+        /// `Equatable` without the box itself having to be.
+        case compositionFellBackToREST(bridgeID: String?, roomID: String,
+                                       boxID: ObjectIdentifier)
+    }
+
+    /// SYNCHRONOUS on purpose, and deliberately NOT routed through Studio's
+    /// lifecycle chain.
+    ///
+    /// The orchestrator emits each event inside the same actor turn as its own
+    /// fence — after the ownership guards have proven this exact client/claim
+    /// is the live one, and before the teardown suspends again. An `async`
+    /// handler, or one queued behind Studio's serialized lifecycle, could run
+    /// after a REPLACEMENT look had taken the room, and would then act on a
+    /// successor's row. Synchronous delivery is what makes "the row this event
+    /// describes is the row that exists right now" true at the call site.
+    ///
+    /// The handler itself still fails closed (exact key, matching strategy and
+    /// transport) — belt and braces, because the orchestrator cannot see
+    /// Studio's rows and Studio cannot see the orchestrator's guards.
+    /// @ObservationIgnored: infrastructure, never read by views.
+    @ObservationIgnored var studioRuntimeEventHandler: (@MainActor (StudioRuntimeEvent) -> Void)?
+
+    #if DEBUG
+    /// TEST SEAM: emit one runtime event exactly as the production seams do,
+    /// so the VM's fail-closed handler can be driven without a real DTLS
+    /// session or a real failover.
+    func testEmitStudioRuntimeEvent(_ event: StudioRuntimeEvent) {
+        studioRuntimeEventHandler?(event)
+    }
+
+    /// TEST SEAM: run the real post-loop reconciliation against the client
+    /// currently installed for `bridgeID`. Pairs with
+    /// `testForceStudioSessionTerminallyFailed` — the health verdict is the one
+    /// gate a test cannot stage, because it lives inside the DTLS actor.
+    func testReconcileStudioSessionAfterLoop(bridgeID: String, roomID: String) async {
+        guard let client = studioEntClients[bridgeID] else { return }
+        await reconcileStudioSessionAfterLoop(
+            entClient: client, bridgeID: bridgeID, roomID: roomID)
+    }
+
+    /// TEST SEAM: force the terminal-failure verdict the reconciliation gates
+    /// on. Read ONLY inside `reconcileStudioSessionAfterLoop`, and only in
+    /// DEBUG — the production read of `entClient.isTerminallyFailed` is
+    /// untouched.
+    @ObservationIgnored var testForceStudioSessionTerminallyFailed = false
+    #endif
+
     /// Stop from a non-Studio surface, routing on the ENTRY rather than a bare
     /// room id.
     ///
@@ -919,6 +996,19 @@ final class UnifiedOrchestrator {
     /// @ObservationIgnored: infrastructure, read one-shot by `cachedLightItems(for:)`.
     @ObservationIgnored
     private var lightsByBridge: [String: [HueLight]] = [:]
+
+    /// Bumped every time a FETCHED light inventory replaces a bridge's cache.
+    ///
+    /// `lightsByBridge` is deliberately @ObservationIgnored — it is read
+    /// imperatively, and per-light SSE patches must never trigger a rebuild.
+    /// But Studio's capability board resolves against that same cache, so a
+    /// board that rendered "CHECKING WHAT THESE LIGHTS SUPPORT" on an empty
+    /// cache had nothing observable to wake it when the inventory finally
+    /// landed: the note stayed forever. This counter is the ONE observable
+    /// fact the board needs — "a fresh inventory arrived" — with no per-light
+    /// churn attached, so `targetSnapshot(for:)` can depend on it and
+    /// re-resolve exactly once per fetch.
+    private(set) var capabilityInventoryGeneration: Int = 0
 
     /// SSE tasks per bridge — cancelled when bridge is removed.
     /// @ObservationIgnored: purely infrastructure, no UI reads this.
@@ -1802,7 +1892,14 @@ final class UnifiedOrchestrator {
                     zonesByBridge[bridgeID] = zones
                     for (k, v) in zoneLightMap { lightIDToZoneID[k] = v }
                 }
-                if let lights { lightsByBridge[bridgeID] = lights }
+                // A FETCHED inventory — bump the generation so a Studio board
+                // resolving against an empty cache re-resolves instead of
+                // showing CHECKING… forever. (Per-light SSE patches below
+                // deliberately do NOT bump: they change values, not capability.)
+                if let lights {
+                    lightsByBridge[bridgeID] = lights
+                    capabilityInventoryGeneration &+= 1
+                }
             }
         }
     }
@@ -1831,9 +1928,34 @@ final class UnifiedOrchestrator {
     /// failed, so availability could never progress past `.unknown` there.
     /// Only ever fills — never clears — so it cannot race a live load into an
     /// empty state.
-    private func seedRawLightCache(bridgeID: String, lights: [HueLight]) {
-        guard !isDemoMode, !lights.isEmpty else { return }
+    ///
+    /// Internal (R4A): `apply()` fetches the same inventory whenever a room
+    /// carries non-light child refs, and used to drop it. That left the board
+    /// rendering CHECKING… on exactly the bridges whose first inventory had
+    /// not landed yet, for a look the user had already started — the R2
+    /// availability regression this guards.
+    ///
+    /// FILL-ONLY, and the doc comment above was the only thing enforcing it.
+    /// It wrote unconditionally, so an apply-time fetch that was issued before
+    /// a `loadAll` and answered after it replaced the fresher merged inventory
+    /// with a staler one — and bumped the generation, so every board re-read
+    /// the stale answer. `replace: true` is the deliberate override for a
+    /// caller whose inventory IS the newer truth; everything on the apply /
+    /// coverage-refresh / room-lights paths fills a gap and nothing more.
+    ///
+    /// The generation is bumped only when something was actually written: it
+    /// is an observation trigger, and firing it for a no-op re-renders every
+    /// Studio board for nothing.
+    @discardableResult
+    func seedRawLightCache(bridgeID: String, lights: [HueLight],
+                           replace: Bool = false) -> Bool {
+        guard !isDemoMode, !lights.isEmpty else { return false }
+        if !replace, let existing = lightsByBridge[bridgeID], !existing.isEmpty {
+            return false
+        }
         lightsByBridge[bridgeID] = lights
+        capabilityInventoryGeneration &+= 1
+        return true
     }
 
     func cachedLightItems(for room: RoomDisplayItem) -> [LightDisplayItem] {
@@ -3090,6 +3212,27 @@ final class UnifiedOrchestrator {
     }
     @ObservationIgnored private var studioEngineRuntimesByBridge: [String: StudioEngineRuntime] = [:]
 
+    /// One flash-onset ledger per BRIDGE, outliving every engine loop instance
+    /// (Slice 2 remediation, R1). The frame plans inside each loop guarantee
+    /// ≥ 17 frames between onsets *within* one run; only something that
+    /// survives the run can guarantee it ACROSS runs — stop/start, a card
+    /// switch, a transport flip, or a session re-establishment would otherwise
+    /// each start a fresh loop that flashes on its very first frame, right on
+    /// top of the previous loop's last flash.
+    ///
+    /// Get-or-create, and **never removed**: the map holds one small object per
+    /// bridge the user has ever streamed to, and forgetting an entry is exactly
+    /// the unsafe act it exists to prevent.
+    @ObservationIgnored
+    private var studioFlashOnsetLedgersByBridge: [String: BeatMath.FlashSafety.OnsetLedger] = [:]
+
+    private func flashOnsetLedger(forBridge bridgeID: String) -> BeatMath.FlashSafety.OnsetLedger {
+        if let existing = studioFlashOnsetLedgersByBridge[bridgeID] { return existing }
+        let ledger = BeatMath.FlashSafety.OnsetLedger()
+        studioFlashOnsetLedgersByBridge[bridgeID] = ledger
+        return ledger
+    }
+
     /// Entertainment clients keyed by bridgeID — one per concurrent bridge session.
     /// Internal access so StudioViewModel can report transport mode in debug.
     var studioEntClients: [String: HueEntertainmentClient] = [:]
@@ -3162,7 +3305,7 @@ final class UnifiedOrchestrator {
     /// keeps running.
     private var studioRestScopesByBridge: [String: RestScope] = [:]
 
-    /// Studio live-param writes (StudioViewModel sendParam/sendColorParam)
+    /// Studio live-param writes (the customization-wiring debounced sends)
     /// share the room's Studio mailbox slot: repeated writes to the same
     /// endpoint where only the newest value matters — a slider scrub can never
     /// stack PUTs behind stale frames, and the stop/handoff clear()s also drop
@@ -5084,7 +5227,13 @@ final class UnifiedOrchestrator {
         let needsConfigs = force || !entertainmentConfigsFetchedBridges.contains(bridgeID)
         let needsMembership = force || entertainmentMembershipByBridge[bridgeID] == nil
         let needsLights = force || cachedLights == nil || cachedLights?.isEmpty == true
-        guard needsConfigs || needsMembership else { return }
+        // `needsLights` belongs in the guard it was computed for. Without it,
+        // a bridge whose configs and membership were already cached returned
+        // here and never fetched the lights — so the one caller that exists to
+        // make an empty light cache answerable (Studio's capability board,
+        // stuck on "CHECKING WHAT THESE LIGHTS SUPPORT") could never make
+        // progress except through a forced refresh.
+        guard needsConfigs || needsMembership || needsLights else { return }
 
         // Everything the child tasks touch is hoisted first: `api` is a Sendable
         // class and `manager` is a local value, so nothing reaches back into
@@ -5152,10 +5301,20 @@ final class UnifiedOrchestrator {
     /// follows the SELECTED room's bridge instead of whichever engine started
     /// last. Isolated (both this type and the caller are @MainActor), so the
     /// map read is safe and the call stays synchronous.
-    func updateStudioParams(values: [String: Double], colors: [String: Color], bridgeID: String?) {
-        guard let box = studioEngineRuntimesByBridge[bridgeID ?? ""]?.paramBox else { return }
-        box.values = values
-        box.colors = colors
+    ///
+    /// Slice 2 production wiring: the write must ALSO name the room, and the
+    /// runtime's owning room must match — the same guard the stop path has
+    /// carried since round 4g. A bridge-only guard let a write authored on one
+    /// room land on a sibling room's engine on the same bridge after the
+    /// selection moved. The caller has already fenced on the full running
+    /// identity (bridge + group + kind + look + generation); this room check
+    /// is the orchestrator's own defense in depth, not the primary fence.
+    func updateStudioParams(values: [String: Double], colors: [String: Color],
+                            bridgeID: String?, roomID: String) {
+        guard let runtime = studioEngineRuntimesByBridge[bridgeID ?? ""],
+              runtime.roomID == roomID else { return }
+        runtime.paramBox.values = values
+        runtime.paramBox.colors = colors
     }
 
     /// Studio engine keys that stream over Entertainment. Only these can
@@ -5336,6 +5495,12 @@ final class UnifiedOrchestrator {
             RestScope(roomID: studioRoomID, owner: .studio)
         noteRoomOwnershipChange(bridgeID: studioBridgeID, roomID: studioRoomID)
 
+        // The bridge's flash-onset ledger, resolved BEFORE any engine starts:
+        // every streaming engine on this bridge shares it, so a stop/start or a
+        // card switch cannot realize two flash onsets less than 1/3 s apart
+        // (Slice 2 remediation, R1 rule 3).
+        let flashLedger = flashOnsetLedger(forBridge: stopBid)
+
         // Create live param box (engine loop reads from this; the ViewModel
         // updates it through the bridge-keyed runtime installed below).
         let paramBox = StudioParamBox(values: params, colors: colors)
@@ -5381,7 +5546,8 @@ final class UnifiedOrchestrator {
             return startStreamingEngine(
                 entertainment: { entClient, channelIDs in
                     Task {
-                        await self.runStrobeEntertainment(entClient: entClient, channelIDs: channelIDs, paramBox: paramBox)
+                        await self.runStrobeEntertainment(entClient: entClient, channelIDs: channelIDs,
+                                                     paramBox: paramBox, onsetLedger: flashLedger)
                         await self.reconcileStudioSessionAfterLoop(
                             entClient: entClient, bridgeID: studioBridgeID, roomID: studioRoomID)
                     }
@@ -5395,7 +5561,8 @@ final class UnifiedOrchestrator {
             return startStreamingEngine(
                 entertainment: { entClient, channelIDs in
                     Task {
-                        await self.runPartyEntertainment(entClient: entClient, channelIDs: channelIDs, paramBox: paramBox)
+                        await self.runPartyEntertainment(entClient: entClient, channelIDs: channelIDs,
+                                                     paramBox: paramBox, onsetLedger: flashLedger)
                         await self.reconcileStudioSessionAfterLoop(
                             entClient: entClient, bridgeID: studioBridgeID, roomID: studioRoomID)
                     }
@@ -5409,7 +5576,8 @@ final class UnifiedOrchestrator {
             return startStreamingEngine(
                 entertainment: { entClient, channelIDs in
                     Task {
-                        await self.runThunderstormEntertainment(entClient: entClient, channelIDs: channelIDs, paramBox: paramBox)
+                        await self.runThunderstormEntertainment(entClient: entClient, channelIDs: channelIDs,
+                                                     paramBox: paramBox, onsetLedger: flashLedger)
                         await self.reconcileStudioSessionAfterLoop(
                             entClient: entClient, bridgeID: studioBridgeID, roomID: studioRoomID)
                     }
@@ -6065,6 +6233,16 @@ final class UnifiedOrchestrator {
         // Ownership check (generation-equivalent): stopCompositionMode or a
         // replacement start already cleaned this key — never resurrect.
         guard compositionEntRoomByBridge[bridgeID] == roomID else { return }
+        // …and the EXACT generation this failover belongs to, captured before
+        // the first await. The guard above is a room-id check: a successor
+        // composition that starts on the same room while `stopSession()` is
+        // awaited re-installs that very id, so the check would still pass and
+        // the re-entry below would then run `startCompositionMode` with the
+        // OLD paramBox — clobbering the successor's live run with a
+        // predecessor's state. The generation moves on every start and stop,
+        // so it is the one value a successor cannot forge.
+        let playbackKey = CompositionPlaybackKey(bridgeID: room.bridgeID, roomID: roomID)
+        let failoverGeneration = compositionGenerations[playbackKey]
         debugLog("[Composer] ⚠ Entertainment session lost for room=\(roomID) — failing over to REST")
         // Re-entry below claims `.rest`; if its guard bails instead, the room
         // correctly reads "not running" rather than a phantom `.entertainment`.
@@ -6084,8 +6262,40 @@ final class UnifiedOrchestrator {
         entertainmentConfigsFetchedBridges.remove(bridgeID)
         if let entClient = studioEntClients[bridgeID] {
             await entClient.stopSession()   // no-op post-teardown (configID cleared)
-            studioEntClients.removeValue(forKey: bridgeID)
+            // M5: remove only OUR client. `stopSession()` is a long await, and
+            // a Studio look (or a successor composition) that acquires this
+            // bridge inside it installs its OWN client under this very key —
+            // an unconditional removal then deleted the live session's record,
+            // leaving a stream running that nothing in the app could name or
+            // stop. Identity, not key presence, is the authorization.
+            if studioEntClients[bridgeID] === entClient {
+                studioEntClients.removeValue(forKey: bridgeID)
+            }
         }
+
+        // RE-CHECK AFTER THE AWAIT, before anything is started. A successor
+        // that took this bridge+room while `stopSession()` was in flight is
+        // recognisable two ways, and both are checked: the playback generation
+        // moved (every start and stop bumps it), or a new Entertainment param
+        // box was installed for this bridge (this failover removed its own
+        // above, so a non-nil slot is somebody else's). Bail touching NOTHING
+        // — no re-entry, no transport relabel, no fallback telemetry: the
+        // successor is running and none of it describes the successor.
+        //
+        // M4, ACCEPTED: a successor still INSIDE `prepareEntertainment` when
+        // this re-check runs has bumped neither the generation nor installed
+        // its box yet, so both questions answer "not superseded" and this
+        // failover proceeds. It is benign by construction: the successor's own
+        // start bumps the room generation after it finishes, which fences
+        // everything this re-entry installs. Recorded rather than closed —
+        // closing it needs an in-progress-start ledger, which is a wider
+        // change than this failover.
+        guard compositionGenerations[playbackKey] == failoverGeneration,
+              compositionEntParamBoxes[bridgeID] == nil else {
+            debugLog("[Composer] Failover for room=\(roomID) superseded during teardown — leaving the successor alone")
+            return
+        }
+
         // preferEntertainment: false — never reconnect-loop back into DTLS;
         // preset: nil — skip the bridge-stored branch, land in the REST
         // scheduler (startCompositionMode bumps the room generation, so all
@@ -6098,6 +6308,24 @@ final class UnifiedOrchestrator {
             tier: tier,
             preset: nil
         )
+
+        // R4A: Studio's row carries `isEntertainment` as an APPLY-TIME
+        // snapshot that nothing ever re-set, so after this failover the
+        // customization resolver went on resolving controls against
+        // `.entertainment` for a room that is now on the REST scheduler.
+        //
+        // Gated on the EXACT playback claim rather than on "we ran the
+        // re-entry": the re-entry's own guards can bail, and telling Studio
+        // "you are on REST now" when nothing is running there would install a
+        // second lie in place of the first. `compositionTransportClaims` is
+        // the exact bridge+room authority — never the room-only aggregate,
+        // which answers nil precisely when two bridges disagree.
+        if compositionTransportClaims[playbackKey] == .rest {
+            studioRuntimeEventHandler?(
+                .compositionFellBackToREST(bridgeID: room.bridgeID, roomID: roomID,
+                                           boxID: ObjectIdentifier(paramBox)))
+        }
+
         // Packet 5: record WHY this room is on Room mode, against the session
         // the re-entry above just opened. Written after the start (the start
         // clears any prior reason) and generation-fenced, so a late event from
@@ -6105,8 +6333,7 @@ final class UnifiedOrchestrator {
         // apply-time snapshot that is never re-set — this survives a
         // mid-session failover, which is the case that previously flipped the
         // badge to ROOM with no explanation at all.
-        if let generation = compositionGenerations[
-            CompositionPlaybackKey(bridgeID: room.bridgeID, roomID: roomID)] {
+        if let generation = compositionGenerations[playbackKey] {
             recordCompositionFallback(
                 sessionKey: ComposerTelemetrySessionKey(
                     bridgeKey: room.bridgeID ?? "legacy",
@@ -7705,7 +7932,10 @@ final class UnifiedOrchestrator {
         // Same single await and the same outcomes as the original compound
         // guard — decomposed only so the DEBUG audit can say why this
         // invocation did (or did not) clean anything up.
-        let terminallyFailed = await entClient.isTerminallyFailed
+        var terminallyFailed = await entClient.isTerminallyFailed
+        #if DEBUG
+        if testForceStudioSessionTerminallyFailed { terminallyFailed = true }
+        #endif
         guard terminallyFailed, let bridgeID else {
             recordStopAudit(auditContext, operation: .reconcileCleanup,
                             bridgeID: bridgeID, roomID: roomID,
@@ -7742,6 +7972,17 @@ final class UnifiedOrchestrator {
         if studioEngineRuntimesByBridge[bridgeID]?.roomID == roomID {
             studioEngineRuntimesByBridge.removeValue(forKey: bridgeID)
         }
+
+        // R4A: tell Studio in THIS actor turn — after the guards above proved
+        // this exact client still owned the bridge and the runtime is gone,
+        // and BEFORE `stopSession()` suspends. Studio's row is the last place
+        // still claiming a stream; leaving it standing is what made a dead
+        // session look live (`isEntertainment: true` with no engine behind it)
+        // and left every live control resolving against a transport that no
+        // longer existed. Handed the exact bridge + room, never a bare room id.
+        studioRuntimeEventHandler?(
+            .entertainmentSessionLost(bridgeID: bridgeID, roomID: roomID))
+
         recordStopAudit(auditContext, operation: .clientStopSession,
                         bridgeID: bridgeID, roomID: roomID,
                         clientID: Self.stopAuditToken(entClient))
@@ -7926,15 +8167,155 @@ final class UnifiedOrchestrator {
     // MARK: - Strobe Engine
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+    /// One frame's whole story: what the ledger decided, and whether the
+    /// transport took it. `landedOnWire` is the only thing a caller waiting on a
+    /// flash may act on — an admitted frame the transport dropped changed no
+    /// light at all, so the flash it was waiting for has not happened.
+    struct GatedFrameOutcome {
+        let verdict: BeatMath.FlashSafety.FrameVerdict
+        let delivered: Bool
+        var landedOnWire: Bool { verdict.wasAdmitted && delivered }
+    }
+
+    /// Streams ONE frame through the bridge's shared onset ledger and sleeps the
+    /// 20 ms Entertainment quantum. Returns what the ledger decided AND what the
+    /// transport did with it — or `nil` if the task was cancelled before the
+    /// reservation was taken.
+    ///
+    /// **This is the only place a flash-class ENT loop may call `sendUniform`,
+    /// and that is the entire mechanism.** The ledger used to gate the
+    /// transitions a loop COMPUTED — a duty edge, a cycle-index change, a
+    /// palette step — while the loop went on emitting frames the ledger never
+    /// saw. Each of those was a real light level, and each was a hole:
+    ///
+    ///  • The hold frame streamed DURING a gate wait was assembled by the caller
+    ///    as `lastBri ?? minBri`, so on a loop's first gate it was `minBri`.
+    ///    Replace a run at min 0 with a run at min_brightness 50 and the very
+    ///    frame sent to REFUSE an onset was an ungated rise to 0.50, ~0.05 s
+    ///    after the previous onset (blocker B1).
+    ///  • Thunderstorm streamed afterglow at 0.4 × flash_intensity and then the
+    ///    next ambient frame at min_brightness. With flash_intensity 50 and
+    ///    min_brightness 30 that is a +0.10 rise two frames after the strike,
+    ///    and the ambient-raise gate could not see it — it compared against the
+    ///    previous AMBIENT, not against the last emitted frame (H1).
+    ///  • Strobe free-run with brightness ≤ min_brightness (1…100 vs 0…50, both
+    ///    legal) makes the ON edge a FALL and the OFF edge the rise. The gate
+    ///    stamped the ON edge, `onFrames` before the real rise, so cross-run
+    ///    spacing could realize 0.08 s (H2).
+    ///
+    /// Measuring the WIRE removes the whole category: there is no longer any
+    /// frame a loop can emit behind the ledger's back, and no loop has to know
+    /// which of its edges happens to be the bright one.
+    ///
+    /// A refusal is a **delay, not a skip** (R1 rule 4): the hold frame is the
+    /// frame the bridge is already showing, so a refusal costs nothing on the
+    /// wire, and the DTLS stream never pauses — pausing it would let the bridge
+    /// fall back to its own light state mid-effect.
+    ///
+    /// Third pass, blocker B-1: measuring the wire is not the same as REACHING
+    /// it. `sendUniform` is fire-and-forget and drops every frame while the DTLS
+    /// connection is re-establishing, so this helper reserves, sends, and then
+    /// commits what the transport actually did — the three steps in that order,
+    /// with no exit between them.
+    private func emitGatedFrame(
+        entClient: HueEntertainmentClient,
+        channelIDs: [UInt8],
+        ledger: BeatMath.FlashSafety.OnsetLedger,
+        x: Double,
+        y: Double,
+        brightness: Double
+    ) async -> GatedFrameOutcome? {
+        guard !Task.isCancelled else { return nil }
+        // RESERVE. `minOnsetLedgerPeriod` (0.34 s), not `minOnsetPeriod`
+        // (1/3 s): the gate is the ONLY thing guarding the cross-run path, where
+        // no frame plan has already spent the 17 frames. The decision is taken
+        // on a clock sample from BEFORE the send, which is conservative in the
+        // right direction — the realized interval can only be longer than the
+        // one this compares.
+        let reservation = ledger.admit(
+            frame: BeatMath.FlashSafety.WireFrame(x: x, y: y, brightness: brightness),
+            at: CACurrentMediaTime(),
+            minPeriod: BeatMath.FlashSafety.minOnsetLedgerPeriod)
+        let onWire = reservation.frame
+        // SEND. `sendUniform` answers whether the frame reached the transport at
+        // all: it drops every frame while the DTLS connection is re-establishing,
+        // and `isTerminallyFailed` stays false for the whole reconnect budget, so
+        // nothing else in this loop can tell.
+        let delivered = await entClient.sendUniform(
+            channelIDs: channelIDs, x: onWire.x, y: onWire.y, brightness: onWire.brightness)
+        // COMMIT, unconditionally and immediately after the send — including
+        // when this task was cancelled inside it. Bailing out between the
+        // reserve and the commit is the one thing that would leave the ledger
+        // holding a frame the wire never saw (M-2), which is the same defect as
+        // the dropped send by another route. Committing here also moves the
+        // onset stamp forward to the DELIVERY time, so the period the ledger
+        // enforces is measured from the wire and not from a decision an actor
+        // hop ago (H-3).
+        ledger.commit(reservation, delivered: delivered, at: CACurrentMediaTime())
+        try? await Task.sleep(nanoseconds: BeatMath.FlashSafety.entertainmentFrameNanoseconds)
+        return GatedFrameOutcome(verdict: reservation.verdict, delivered: delivered)
+    }
+
+    /// Streams gate-held frames until the REQUESTED frame itself reaches the
+    /// wire. Returns false only if the task was cancelled.
+    ///
+    /// The successor to `streamUntilOnsetAdmitted`, and the reason a plan's
+    /// frames are not eaten by a wait: a phase whose FIRST frame is the flash —
+    /// a strobe ON or OFF phase, a party palette step, a lightning strike — must
+    /// still render that frame, or a refusal would become exactly the SKIP R1
+    /// rule 4 forbids. A frame the ledger does not consider a candidate is
+    /// "admitted" on its first try, so this costs nothing on the falling edges
+    /// that pass straight through. There is deliberately no numeric bail-out:
+    /// only cancellation ends the wait.
+    private func emitOnsetFrame(
+        entClient: HueEntertainmentClient,
+        channelIDs: [UInt8],
+        ledger: BeatMath.FlashSafety.OnsetLedger,
+        x: Double,
+        y: Double,
+        brightness: Double
+    ) async -> Bool {
+        while !Task.isCancelled {
+            // A dead session is the one non-cancellation exit, and it is not a
+            // bail-out: there is no wire left for the frame to land on, so
+            // waiting for it to land would spin until the task is cancelled.
+            // The caller treats `false` exactly as it treats cancellation — it
+            // leaves the loop.
+            if await entClient.isTerminallyFailed { return false }
+            guard let outcome = await emitGatedFrame(
+                entClient: entClient, channelIDs: channelIDs, ledger: ledger,
+                x: x, y: y, brightness: brightness)
+            else { return false }
+            // `landedOnWire`, not `wasAdmitted`: a frame the ledger admitted and
+            // the transport dropped mid-reconnect changed no light, so the flash
+            // this call is waiting for has not happened yet.
+            if outcome.landedOnWire { return true }
+        }
+        return false
+    }
+
     /// Strobe via Entertainment API — crisp on/off at 50fps streaming.
-    /// Speed capped at 3Hz (WCAG 2.3.1 compliance).
+    ///
+    /// Flash safety (Slice 2 remediation, R1 + second pass): the cycle is planned
+    /// as ONE safe total (`StrobePlan`) and then split, so the ON and OFF halves
+    /// can no longer be floored independently onto the frame grid — the defect
+    /// that realized 15–16 frames (3.13–3.33 Hz) at speed 100. Beat locks are
+    /// capped at `entertainmentMaxLockHz`, and EVERY frame — bright, dark, held —
+    /// goes through `emitGatedFrame`, so the ledger measures rises on the wire
+    /// rather than trusting this loop's idea of which edge is the bright one.
+    /// That is what closes H2: with `brightness ≤ min_brightness` (1…100 vs
+    /// 0…50, both legal catalog ranges) the ON edge is a FALL and the OFF edge
+    /// is the rise, and the old edge-stamped gate certified the wrong one.
+    ///
+    /// There is no `isBright` / `lastBri` edge state left to carry across the
+    /// two branches: the ledger holds the wire state, per BRIDGE, across loop
+    /// instances — which is strictly more than any local variable could.
     private func runStrobeEntertainment(
         entClient: HueEntertainmentClient,
         channelIDs: [UInt8],
-        paramBox: StudioParamBox
+        paramBox: StudioParamBox,
+        onsetLedger: BeatMath.FlashSafety.OnsetLedger
     ) async {
-        let frameInterval: UInt64 = 20_000_000  // 20ms = 50fps
-
         while !Task.isCancelled {
             // The session can die under us — the official Hue app reclaiming
             // the area is the ordinary way. Without this the loop streamed
@@ -7950,46 +8331,73 @@ final class UnifiedOrchestrator {
             let xy = extractXY(from: paramBox.colors["flash_color"]) ?? (x: 0.3127, y: 0.3290)
 
             // Beat-locked: ON/OFF derived purely from clock phase each 20 ms
-            // frame — zero drift, tempo changes land within one frame, and
-            // wcagSafeBeatsPerCycle keeps the flash rate ≤3 Hz.
+            // frame — zero drift, tempo changes land within one frame. The lock
+            // is capped at `entertainmentMaxLockHz` (2.94 Hz) rather than the
+            // nominal 3 Hz: that is an implementation consequence of the
+            // realized ≥ 1/3 s onset invariant on the 20 ms grid (a 333 ms
+            // period can only be rendered as 16 frames = 0.32 s, or as 17
+            // frames while lagging the beat by 6.7 ms every cycle), not a
+            // product preference.
             let binding = BeatBinding.fromStudioValues(p)
-            if let lock = BeatMath.liveLock(binding) {
+            if let lock = BeatMath.liveLock(binding, maxHz: BeatMath.FlashSafety.entertainmentMaxLockHz) {
                 let phase = BeatMath.cyclePhase(at: CACurrentMediaTime(),
                                                 snapshot: lock.snapshot,
                                                 beatsPerCycle: lock.beatsPerCycle,
                                                 phaseOffsetBeats: binding.phaseOffsetBeats)
                 let bri = phase < dutyCycle ? peakBri : minBri
-                await entClient.sendUniform(channelIDs: channelIDs, x: xy.x, y: xy.y, brightness: bri)
-                try? await Task.sleep(nanoseconds: frameInterval)
+                // No `needsGate` decision here any more. Whatever moved — the
+                // duty flip, a min_brightness drag while dark, a BeatClock epoch
+                // correction running the phase backwards — the ledger sees the
+                // level this frame puts on the wire and compares it with the
+                // trough since the last admitted onset. A loop cannot enumerate
+                // the ways its own output can rise; it does not have to.
+                guard await emitGatedFrame(entClient: entClient, channelIDs: channelIDs,
+                                           ledger: onsetLedger,
+                                           x: xy.x, y: xy.y, brightness: bri) != nil
+                else { return }
                 continue
             }
 
-            // Speed 0–100 → 0.5–3.0 Hz (WCAG safe: never exceeds 3 flashes/sec)
-            let hz = 0.5 + (speed / 100.0) * 2.5
-            let period = 1.0 / hz
-            let onDuration = period * dutyCycle
-            let offDuration = period * (1.0 - dutyCycle)
+            // Free-run: speed 0–100 → 0.5–3.0 Hz, planned as a whole safe cycle
+            // and split by duty. Params are read once per cycle so both halves
+            // come from the same plan.
+            let plan = BeatMath.FlashSafety.StrobePlan.make(speed: speed, dutyCycle: dutyCycle)
 
-            // ON phase
-            let onFrames = max(1, Int(onDuration / 0.02))
-            for _ in 0..<onFrames {
-                guard !Task.isCancelled else { return }
-                await entClient.sendUniform(channelIDs: channelIDs, x: xy.x, y: xy.y, brightness: peakBri)
-                try? await Task.sleep(nanoseconds: frameInterval)
+            // ON phase. Its first frame waits for admission instead of spending
+            // an ON frame on a hold — a refusal must delay the flash, not eat it.
+            // When the ON edge is a FALL (peak ≤ min) this returns on the first
+            // try, because a fall is not a candidate.
+            guard await emitOnsetFrame(entClient: entClient, channelIDs: channelIDs,
+                                       ledger: onsetLedger,
+                                       x: xy.x, y: xy.y, brightness: peakBri)
+            else { return }
+            for _ in 1..<max(plan.onFrames, 1) {
+                guard await emitGatedFrame(entClient: entClient, channelIDs: channelIDs,
+                                           ledger: onsetLedger,
+                                           x: xy.x, y: xy.y, brightness: peakBri) != nil
+                else { return }
             }
 
-            // OFF phase
-            let offFrames = max(1, Int(offDuration / 0.02))
-            for _ in 0..<offFrames {
-                guard !Task.isCancelled else { return }
-                await entClient.sendUniform(channelIDs: channelIDs, x: xy.x, y: xy.y, brightness: minBri)
-                try? await Task.sleep(nanoseconds: frameInterval)
+            // OFF phase — symmetric, for exactly the same reason: with
+            // `brightness ≤ min_brightness` THIS is the rising edge (H2).
+            guard await emitOnsetFrame(entClient: entClient, channelIDs: channelIDs,
+                                       ledger: onsetLedger,
+                                       x: xy.x, y: xy.y, brightness: minBri)
+            else { return }
+            for _ in 1..<max(plan.offFrames, 1) {
+                guard await emitGatedFrame(entClient: entClient, channelIDs: channelIDs,
+                                           ledger: onsetLedger,
+                                           x: xy.x, y: xy.y, brightness: minBri) != nil
+                else { return }
             }
         }
     }
 
     /// Strobe via REST — fallback when no entertainment config.
     /// Limited to ~1Hz by bridge rate limits. Shows toast suggesting entertainment setup.
+    /// Flash-safe by cadence, not by gate: the free-run sleep is 900 ms and the
+    /// beat lock is floored at `maxHz: 1.0/0.9`, so no two flips can land less
+    /// than 0.9 s apart — 2.7× the 1/3 s floor (R1: REST loops unchanged).
     private func runStrobeREST(
         roomID: String,
         bridgeID: String?,
@@ -8039,13 +8447,18 @@ final class UnifiedOrchestrator {
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     /// Party via Entertainment — random color flashes at user-controlled speed.
+    ///
+    /// Flash safety (Slice 2 remediation, R1): one `PartyPlan` per cycle
+    /// replaces the independently floored hold/fade frame counts (which
+    /// realized 15–16 frames — 3.13 Hz at the shipped default smoothness 20 —
+    /// at speed 100). A palette step is this effect's onset, so every step
+    /// passes the bridge's wall-clock ledger first.
     private func runPartyEntertainment(
         entClient: HueEntertainmentClient,
         channelIDs: [UInt8],
-        paramBox: StudioParamBox
+        paramBox: StudioParamBox,
+        onsetLedger: BeatMath.FlashSafety.OnsetLedger
     ) async {
-        let frameInterval: UInt64 = 20_000_000  // 50fps
-
         // Pre-built color palette: 8 vivid party colors (CIE xy)
         let palette: [(x: Double, y: Double)] = [
             (0.6400, 0.3300),  // Red
@@ -8059,6 +8472,11 @@ final class UnifiedOrchestrator {
         ]
         var colorIndex = 0
 
+        // No `renderedIdx` / `lastColor` / `lastBri` edge state: the bridge's
+        // ledger holds the wire state across BOTH branches and across loop
+        // instances. That also closes L1 — the old first gate held the NEW
+        // colour (`lastColor?.x ?? color.x`), putting a full palette change on
+        // the wire while refusing the onset that palette change WAS.
         while !Task.isCancelled {
             // The session can die under us — the official Hue app reclaiming
             // the area is the ordinary way. Without this the loop streamed
@@ -8075,9 +8493,12 @@ final class UnifiedOrchestrator {
 
             // Beat-locked: color index AND hold/fade position both derived
             // from the clock each frame — the palette steps exactly on cycle
-            // boundaries and the fade tracks the cycle, drift-free.
+            // boundaries and the fade tracks the cycle, drift-free. The cap is
+            // `entertainmentMaxLockHz`, an implementation consequence of the
+            // realized ≥ 1/3 s onset invariant on the 20 ms grid rather than a
+            // product preference (a 3 Hz lock quantizes to 16 frames = 0.32 s).
             let binding = BeatBinding.fromStudioValues(p)
-            if let lock = BeatMath.liveLock(binding) {
+            if let lock = BeatMath.liveLock(binding, maxHz: BeatMath.FlashSafety.entertainmentMaxLockHz) {
                 let now = CACurrentMediaTime()
                 let idx = BeatMath.cycleIndex(at: now, snapshot: lock.snapshot,
                                               beatsPerCycle: lock.beatsPerCycle,
@@ -8094,39 +8515,58 @@ final class UnifiedOrchestrator {
                     let t = (phase - hold) / max(smoothness, 0.001)
                     bri = peakBri + (minBri - peakBri) * t
                 }
-                await entClient.sendUniform(channelIDs: channelIDs, x: color.x, y: color.y, brightness: bri)
-                try? await Task.sleep(nanoseconds: frameInterval)
+                // The frame goes to the ledger, not a `needsGate` verdict. Both
+                // of this branch's inputs move without the cycle index moving —
+                // `phase` runs BACKWARDS on a BeatClock epoch correction
+                // (driveFromTrack/ingest do this 1–2×/s against a playing track),
+                // and `hold` runs FORWARD when smoothness is dragged down — and
+                // both restore peak brightness inside one index. Since the ledger
+                // now measures the emitted level against the trough, neither
+                // needs naming: a rise is a rise however it was computed.
+                guard await emitGatedFrame(entClient: entClient, channelIDs: channelIDs,
+                                           ledger: onsetLedger,
+                                           x: color.x, y: color.y, brightness: bri) != nil
+                else { return }
                 continue
             }
 
-            // Speed 0–100 → 0.5–3.0 Hz
-            let hz = 0.5 + (speed / 100.0) * 2.5
-            let period = 1.0 / hz
-            let fadeFrames = max(1, Int(smoothness * period / 0.02))
-            let holdFrames = max(1, Int((1.0 - smoothness) * period / 0.02))
+            // Free-run: speed 0–100 → 0.5–3.0 Hz, planned as one safe cycle and
+            // split into hold + fade (both ≥ 1 frame, sum == the safe total).
+            let plan = BeatMath.FlashSafety.PartyPlan.make(speed: speed, smoothness: smoothness)
 
             let color = Self.partyTinted(palette[colorIndex % palette.count], tint: tint)
             colorIndex += 1
 
-            // Flash phase: hold at peak brightness
-            for _ in 0..<holdFrames {
-                guard !Task.isCancelled else { return }
-                await entClient.sendUniform(channelIDs: channelIDs, x: color.x, y: color.y, brightness: peakBri)
-                try? await Task.sleep(nanoseconds: frameInterval)
+            // Flash phase: the palette step is the onset, so its first frame
+            // waits for admission — and the frames streamed while it waits are
+            // the PREVIOUS colour at the PREVIOUS level, because that is what the
+            // ledger recorded as the wire state.
+            guard await emitOnsetFrame(entClient: entClient, channelIDs: channelIDs,
+                                       ledger: onsetLedger,
+                                       x: color.x, y: color.y, brightness: peakBri)
+            else { return }
+            for _ in 1..<max(plan.holdFrames, 1) {
+                guard await emitGatedFrame(entClient: entClient, channelIDs: channelIDs,
+                                           ledger: onsetLedger,
+                                           x: color.x, y: color.y, brightness: peakBri) != nil
+                else { return }
             }
 
-            // Fade phase: linear fade from peak to min
-            for i in 0..<fadeFrames {
-                guard !Task.isCancelled else { return }
-                let t = Double(i) / Double(fadeFrames)
+            // Fade phase: linear fade from peak to min.
+            for i in 0..<plan.fadeFrames {
+                let t = Double(i) / Double(plan.fadeFrames)
                 let bri = peakBri + (minBri - peakBri) * t
-                await entClient.sendUniform(channelIDs: channelIDs, x: color.x, y: color.y, brightness: bri)
-                try? await Task.sleep(nanoseconds: frameInterval)
+                guard await emitGatedFrame(entClient: entClient, channelIDs: channelIDs,
+                                           ledger: onsetLedger,
+                                           x: color.x, y: color.y, brightness: bri) != nil
+                else { return }
             }
         }
     }
 
     /// Party via REST — fallback. Cycles colors at ~1/sec.
+    /// Flash-safe by cadence, not by gate: 1 s free-run sleep and a `maxHz: 1.0`
+    /// beat lock put every palette step ≥ 1 s apart (R1: REST loops unchanged).
     private func runPartyREST(
         roomID: String,
         bridgeID: String?,
@@ -8190,15 +8630,41 @@ final class UnifiedOrchestrator {
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     /// Thunderstorm via Entertainment — ambient blue glow + random lightning strikes.
+    ///
+    /// Flash safety (Slice 2 remediation, R1): a strike's length is random and
+    /// a strike may be skipped entirely, so there is no fixed cycle to floor.
+    /// Instead a `ThunderstormPlan.Budget` carries "frames since the last
+    /// onset" across gaps, skipped strikes and beat-alignment waits, and
+    /// stretches the ambient gap by whatever the ≥ 17-frame invariant still
+    /// owes. The legacy gap curve is untouched — including its IEEE artefact,
+    /// `Int(0.19999999999999996 / 0.02) == 9` at frequency 100, which with a
+    /// 1-frame flash and no afterglow used to realize 9 + 1 + 0 = 10 frames =
+    /// **5.0 Hz**. Now `since = 1`, the budget demands `17 − 1 = 16` gap
+    /// frames, and the realized spacing is 17 frames.
     private func runThunderstormEntertainment(
         entClient: HueEntertainmentClient,
         channelIDs: [UInt8],
-        paramBox: StudioParamBox
+        paramBox: StudioParamBox,
+        onsetLedger: BeatMath.FlashSafety.OnsetLedger
     ) async {
-        let frameInterval: UInt64 = 20_000_000  // 50fps
         // Deep blue ambient default
         let ambientXY = (x: 0.1548, y: 0.1220)
 
+        // Onset accounting lives outside the while: a skipped strike must
+        // ACCUMULATE credit toward the next one, never reset it.
+        var budget = BeatMath.FlashSafety.ThunderstormPlan.Budget()
+
+        // There is no `lastAmbientBri` any more, and no pre-gate for an ambient
+        // RAISE. Both were an attempt to describe, in this loop, one of the ways
+        // its own output can climb — and it did not catch the others: afterglow
+        // (0.4 × flash_intensity) followed by ambient at min_brightness is a
+        // +0.10 rise two frames after the strike whenever flash_intensity is 50
+        // and min_brightness is 30, and the raise gate could not see it because
+        // it compared against the previous AMBIENT rather than the last EMITTED
+        // frame (H1). It also fired on every single start (`lastAmbientBri` was
+        // nil, so any min_brightness above the epsilon looked like a raise),
+        // costing a blackout hold and a delayed first strike (M4). Both are gone:
+        // every frame goes through the ledger, which measures the wire.
         while !Task.isCancelled {
             // The session can die under us — the official Hue app reclaiming
             // the area is the ordinary way. Without this the loop streamed
@@ -8209,36 +8675,60 @@ final class UnifiedOrchestrator {
             let flashIntensity = (p["flash_intensity"]  ?? 90) / 100.0
             let minBri         = (p["min_brightness"]   ?? 5) / 100.0
 
-            // Ambient glow phase (variable duration based on frequency)
-            // Higher frequency = shorter gaps between strikes
-            let gapDuration = 2.0 - frequency * 1.8  // 0.2–2.0 seconds
-            let gapFrames = max(5, Int(gapDuration / 0.02))
+            // Ambient glow phase (variable duration based on frequency).
+            // Higher frequency = shorter gaps between strikes — but never
+            // shorter than the invariant still owes.
+            let gapFrames = budget.gapFrames(frequency: frequency)
 
             for _ in 0..<gapFrames {
-                guard !Task.isCancelled else { return }
                 let ambientColor = extractXY(from: paramBox.colors["ambient_color"]) ?? ambientXY
-                await entClient.sendUniform(channelIDs: channelIDs, x: ambientColor.x, y: ambientColor.y, brightness: minBri)
-                try? await Task.sleep(nanoseconds: frameInterval)
+                // A gate hold here streams the LAST EMITTED frame — after a
+                // bright afterglow that is the afterglow level, held until the
+                // ledger admits the climb to ambient. Held or not, the frame is
+                // real ambient time on the wire, so it pays into the budget.
+                guard await emitGatedFrame(entClient: entClient, channelIDs: channelIDs,
+                                           ledger: onsetLedger,
+                                           x: ambientColor.x, y: ambientColor.y,
+                                           brightness: minBri) != nil
+                else { return }
+                budget.noteAmbient()
             }
 
             // Beat-locked: keep streaming ambient frames until the next cycle
             // boundary so every strike opportunity lands on the grid. The
             // DTLS stream must never pause — waiting means sending ambient.
+            // The lock is re-derived every frame from `liveLock` at the
+            // `entertainmentMaxLockHz` ceiling, and only `lock.beatsPerCycle`
+            // is used: reading the binding's RAW beats-per-cycle here (as this
+            // branch used to) threw the rate cap away entirely — defect R1-TB,
+            // the only raw-beatsPerCycle loop site in the repo.
             let binding = BeatBinding.fromStudioValues(p)
-            if BeatMath.liveLock(binding) != nil {
-                let entrySnap = BeatClock.snapshot()
-                let entryIdx = BeatMath.cycleIndex(at: CACurrentMediaTime(), snapshot: entrySnap,
-                                                   beatsPerCycle: binding.beatsPerCycle,
+            if let entry = BeatMath.liveLock(binding, maxHz: BeatMath.FlashSafety.entertainmentMaxLockHz) {
+                let entryIdx = BeatMath.cycleIndex(at: CACurrentMediaTime(), snapshot: entry.snapshot,
+                                                   beatsPerCycle: entry.beatsPerCycle,
                                                    phaseOffsetBeats: binding.phaseOffsetBeats)
                 while !Task.isCancelled {
-                    let snap = BeatClock.snapshot()
-                    guard snap.bpm > 0 else { break }
-                    if BeatMath.cycleIndex(at: CACurrentMediaTime(), snapshot: snap,
-                                           beatsPerCycle: binding.beatsPerCycle,
-                                           phaseOffsetBeats: binding.phaseOffsetBeats) != entryIdx { break }
+                    // Re-read the BINDING each frame, not only the clock. The
+                    // binding was captured before the wait, so turning Beat off
+                    // (or editing the phase offset) mid-wait used to change
+                    // nothing: `liveLock` kept answering with the stale, still
+                    // -active binding and the storm stayed frozen on ambient
+                    // until the next boundary of a cycle the user had already
+                    // switched off — up to 24 s at 20 BPM × 8. Only
+                    // `live.beatsPerCycle` is used, so the rate cap still holds.
+                    let liveBinding = BeatBinding.fromStudioValues(paramBox.values)
+                    guard let live = BeatMath.liveLock(liveBinding, maxHz: BeatMath.FlashSafety.entertainmentMaxLockHz)
+                    else { break }
+                    if BeatMath.cycleIndex(at: CACurrentMediaTime(), snapshot: live.snapshot,
+                                           beatsPerCycle: live.beatsPerCycle,
+                                           phaseOffsetBeats: liveBinding.phaseOffsetBeats) != entryIdx { break }
                     let ambientColor = extractXY(from: paramBox.colors["ambient_color"]) ?? ambientXY
-                    await entClient.sendUniform(channelIDs: channelIDs, x: ambientColor.x, y: ambientColor.y, brightness: minBri)
-                    try? await Task.sleep(nanoseconds: frameInterval)
+                    guard await emitGatedFrame(entClient: entClient, channelIDs: channelIDs,
+                                               ledger: onsetLedger,
+                                               x: ambientColor.x, y: ambientColor.y,
+                                               brightness: minBri) != nil
+                    else { return }
+                    budget.noteAmbient()
                 }
                 guard !Task.isCancelled else { return }
             }
@@ -8251,31 +8741,81 @@ final class UnifiedOrchestrator {
             //   flash_color unset → D65 white, the old flash
             let strikeRate = (p["strike_rate"] ?? 50) / 100.0
             let strikeChance = 0.3 + strikeRate * 0.6  // 30%–90%
+            // A skipped strike falls through WITHOUT touching the budget, so
+            // the credit it accumulated carries into the next opportunity.
             guard Double.random(in: 0...1) < strikeChance else { continue }
 
             let flashXY = extractXY(from: paramBox.colors["flash_color"]) ?? (x: 0.3127, y: 0.3290)
 
             // Lightning flash: rapid bright frames with organic length jitter.
-            let flashLength = Int(p["flash_length"] ?? 3)
-            let flashFrames = Int.random(in: max(1, flashLength - 1)...(flashLength + 2))
-            for _ in 0..<flashFrames {
-                guard !Task.isCancelled else { return }
-                await entClient.sendUniform(channelIDs: channelIDs, x: flashXY.x, y: flashXY.y, brightness: flashIntensity)
-                try? await Task.sleep(nanoseconds: frameInterval)
-            }
+            // `clampedInt`, never a bare `Int(_:)`: the param box holds whatever
+            // a slider, a decoded preset or a hand-edited value put there, and
+            // `Int(Double.nan)` / `Int(.infinity)` TRAP — before the frame ranges
+            // below ever get to clamp them.
+            let flashLength = BeatMath.FlashSafety.clampedInt(p["flash_length"] ?? 3,
+                                                              default: 3, range: 1...60)
+            let flashFrames = Int.random(in: BeatMath.FlashSafety.ThunderstormPlan.flashFrameRange(flashLength: flashLength))
 
             // Afterglow at 40% intensity; 0 disables it outright.
-            let afterglowBase = Int(p["afterglow"] ?? 1)
-            let afterglow = afterglowBase == 0 ? 0 : Int.random(in: afterglowBase...(afterglowBase + 1))
-            for _ in 0..<afterglow {
-                guard !Task.isCancelled else { return }
-                await entClient.sendUniform(channelIDs: channelIDs, x: flashXY.x, y: flashXY.y, brightness: flashIntensity * 0.4)
-                try? await Task.sleep(nanoseconds: frameInterval)
+            let afterglowBase = BeatMath.FlashSafety.clampedInt(p["afterglow"] ?? 1,
+                                                                default: 1, range: 0...60)
+            let afterglow = Int.random(in: BeatMath.FlashSafety.ThunderstormPlan.afterglowFrameRange(afterglow: afterglowBase))
+
+            // ...but never BELOW the ambient the gap is about to return to, so a
+            // strike decays monotonically: strike → afterglow → ambient is now a
+            // fall or a level step on every legal parameter pair, and never the
+            // climb it was at flash_intensity 50 with min_brightness 30 (H1 —
+            // 0.20 then 0.30 is a +0.10 rise two frames after the strike). The
+            // ledger still measures the wire and would have HELD that climb; the
+            // floor means there is nothing to hold, so the storm keeps one
+            // admitted onset per strike instead of two and its cadence is
+            // unchanged. Safety does not rest on this clamp — it rests on the
+            // ledger — but the look does.
+            let afterglowBri = max(flashIntensity * 0.4, minBri)
+
+            // The strike's first flash frame is the onset. The budget already
+            // guaranteed the FRAME spacing; the ledger is the wall-clock
+            // backstop that outlives this loop instance. Hold frames streamed
+            // here are ambient time — the ledger repeats the last ambient frame
+            // — so unlike the strike's own frames they DO pay into the budget.
+            var strikeOnWire = false
+            while !strikeOnWire {
+                if await entClient.isTerminallyFailed { return }
+                guard let outcome = await emitGatedFrame(
+                    entClient: entClient, channelIDs: channelIDs, ledger: onsetLedger,
+                    x: flashXY.x, y: flashXY.y, brightness: flashIntensity)
+                else { return }
+                // `landedOnWire`: a strike frame the transport dropped during a
+                // reconnect never lit the room, so the strike has not happened
+                // and the budget keeps paying ambient time for it.
+                strikeOnWire = outcome.landedOnWire
+                if !strikeOnWire { budget.noteAmbient() }
             }
+
+            for _ in 1..<max(flashFrames, 1) {
+                guard await emitGatedFrame(entClient: entClient, channelIDs: channelIDs,
+                                           ledger: onsetLedger,
+                                           x: flashXY.x, y: flashXY.y,
+                                           brightness: flashIntensity) != nil
+                else { return }
+            }
+
+            for _ in 0..<afterglow {
+                guard await emitGatedFrame(entClient: entClient, channelIDs: channelIDs,
+                                           ledger: onsetLedger,
+                                           x: flashXY.x, y: flashXY.y,
+                                           brightness: afterglowBri) != nil
+                else { return }
+            }
+
+            budget.noteStrike(flashFrames: flashFrames, afterglowFrames: afterglow)
         }
     }
 
     /// Thunderstorm via REST — fallback. Random brightness spikes.
+    /// Flash-safe by cadence, not by gate: the gap sleep is floored at 500 ms and
+    /// the strike is followed by a 200 ms hold before the next ambient write, so
+    /// consecutive strikes are ≥ 0.7 s apart (R1: REST loops unchanged).
     private func runThunderstormREST(
         roomID: String,
         bridgeID: String?,
@@ -10026,6 +10566,38 @@ enum BridgeSaveCopy {
     /// made about what is or isn't playing now.
     static let savedNotConfirmedPreviousLookRemovedPlaybackChanged =
         "The previous bridge look was removed to make room. The new one is saved to your bridge, but it isn't confirmed running. Playback changed while the save completed — ChromaGlow preserved the newer state. You can stop the saved look from here."
+}
+
+/// User-facing copy for Preview Live (spec §16.5).
+///
+/// One sentence, one home, for the same reason every other prompt vocabulary
+/// in this file has one: the restore is fenced, so it CAN legitimately decline
+/// to put the previous look back, and a silent decline is indistinguishable
+/// from a broken button.
+enum PreviewLiveCopy {
+    /// The audition's target moved on — stopped, replaced, or rekeyed —
+    /// between the audition and "Put It Back", so the restore was dropped
+    /// rather than landed on whatever runs there now.
+    static let restoreDropped =
+        "The room changed while you were previewing, so the previous look wasn't put back."
+    /// Preview Live snapshots numbers and colours. A running composition's
+    /// unsaved live state is its param box — palette, motion, envelope,
+    /// reaction — which the audition's replacement stop evicts and which "Put
+    /// It Back" would rebuild from the SAVED preset. Rather than destroy
+    /// unsaved composer work on the one button that promises an exact undo,
+    /// the audition is refused and nothing is touched.
+    static let compositionCannotBePreviewedOver =
+        "Preview Live can't run over a composition you're editing — save or stop it first."
+    /// A recovered bridge-stored animation has no app-side runtime and no
+    /// restartable card, so there is nothing "Put It Back" could put back.
+    static let recoveredCannotBePreviewedOver =
+        "Preview Live can't run over a look that's playing from your bridge — stop it first."
+    /// One audition, one room. A second audition on a DIFFERENT room would
+    /// leave the first room's original look unrecoverable, so the room already
+    /// under preview is NAMED and nothing is changed.
+    static func finishPreviewFirst(in roomName: String) -> String {
+        "Put back or keep the preview in \(roomName) first."
+    }
 }
 
 /// Safety refusals shared between Studio and Perform.

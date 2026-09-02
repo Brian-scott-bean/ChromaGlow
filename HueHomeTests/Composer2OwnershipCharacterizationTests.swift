@@ -554,25 +554,22 @@ final class Composer2OwnershipCharacterizationTests: XCTestCase {
                       "a tick at the pre-stop generation reached no enqueue on either bridge")
     }
 
-    /// Studio's live-param debounce is one non-keyed slot per StudioViewModel
-    /// instance, cancelled unconditionally on every param send.
+    /// Slice 2 rewired the Studio live-param debounce: the old one non-keyed
+    /// `paramTask` slot (cancelled unconditionally by every send, from any
+    /// room) is gone, replaced by one pending send PER EXACT RUNNING TARGET.
     ///
-    /// NON-TRANSITIVE and PER-INSTANCE: about the extracted declaration and the
-    /// extracted `sendParam` body only. StudioViewModel is built as
-    /// `@State private var vm = StudioViewModel()` (StudioView.swift:88), so
-    /// one-instance-per-process is NOT established and is NOT claimed here. No
-    /// cross-bridge contention is inferred from the declaration.
-    func testCurrentStudioParamDebounceIsOneNonKeyedSlotPerViewModelInstance() throws {
+    /// NON-TRANSITIVE and PER-INSTANCE: about the extracted declaration only.
+    func testCurrentStudioParamDebounceIsKeyedByExactRunningTarget() throws {
         let src = try productionSource(studioVMPath)
 
-        let decl = try requireDeclaration("private var paramTask", in: src, of: studioVMPath)
-        requireContains("Task<Void, Never>?", in: decl, "paramTask is a single optional Task slot")
-        requireAbsent("[", in: decl, "paramTask is not keyed by bridge or room")
+        XCTAssertFalse(src.contains("private var paramTask"),
+                       "the single global debounce slot is retired")
+        XCTAssertFalse(src.contains("func sendParam("),
+                       "the selectedRoom-re-reading send path is retired")
 
-        let body = try requireBody("func sendParam(cardID: String, paramID: String, value: Double) {",
-                                   in: src, of: studioVMPath)
-        requireContains("paramTask?.cancel()", in: body,
-                        "every param send cancels the one slot unconditionally")
+        let decl = try requireDeclaration("var paramSendTasks", in: src, of: studioVMPath)
+        requireContains("[RunningLookTargetKey: Task<Void, Never>]", in: decl,
+                        "pending sends are keyed by exact running target — two targets' edits never cancel each other")
     }
 
     /// The explicit-stop marker is one non-keyed field per StudioViewModel
@@ -587,7 +584,7 @@ final class Composer2OwnershipCharacterizationTests: XCTestCase {
         let decl = try requireDeclaration("private var isExplicitStop", in: src, of: studioVMPath)
         requireAbsent("[", in: decl, "isExplicitStop is not keyed by bridge or room")
 
-        let body = try requireBody("private func stopEffect(on rowKey: RoomEffectKey,",
+        let body = try requireBody("private func stopEffect(on rowKey: StudioSelectionKey,",
                                    in: src, of: studioVMPath)
         let firstAwait = try XCTUnwrap(body.range(of: "await"),
                                        "the stop path must contain a suspension point")

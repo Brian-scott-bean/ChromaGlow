@@ -24,20 +24,20 @@ globs:
 - x, y = CIE 1931 coordinates (0.0–1.0), brightness = 0.0–1.0
 
 ## Orchestrator
-- `startStudioMode(key:room:params:colors:)` — existing effect engines
-- `startCompositionMode(room:paramBox:)` — composition render loops
+- `startStudioMode(key:room:params:colors:capturedPlan:consent:preparedEntertainment:)` — existing effect engines (the last three have defaults)
+- `startCompositionMode(room:paramBox:gamutOverride:preferEntertainment:tier:preset:capturedPlan:consent:preparedEntertainment:)` — composition render loops (everything after `paramBox:` has a default)
 - `stopStudioMode()` — cancels task + stops entertainment + clears state
 - `StudioParamBox` — live param relay for existing engines
 - `CompositionParamBox` — live param relay for compositions
-- `studioRestSender` — RestSender mailbox (latest-wins, max 1 in-flight)
+- Studio REST routing is PER BRIDGE: `studioRestScopesByBridge` (private) holds each bridge's studio `RestScope`. Route every studio REST write through `enqueueStudioRestWrite(roomID:bridgeID:)` — latest-wins mailbox, max 1 in-flight per scope
 
 ## Color Conversion
 - `HueColorUtils.xyFrom(hue:saturation:brightness:)` → CIE xy
 - `CodableColor.from(color:)` — SwiftUI Color → CIE xy
 - D65 white point: `(0.3127, 0.3290)`
-- Mirek range: 153 (cool/6500K) to 500 (warm/2000K)
+- Mirek: 153 (cool/6500K) – 500 (warm/2000K) is the Hue SPAN, not a light's range. Use the device-reported `mirek_schema` per light, intersected across the target by `CustomizationSnapshotBuilder`; a capable-but-schemaless light downgrades the evidence rather than silently assuming 153–500
 
 ## Rate Limit Safety
 - grouped_light: 1 PUT/sec max (bridge drops excess silently)
 - Per-light: batches of 5 with 150ms gaps via `sendPerLightBatched()`
-- REST render loops: use `studioRestSender.enqueue()` — NEVER direct `await api.set...()`
+- REST render loops: use `enqueueStudioRestWrite(roomID:bridgeID:)` — NEVER direct `await api.set...()`

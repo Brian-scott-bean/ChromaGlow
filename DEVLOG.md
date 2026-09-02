@@ -4,7 +4,7 @@
 
 ---
 
-## Current Status Snapshot (updated 2026-08-03)
+## Current Status Snapshot (updated 2026-09-01)
 
 ### Pointers
 - Canonical agent context: `AGENTS.md`. Claude Code entry point: `CLAUDE.md` points there.
@@ -12,7 +12,57 @@
 
 ### iOS — where we are RIGHT NOW
 - **`main` is the current production anchor and the branch Brian installs from**
-  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **1.0.0**, build **46**).
+  (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **1.0.0**, build **52** per `main`'s pbxproj).
+- **UNIFIED CUSTOMIZATION SLICE 2 — REMEDIATED, PR #64 OPEN AND UNMERGED (2026-09-01).**
+  Branch `feat/unified-customization-studio-instrument` (base `main` @ `ca074b85`), final code head `b06df67` (the docs commit on top of it is the PR head).
+  The Slice 2 delivery (`89de143`) was blocked in review; **nine** remediation commits answer it,
+  across five review rounds (the blocking review, then four adversarial passes over the remediation itself):
+  `c8c801f` restored the eight `.cursor` guardrails deleted as collateral; `910c861` made the ≤3 Hz
+  flash ceiling a **realized-frame** invariant (Thunderstorm was running 5.0 Hz, Strobe/Party
+  3.13–3.33 Hz on the 20 ms grid), with `BeatMath.FlashSafety`, a per-bridge onset ledger and an
+  Entertainment beat-lock ceiling of 2.94 Hz; `f2f7a19` routed **every** board control, colour
+  included, through the one `StudioBoardAvailability` funnel; `10c2301` made the capability-matrix
+  citations machine-verified and split the totals into **code-proven / hardware-pending / pending =
+  57 / 11 / 0 of 68 plus 23/68 owing a hardware behaviour check**, and added Guards 14 and 15;
+  `7d8d14e` serialized Studio lifecycle mutations
+  through one FIFO chain, wired the runtime seams that actually rekey (transport fallback, session
+  lost — SSE reconnect and capability refresh are proven not to need one), coalesced per-target
+  sends, and proved Preview Live on the production path. **`2200e98`** then closed a fresh ten-lane
+  adversarial review of the remediation itself: Party's beat branch gated cycle-index changes rather
+  than luminance rises (a 0.02–0.06 s realized rise slipped the gate), `OnsetGate` re-based backwards
+  on out-of-order time, the ledger period became 0.34 s, `Int(Double)` NaN/inf trap guards landed,
+  hardware-pending params stopped rendering as fully live ("UNVERIFIED ON THESE LIGHTS"), CHECKING
+  recovers instead of hanging, raw gestures are gated at the control rather than only by `.disabled`,
+  app-driven warmth requires CT, the invalid combined colour+CT grouped PUT was split, the failover
+  emit is box-fenced, every send re-checks the captured identity, and Preview Live refuses over
+  compositions and recovered rows. **`119aa4b`** then closed a *second* adversarial pass, against
+  the round-two fixes themselves: the flash gate moved to the **wire** (`emitGatedFrame` — round two
+  gated the transitions the loop computed, not the frames it emitted, and a hold frame could itself
+  be a 50 % rise), instance value bases are **frozen at start** instead of seeded from the full
+  catalog (which had been copying every catalog default into the user's persisted defaults),
+  **unknown capability never refuses** (a cold snapshot's Speed knob had been asserting "THESE LIGHTS
+  CAN'T CHANGE THIS WHILE RUNNING" beside neighbours saying CHECKING), and a deferred audition is
+  released on every confirmation exit. **`14a0cac`** closed a third pass: the flash gate became
+  **wire-true** (`send`/`sendUniform` answer whether the frame reached the transport; reserve → send →
+  commit, stamp at delivery; the 10 % rule measured in relative luminance), copy-back **layers**
+  instead of replacing, and colour reach is **effect-specific** (lights whose `effect_values` list this
+  effect; zero reach says NO LIGHT HERE RESPONDS TO THIS). **`b06df67`** closed a fourth pass run by a
+  fresh orchestrator after the account handoff: a dropped send no longer **forgets the wire** (it
+  restores the pre-drop state; a wire silent for a whole period goes cold, and the cold path applies the
+  red rule against the last known frame — two BLOCKERs, both realizing 1-frame red flashes across a
+  dropped DTLS frame, one of them with in-catalog Thunderstorm params), the same-card audition restore is
+  exact, the deferred-audition bracket is explicit (a deliberate apply behind a prompt could be armed as
+  the audition), the colour editor's badge shows the funnel's narrowed reach, each pending send window
+  carries a token, and four guard/generator gaps are closed. Suite on `7d8d14e` was **1844/1844 twice**
+  (pre-review-fix baseline); on `2200e98` **1883/1883 twice**; on `119aa4b` **1935/1935 twice**; on
+  `14a0cac` **1967/1967** once (its second run was superseded by round five); on `b06df67` the two full
+  runs are **1987/1987**, 0 failed, 0 skipped (`~/Desktop/pr64-xcresults/full8.xcresult`) / **1987/1987**, 0 failed, 0 skipped (`~/Desktop/pr64-xcresults/full9.xcresult`). Matrix
+  totals are four figures: code-proven send path 57/68, no code-proven path 11/68, pending 0/68, and
+  23/68 code-proven rows still owing a hardware behaviour check. **Hardware: none run, none
+  claimed** — master checklist §V-B rows 37–65 (incl. 59b and the new row 65) are all UNPROVEN. Rollback tag
+  `checkpoint/pre-slice2-remediation-2026-09-01` at `89de143` (local; not pushed). **`main` untouched,
+  Slice 3 not started, and nothing merges without Brian's explicit approval.** Full record: the 2026-09-01
+  `[Claude] PR #64 remediation` entry below.
 - **COMPOSER 2 / PHASE 1 COMPLETE AND VALIDATED — NOT LANDED (2026-08-07).** Nine linear
   packets 1A→1D, final implementation HEAD `6ead505`, branched from `main` @ `320ebaf`.
   Phase 1 is a typed foundation with **zero runtime consumers**: five production files that
@@ -596,6 +646,762 @@
 ```
 
 ---
+
+## 2026-09-01 - [Claude] Slice 2 — Studio Instrument: production truth wiring + the touch-native board
+
+**Branch:** `feat/unified-customization-studio-instrument` (base `main` @ `ca074b85`, PR #64 — DO NOT MERGE without Brian's explicit approval).
+**Rollback:** `git switch main` — nothing touched `main`; checkpoint tag `checkpoint/pre-unified-customization-slice2-2026-09-01` (at `ca074b85`).
+
+**Did.** The Slice 1 truth foundation is PRODUCTION-ACTIVE and the audit-§2A live routing defect is
+actually fixed, then the binding Studio instrument was built on top of it. Seven substantial commits:
+
+1. `db776d1` fix(tooling) — `run_tests.sh` deterministic destination discovery (preferred model at the
+   highest installed OS; `CHROMAGLOW_TEST_UDID`/`CHROMAGLOW_TEST_MODEL` overrides; no developer UDID in
+   repo config) + three stale "run_tests.sh names the wrong scheme" doc claims corrected (it was fixed
+   in `f3cac86`).
+2. `909dc47` fix(studio) — exact-state wiring. `CustomizationValueScopes<Color>` + the app's single
+   `CustomizationGenerationCounter` own live/default/draft state; card-global `paramValues`/`paramColors`,
+   the global `paramTask` debounce slot, and `setParamValue`/`sendParam`/`sendColorParam` are DELETED.
+   `runningEffects`/`activeCompositionBoxes` re-keyed by `StudioSelectionKey` (bridge+group+KIND — a room
+   and a zone sharing an id are two rows; kind-less records resolve fail-closed). Every gesture captures a
+   `StudioParamSession` (identity + API client + routing facts) at start; every tick and every debounced
+   send is fenced on it; debounce is per-target latest-wins. `updateStudioParams` gains `roomID:` + the
+   `runtime.roomID` guard the stop path has had since round 4g — the same-bridge cross-write is dead.
+   Reset/Stop are exact-instance with generation fencing; persisted last-used defaults keep the
+   `studio.lastParams.v1` shape (no migration). **SUPERSEDED IN PART by the 2026-09-01 remediation
+   entry below:** `rekeyRunningInstance` had NO production caller at this point (only a test), and
+   `apply()` was re-entrant — a superseded arm left an orphan `isCurrent` scope. Both are wired and
+   serialized in `7d8d14e`.
+3. `8cf70f9` feat(studio) — audit-§7 verified effect profiles (`EffectParameterProfiles`: speed is live
+   v2-only with NO legacy branch → honestly unavailable on v1-only rooms; base_color/warmth live per-light
+   v2 with the long-shipping grouped fallbacks PRESERVED and classified approximations pending hardware;
+   brightness = grouped state write, visible scaling hardware-pending; transition = new honest
+   `.nextWrite` mutation class) + `CustomizationSnapshotBuilder` (per-light `mirek_schema` intersection;
+   CT-capable-but-schemaless → `.unreadable`, never a fake 153…500; failed reads → all-unreadable
+   snapshots). Matrix: 68/68 rows carry verified evidence, 0 PENDING; generator gained the lockstep
+   `EFFECT_PROFILES` table. **SUPERSEDED IN PART by the 2026-09-01 remediation entry below:** 68 is
+   the catalog size, the totals now split code-proven / hardware-pending / pending = 57 / 11 / 0,
+   all seven committed consumer citations were wrong and are now machine-verified, and Warmth is
+   snapshot-honest in AVAILABILITY only — its authoring range is still the catalog's `153...500`. Audit §2C records everything, including the per-engine Beat consumption table
+   read from the four engine loops.
+4. `d652ebe` feat(studio) — shared instrument primitives: `InstrumentControlMath` (adaptive fine control,
+   semantic ticks, clamp IN the math), StageKnob/StageFader/StageSteppedEncoder (direct drag, contextual
+   readout, exact entry via the shared parser, double-tap reset, adjustable accessibility + explicit
+   Reset action), `StageColorEditor` (B+ inline: swatches + My Colors + pad expanding in place, honest
+   gamut context), `StageBeatSection` (progressive reveal around the existing `BeatPanelView` — no fork),
+   and `BeatMath.FlashSafety` — the free-running ≤3 Hz ceiling is now a REAL clamp in the strobe/party
+   ENT loops instead of an arithmetic coincidence. **SUPERSEDED IN PART by the 2026-09-01
+   remediation entry below:** that clamp bounded the REQUESTED float only; on the 20 ms frame grid
+   Strobe/Party realized 3.13–3.33 Hz and Thunderstorm (unclamped entirely) realized 5.0 Hz.
+5. `f0ab833` feat(studio) — per-look boards + Advanced retirement. `StudioBoardCatalog` composes each of
+   the 15 looks with a DESIGNED hero; `ParamTier.advanced` → `.support` prominence metadata (spec §2.3 —
+   no user-facing Advanced anything; caption, partition and reserved header metrics deleted with
+   tombstones; `StudioParamSheet` stays defined-but-unpresented, Track B owns it). The header is one quiet
+   line (`PARTY · LIVING ROOM ›`, `StudioIdentityHeader`) + exact selected-target Stop; the old badge
+   lane/action circles/status sentence live in the operational panel expanding from the identity, where
+   Reset to Defaults is now reachable for every effect/live look. Stop All is ALWAYS visible (toolbar
+   octagon, one tap, no confirmation, heavy haptic). Live transport honesty: the engine reverse-audit
+   proved `party.speed`, `party.min_brightness`, `thunderstorm.flash_length`, `thunderstorm.afterglow`
+   are Entertainment-only reads — entOnly inventory deliberately expanded 3 → 7 (the tripwire test was
+   the migration inventory and says so). **SUPERSEDED IN PART by the 2026-09-01 remediation entry
+   below:** the colour section never consulted the resolver and `resolution(for:)` returned nil for
+   every app-driven card, so Live controls (colour included) rendered unconditionally interactive
+   regardless of coverage or transport; `StudioBoardAvailability` is now the single funnel.
+6. `4a92391` feat(studio) — session manager + browser + Preview Live. Picker = PLAYING NOW first with
+   per-row exact Stop (`stopActiveTarget`); active-target switches keep the console open
+   (`modeOnRoomChange` policy function — decks-side auto-open defect still dead, both directions pinned);
+   per-target session working memory (expansions restored during the session, cleared at its end); Apply
+   Current Look copies the source's exact live values ONCE (`seedApplyCurrentLook`) then instances
+   diverge; Favorites/Recents band (`StudioLookLibraryStore`, local-first) + card star + long-press +
+   INLINE Details & Setup (never a sheet); Preview Live (`PreviewLiveMachine`) snapshots the previous
+   look + exact values and restores through the normal `apply()` path, fenced by `CustomizationFence`
+   on the audition's identity. No parallel runtime store anywhere.
+7. (docs) — — this entry, checklist §V-B (rows 37–57), execution-plan Slice 2 status. One full-suite defect was found
+   and fixed during validation, in a guard test rather than the product:
+   `testEveryEnqueuedClosureIsCooperativelyCancellable` scanned `StudioViewModel.swift` for the
+   enqueued Studio closures, which deliberately moved to the customization-wiring extension — the
+   guard's remit now follows the code (all three per-light loops still probe before every send).
+
+**Validation** (destination `iPhone 17 Pro`, iOS 26.5, `005EBEC4-ECF0-4E2C-8A9C-5389006C2A36`; verdicts
+read from the xcresult bundles):
+
+| Gate | Result |
+| --- | --- |
+| Slice 1 focused (57) | green throughout — every run |
+| Slice 2 focused suites | production wiring 17, profiles+snapshots 10, control math 14, preview 9, library/session 6, structural/probes updated — all green |
+| Full registered suite, run 1 | **1782/1782** passed, 0 failed, 0 skipped (baseline was 1723) |
+| Full registered suite, run 2 | **1782/1782** passed, 0 failed, 0 skipped |
+| `./Scripts/hardening_guards.sh` | all guards passed |
+| `generate_capability_matrix.py --check` | up to date (0 PENDING rows) |
+| build-metadata script tests | both pass |
+| `git diff --check` | clean |
+
+Guard changes (deliberate, strengthening): Guard 12 now pins the `bridgeID+roomID` update signature,
+the `runtime.roomID` guard inside `updateStudioParams`, and the room-change policy's decks-side rule;
+the customization suites joined the no-timing-wait lists. Guard 13's RULE was untouched, but the
+host file itself was rewritten — `MixerTrayView.swift` (which holds `StudioCustomizationHost`) is
++270/−334 across `909dc47` and `f0ab833`; the one-surface rule held across that rewrite, and the
+2026-09-01 remediation extends Guard 13(a) to the six new instrument files.
+
+**Hardware: none run, none claimed.** Master checklist §V-B rows 37–57 (the capability-matrix
+hardware-pending rows 37–39 gate re-classifying brightness and the legacy color/warmth fallbacks as
+fully live; row 44 is the spec-§5.2 adaptive-fine-control feel gate — the gesture must not ship if it
+feels unpredictable on device). §V-A's Track A debt is untouched and still UNPROVEN.
+
+**Boundaries.** Slice 3 NOT started; Composer's runtime model untouched (its editor panel renders in the
+new host unchanged); Composer 2 Phase 1 still inert (zero consumers); nothing merged, `main` untouched.
+
+**Gotchas for the next session.**
+- `CURRENT_PROJECT_VERSION` NOT bumped — bump all 12 pbxproj entries when Brian takes a device round.
+- `effectCoverage` (deck badges) still card-keyed with a selection guard; the resolver-grade
+  target-keyed context replaces it when the deck badges move to the resolver (deferred, noted in PR).
+- `""` vs `"legacy"` bridge-key sentinel split between the engine map and REST scopes remains (noted,
+  out of scope).
+- Preview Live treats navigating away mid-preview as keeping the audition (the snapshot restores only
+  from an explicit "Put It Back"); cancel is fenced against every identity change.
+
+---
+
+## 2026-09-01 - [Claude] PR #64 remediation: realized flash safety, one availability funnel, lifecycle serialization
+
+### Branch
+
+- `feat/unified-customization-studio-instrument` (base `main` @ `ca074b85`), final code head `b06df67` (the docs commit on top of it is the PR head).
+- **PR #64 is OPEN and UNMERGED — DO NOT MERGE without Brian's explicit approval.** `main` untouched;
+  Slice 3 not started.
+- Nine remediation commits: `c8c801f` (rules), `910c861` (flash), `f2f7a19` (colour), `10c2301`
+  (guards/tooling), `7d8d14e` (state/race/preview), `2200e98` (second review round), `119aa4b`
+  (third review round), `14a0cac` (fourth review round), `b06df67` (fifth review round, after the
+  Claude-account handoff recorded in `docs/coordination/handoff-pr64-remediation-2026-09-01.md`).
+- Rollback: checkpoint tag `checkpoint/pre-slice2-remediation-2026-09-01` at `89de143` (the Slice 2
+  delivery head). Every remediation commit is independently revertable back to that tag.
+
+### Why — what review found in the Slice 2 delivery
+
+Five defect families, each verified in source before anything was changed. The numbers matter, so
+they are written out:
+
+- **Flash safety was a requested-float clamp, not a realized one.** The Entertainment loops render on
+  a 20 ms frame grid, and the grid was never part of the arithmetic.
+  - **Thunderstorm had no rate clamp at all.** At `frequency` 100 the legacy gap curve computes
+    `Int((2.0 - 1.8) / 0.02)` = `Int(0.19999999999999996 / 0.02)` = **9** gap frames (IEEE, floors to
+    9 not 10); `flash_length` 1 adds one flash frame; `afterglow` 0 adds none. A strike every **10
+    frames = 200 ms = 5.0 Hz**. At card defaults it realized ~4.17 Hz, and anything at
+    `frequency` ≥ 94 was over the ceiling.
+  - **Strobe and Party floored the ON and OFF frame counts independently.** At `speed` 100 that is
+    15–16 frames per cycle = **3.13–3.33 Hz** for every duty 10…90; Party at its shipped default
+    `smoothness` 20 realized **3.125 Hz**.
+  - **The storm's beat branch discarded the WCAG-capped lock** and gated on the raw
+    `binding.beatsPerCycle` — the only raw-`beatsPerCycle` loop site in the repo.
+  - **Beat locks at exactly 3 Hz quantized badly:** a 1/3 s boundary on a 20 ms grid realizes
+    **16 frames = 0.32 s**.
+  - No test in the repo measured a realized inter-onset interval; every "3 Hz" test asserted a
+    requested float or a UI string.
+- **Colour bypassed the resolver.** `StudioBoardView.colorSection` rendered a live swatch row and hue
+  pad from a coverage chip alone and never called the resolver; `resolution(for:)` returned `nil` for
+  every app-driven card, so **every Live-card control was unconditionally interactive**; and
+  `colorCapabilityContext` hard-coded evidence `.known`, so an unreadable capability read looked
+  identical to full coverage. A colourless room got a live colour editor, and Strobe's
+  streaming-only `flash_color` stayed live in Room mode with no note.
+- **`rekeyRunningInstance` had zero production callers.** Its only caller was
+  `StudioProductionWiringTests`; `.transportChanged` / `.bridgeReconnected` / `.capabilityRefreshed` /
+  `.selectionChanged` / `.roomRemoved` were never bumped by any shipping path. Concretely: a lost
+  Studio Entertainment session removed the runtime and the Now Playing row but left the view-model row
+  standing with `isEntertainment: true` and no engine; a composition ENT→REST failover left the view
+  model's `isEntertainment` stale, so the resolver reported the wrong transport.
+- **`apply()` was re-entrant, and the loser orphaned a scope.** Each arm installed its identity and row
+  after roughly a dozen awaits with no epoch check, and `RunningLookTargetKey` includes the card id —
+  so a superseded apply of card A left A's value scope believing it was still current while B's engine
+  ran, and A's debounced sends passed the re-fence. **Per-target send loss** compounded it: the
+  debounce slot was keyed per target rather than per control, so a second parameter committed within
+  150 ms cancelled the first parameter's bridge write outright.
+- **Preview Live's flags were optimistic.** `previewing` was set before the apply and never rolled back
+  on refusal; stop and Stop All never cleared preview state; a fenced `.drop` was a silent no-op; and
+  the restore overwrote persisted defaults before an apply that might bail. The only tests were
+  machine-level ordering tests — zero production-path coverage.
+- **Eight tracked repo guardrails were deleted as collateral.** `909dc47` removed all eight tracked `.cursor`
+  guardrail files — the seven `.cursor/rules/*.mdc` and
+  `.cursor/skills/chromaglow-code-quality-review/SKILL.md` — without mentioning them, while `AGENTS.md` and `CLAUDE.md` still pointed at them.
+
+### Did
+
+Nine commits, in dependency order (five in the first round, then one per adversarial pass — the last two, `14a0cac` and `b06df67`, are described in their own "Fourth round" and "Fifth round" sections below):
+
+1. `c8c801f` chore(rules) — restored all eight `.cursor` guardrail files from the base tree
+   byte-for-byte, then patched only the statements Slice 1/2 actually invalidated, preserving every
+   guardrail's intent: `runningEffects` is `StudioSelectionKey`-keyed; the generation counter has a
+   named home (`CustomizationGenerationCounter` / `CustomizationFence`); scheme `HueHome 1` with an
+   exact `id=` destination and no auto-commit after builds; `activeCompositionBox` is the
+   selection-derived accessor; the current `startStudioMode` signature, `studioRestSender`'s removal
+   and the honest device-reported `mirek_schema` range; the canonical `AGENTS.md` entry header and
+   `checkpoint/*` tags; Composer shipped and the customization host is the inline one-surface
+   `StudioCustomizationHost` → `StudioBoardView`; `StudioViewModel+CustomizationWiring.swift` joins
+   the protected surfaces. `.cursor/mcp.json` was never tracked and stays untracked.
+2. `910c861` fix(studio) — **the ≤3 Hz ceiling became a realized-frame invariant.**
+   `BeatMath.FlashSafety` owns the math, pure and clock-free: `minCycleFrames` (17), `cycleFrames`
+   (safe TOTAL first, then ceil), `splitFrames` (never shortens the total), `StrobePlan` / `PartyPlan`
+   / `ThunderstormPlan` (the functions the loops actually call), a Thunderstorm frame `Budget` so
+   `gap + framesSinceOnset >= 17` across skipped strikes and beat waits, and an `OnsetGate` /
+   per-bridge `OnsetLedger` wall-clock backstop that outlives loop restarts. Every Entertainment onset
+   — first bright frame, first strike frame, palette step — is admitted through the ledger; on refusal
+   the loop streams a hold frame and re-checks (delay, never skip). Frame sleeps use the one shared
+   quantum. REST loops are unchanged (cadence ≥ 0.7 s) and carry the proof comment.
+3. `f2f7a19` fix(studio) — **one board availability funnel, colour included.**
+   `StudioBoardAvailability` is the single pure resolver: bridge-native params keep the
+   `EffectParameterProfiles` path; app-driven colour pickers require
+   `.all([.color] + (.transport(.entertainment) when entOnly))`; numeric `entOnly` params require the
+   Entertainment transport; other numerics `.none`. `boardControl` and `colorSection` resolve against
+   the same cached snapshot and apply the same interactivity, opacity and note. The separate
+   `showsEntOnlyHint` line is gone (one note per control), and `colorCapabilityContext` derives
+   coverage from the snapshot with evidence preserved instead of hard-coding `.known`.
+4. `10c2301` chore(guards) — **tooling honesty plus Guards 14 and 15.**
+   `generate_capability_matrix.py` had trusted a hand-written `CITED_CONSUMERS` table; **all seven
+   committed line numbers were wrong**, and `--check` could never notice because it only diffed the
+   rendered string. Citations are now verified on every run (the cited line must contain
+   `paramBox.colors["<param>"]` for that exact param inside the loop owned by that card), with
+   `--refresh-citations` to re-find them. Hardware-pending rows are no longer counted as proven: the
+   totals became four separate figures — **code-proven send path 57 / 68**, **no code-proven send
+   path (hardware-pending evidence) 11 / 68**, **pending 0 / 68**, and **23 / 68 code-proven rows
+   that still owe a hardware BEHAVIOUR check** (`base_color` ×9, `speed` ×11, `warmth` ×3; a subset
+   of the 57, not a fourth bucket) — with the audit-§7 sentence that physical evidence is still
+   owed. `hardening_guards.sh` re-hardens two
+   anchors the Slice 2 PR had loosened (the `updateStudioParams` signature literal is scoped to its
+   body; the room-change rule must *return* `.decks` on the non-customization branch), extends
+   Guard 13(a) to the six new instrument files, adds the Slice 2 suites to the no-timing-wait list,
+   and adds **Guard 14** (`slice2-r1`, the realized-frame flash invariant) and **Guard 15**
+   (`slice2-r2`, the single board availability funnel). Every new sub-check was mutation-tested
+   against a scratch copy and fails when its condition is broken; comment-only mentions do not trip it.
+5. `7d8d14e` fix(studio) — **lifecycle serialization, runtime seams, coalesced sends, Preview Live
+   proof.** Studio lifecycle mutations (apply, stops, reset, preview, handoff/takeover/area
+   confirmations, Now Playing stops) run through one FIFO chain on the view model; nested calls are
+   detected with a task-local and run inline (recorded in DEBUG) so the chain can never wait on
+   itself. Belt: `installRunningIdentity` retires every scope and pending send at the same
+   bridge + group + kind, whatever the card, before registering the new instance; a structural pin
+   proves the orchestrator never reaches `studioStopHandler` from a start or stop path. The
+   orchestrator now emits a **synchronous** `StudioRuntimeEvent` in the same actor turn as its own
+   fence — `entertainmentSessionLost` from `reconcileStudioSessionAfterLoop` before `stopSession()`,
+   `compositionFellBackToREST` from `failCompositionEntertainmentToREST` once the exact playback key
+   claims REST — and `studioRuntimeEventHandler` fails closed on the exact row and strategy. Sends are
+   coalesced: commits accumulate into one pending set per target and fire as ONE mailbox closure (one
+   grouped PUT and one `effects_v2` body per light carrying every changed field, `stillCurrent()`
+   before each send). Preview Live's `previewing` flag is set only after the audition is confirmed,
+   cleared on refusal, consumed by an explicit stop or Stop All; a second audition chains onto the
+   original snapshot; the restore captures the card's defaults first and rolls them back if the
+   previous look did not reinstall; and a fenced cancel now SAYS so (`PreviewLiveCopy.restoreDropped`)
+   instead of silently doing nothing. `seedRawLightCache` is seeded from apply so the board never
+   renders CHECKING merely because no inventory has been read yet.
+6. `2200e98` fix(studio) — closes the fresh ten-lane adversarial review's BLOCKERs and HIGHs on
+   flash, colour and lifecycle. Detailed in the next section; suite on that tree **1883 passed,
+   0 failed, 0 skipped**.
+7. `119aa4b` fix(studio) — closes a **second** adversarial pass, this one against the round-two fixes
+   themselves: the flash gate moves to the wire, instance bases are frozen, and unknown capability
+   never refuses. Detailed in "Third round" below.
+
+### Second review round (`2200e98`)
+
+A **fresh ten-lane adversarial review of the remediation itself** found real holes. Every BLOCKER and
+HIGH is fixed in `2200e98`, each with a deterministic test and, where a text guard can pin the shape,
+a Guard 14/15 sub-check.
+
+**Flash safety.**
+
+- **Party's beat-locked branch gated cycle-index *changes*, not luminance *rises*.** A backwards phase
+  correction (music-service drive, a nudge) or a smoothness drag restored peak brightness mid-cycle
+  with **no gate call at all** — a realized **0.02–0.06 s** rise, i.e. the invariant was still
+  breakable after round 1. Every rendered rise above the previous frame's brightness
+  (`flashRiseEpsilon`) now passes the ledger: in Party, in Strobe's `min_brightness` raise while
+  dark, and in the storm's ambient.
+- **`OnsetGate` refused only when `t >= last`** and *re-based itself backwards* on an out-of-order
+  stamp. It now refuses any backwards time outright.
+- **The ledger period is now `minOnsetLedgerPeriod` = 17 × 20 ms = 0.34 s** — the same value the frame
+  plans realize — so the cross-run path (card switch, loop restart) carries the same jitter slack as a
+  run. The remaining 1e-9 is IEEE rounding tolerance only, measured across 4000 grid points.
+- **The storm's beat wait re-reads the binding every frame**, so Beat-off exits within one frame; the
+  dead pre-strike `noteAmbient` is gone. (This closes the Low debt round 1 recorded.)
+- **`Int(Double)` could trap on NaN/inf** before the ranges clamped. `FlashSafety.clampedInt` guards
+  the two storm sites and `BeatBinding.init` guards `phaseOffsetBeats` (`cycleIndex` did
+  `Int(floor(nan))`).
+- `FlashSafetyTests` 31 → **39**, including Party epoch-correction and smoothness-drag models with an
+  **ungated arm that reproduces the shipped defect**, backwards time, exact 17-frame admission at
+  every grid position, and degenerate values.
+
+**Colour / board availability.**
+
+- **Profile evidence was discarded**, so hardware-pending params rendered as fully live.
+  `StudioBoardResolution` now carries `isHardwareUnverified`; those controls stay editable at staged
+  opacity with **"UNVERIFIED ON THESE LIGHTS"** (`brightness` everywhere; `base_color`/`warmth` on the
+  legacy transport).
+- **CHECKING was a dead end.** `warmEntertainmentCaches` dropped its own light fetch from the guard,
+  the light cache was not observable, and `refreshCoverage` / `roomHueLights` fetched inventories and
+  discarded them — so a board could say CHECKING WHAT THESE LIGHTS SUPPORT forever. The guard now
+  includes `needsLights`, `capabilityInventoryGeneration` is bumped on every inventory seed and read
+  by `targetSnapshot`, both fetches seed the cache, and the note says the board refreshes when the
+  bridge answers. A target with genuinely no lights says so instead of checking forever.
+- **`.disabled` was the only gate for raw gestures.** Knobs, faders, chips, toggles, the colour editor
+  and the hue pad now short-circuit their own callbacks when not interactive; a non-interactive editor
+  never renders the pad and refuses expansion.
+- **App-driven warmth now requires `colorTemperature`** (it previously resolved `.none` with no CT
+  gate). `.hidden` renders nothing; a bridge-native param with no profile fails closed; the reason
+  note keeps its own alpha; the colour section reuses the one snapshot.
+- **`LookDetailsPanel` hero sliders** resolve through the same funnel when the card is running on the
+  selected room, and otherwise say they set the next start.
+- `StudioBoardAvailabilityTests` 11 → **22**; Guard 15 gains sub-checks (f)–(j).
+
+**Lifecycle / sends / Preview Live.**
+
+- **The grouped PUT was invalid.** Coalescing merged `base_color` and `warmth` into one grouped PUT
+  carrying both `color` and `color_temperature`, which the bridge **rejects — taking brightness down
+  with it**. The closure now emits dimming+xy first, then mirek.
+- **The `compositionFellBackToREST` emit sat after two awaits**, so a superseded failover could rekey
+  the *current* row. The event now carries the re-entered box's `ObjectIdentifier` and the handler
+  requires the live box to match.
+- **`stillCurrent()` tracked only the REST scope epoch**, which bridge-native stops never bump: an
+  already-enqueued closure could **re-arm the firmware effect after Stop**. Every send now also
+  requires the captured identity to be current, so the in-flight window survives a mailbox drop.
+- **The task-local re-entrancy marker leaked** into every engine task spawned by a start; starts now
+  run with it reset.
+- **Preview Live** refuses over a composition with live edits and over a recovered row; audition start
+  is detected by **identity**, not card id; a restore or audition that hits a handoff/takeover/area
+  prompt keeps its snapshot and arms on confirmation; Keep It / Put It Back are **per audition card**;
+  a chained audition on another room is refused; cancel over an idle room keeps the lights on; rows
+  removed outside `stopEffect` consume the audition; the restore passes the observed transport; and
+  commit is serialized.
+- **`applyCore`** seeds a bridge-native start from the card's defaults when the target is not the
+  selected room, and instances start from the full catalog defaults so shared last-used defaults never
+  leak between rooms; `renameCompositionPreset` keeps a row's recovered/ownership fields; the install
+  belt clears session memory.
+- Lifecycle 6 → **7**, preview production 7 → **19**, wiring 24 → **31**, including source-shape pins
+  for the stop-handler reachability claim.
+
+**Tooling.** Guard 12(d) pins the conjunction (an `||` no longer passes); Guard 13(a) and the
+global-slot check use anchored comment filters; a suite **missing** from the no-timing-wait list now
+fails instead of being silently skipped; Guard 14's symbol checks are declaration-shaped so comments
+no longer satisfy them, and it additionally pins a `liveLock` count ≥ 1 per loop, the helper body
+shape, the per-bridge ledger at every call site, `Budget` declared before the loop, and the rise-gated
+conditions. The matrix generator strips comments, fails `--check` on any uncited or drifting loop
+read, cross-checks `EFFECT_PROFILES` evidence and the pending-hardware list against the Swift source,
+scopes loop spans to the next declaration, and reports the 23 code-proven rows that still owe a
+hardware behaviour check. `.cursorrules` no longer teaches the bare room-id key.
+
+**Accepted as documented (reviewed, deliberately not changed).**
+
+- **Cross-bridge composite cadence is per-bridge by design.** The onset ledger is per bridge, so two
+  bridges lighting one physical space each keep their own 17-frame cadence; a viewer standing in the
+  overlap can therefore see a combined rate above the per-bridge ceiling. Making it global would
+  couple unrelated rooms; the per-bridge boundary is the deliberate choice.
+- **The ledger stamps admission, not emission.** The 0.34 s period is what absorbs the gap — it
+  tolerates under 6.67 ms of jitter between admission and the frame actually going out.
+- **`min_brightness` > `brightness` ramps upward within a gated cycle** — pre-existing behaviour, and
+  the cycle is still gated, so it cannot shorten an onset interval.
+- **Perform-pad `CompositionMixer` strobe at 25 fps** can realize 320 ms intervals — **pre-existing on
+  `main`**, outside this PR's diff.
+- **`EffectEngine.swift`'s dead loops** still declare unsafe ranges; no production caller.
+- **`showsEntOnlyHint` is still compiled** in the dead `StudioParamControls`; it is unreachable, and
+  Guard 15 pins it out of `StudioBoardView`.
+- **`StudioLookBrowser` now resolves hero sliders** through the funnel (fixed above; recorded here
+  because the review raised it as a gap).
+- **Membership staleness is an accepted gap in the no-rekey ownership argument**, recorded in
+  `CustomizationIdentity.swift` rather than papered over.
+- **`speed`'s visible firmware response is still hardware-owed** even though its send path is
+  code-proven — one of the 23 rows above, and the reason `speed` alone accounts for 11 of them.
+
+### Third round (`119aa4b`)
+
+A **second fresh adversarial pass** — this one against the round-two fixes themselves — found holes in
+the fixes. Every BLOCKER and HIGH is closed in `119aa4b`, with tests and, where a text guard can pin
+the shape, Guard 14/15 sub-checks.
+
+**Flash safety: the gate measured the wrong thing.** Round two gated the *transitions the loop
+computed*, not *the frames it actually emitted*. Four concrete escapes:
+
+- A **hold frame streamed while the ledger refused could itself be a rise** — `min_brightness`
+  0 → 50 across a card switch realized a **50 % step 0.05 s** after the last onset.
+- The storm's **afterglow-to-ambient step was an ungated +10 %** two frames after a strike.
+- An **inverted Strobe** (`brightness <= min_brightness`) stamped the *falling* edge and realized the
+  rise **0.08 s** later.
+- A **sub-epsilon ramp accumulated unmeasured**.
+
+One mechanism now replaces every per-branch gate. The per-bridge `OnsetLedger` tracks **the last frame
+put on the wire** and **the trough since the last admitted onset**; every frame the three Entertainment
+loops send passes through `emitGatedFrame`, and a frame that rises **≥ 10 % of full scale** above that
+trough — **or steps the palette at or above the admitted level** — is an onset candidate, held at the
+last emitted frame until the **0.34 s** period admits it. Falls and sub-threshold rises pass through.
+The storm's **afterglow is floored at the ambient level** so the decay is monotone. **No direct
+`sendUniform` remains in the loops.** `BeatClock`'s audio-ingest BPM is clamped to **20–300**. The new
+types are `WireFrame` / `FrameVerdict` / `OnsetGate.admit`. `FlashSafetyTests` 39 → **54**, each
+scenario **measured on the emitted frame list, with the pre-fix model still failing**.
+
+**Colour / availability: unknown must never refuse.** An UNKNOWN `effects_v2` capability was mapped to
+the *refusal* reason, so a cold snapshot's Speed knob asserted "THESE LIGHTS CAN'T CHANGE THIS WHILE
+RUNNING" **beside neighbours saying CHECKING**. Unknown coverage now resolves `capabilityUnknown` with
+retry, and the refusal reason is reachable **only from an unsupported answer**. In a mixed v2/v1 room
+`base_color` / `warmth` / `speed` reach only the v2 lights, so the funnel **narrows them to the
+`effects_v2` partial coverage**. The unverified caveat now derives from
+`EffectParameterProfiles.pendingHardwareCheckParamIDs` (**`speed` is labelled too**, which round two
+had left unlabelled) and **coexists with** the coverage count. Descriptors claim their own card, so
+`.hidden` is reachable; the CHECKING copy fits its tag; **NO LIGHTS HERE outranks every state**; and
+the look-browser **setup slider uses the same fail-closed funnel form as the board**.
+`StudioBoardAvailabilityTests` 22 → **42**.
+
+**Lifecycle / Preview Live: the round-two full-catalog seed was itself a leak.** Seeding instances from
+the full catalog made **apply-current-look and Put It Back copy every catalog default into the
+persisted defaults** — so every bridge-native start shipped a mirek the user never chose — and reset
+*still* fell through to another instance's later edits. Running sets are **sparse again**, and each
+instance layers over a **base frozen at start** (re-frozen on reset), which closes the leak on both
+paths without inflating defaults. A **deferred audition was stranded on every confirmation early
+return and every non-prompt refusal** — Preview Live locked out on every other room; **one release
+helper now runs on every exit**. The composition failover captured its ownership before two awaits and
+could re-enter over a successor's run; it now **re-checks the playback generation and the box after
+`stopSession()`**. The split grouped PUT follows **commit order** for the exclusive xy/mirek pair. Row
+removals consume a pending audition **at the tail of `stopEffect`, and only when the row actually
+goes**; the warmth seed follows the room rule; the install belt **keeps the successor's** session
+memory; `seedRawLightCache` is **fill-only**. `StudioProductionWiringTests` 31 → **41**,
+`StudioPreviewLiveProductionTests` 19 → **21**, plus `CustomizationResolverTests` and
+`CustomizationIdentityTests` additions.
+
+**Tooling / rules.** Guard 12(d) accepts either operand order and **cannot be satisfied from a trailing
+comment**; Guard 13 anchors its comment filters and counts **both `ScrollView` spellings**; Guard 14
+pins the **emit helper and the ledger shape** and bans any numeric hold bail-out **in either
+spelling** (sub-check (h)); Guard 15 scopes the editor floor to the `StageColorEditor` call, anchors
+its filter, and pins that **the funnel's answers are applied — disabled, opacity, note — in all three
+renderers** (sub-checks (h), (c), (k)). The matrix generator gains `verify_send_path`: every
+bridge-native "code-proven" citation is verified **against the `performBridgeSend` body**. `.gitignore`
+now covers `.cursor/mcp.json`, `.cnvs/` and `__pycache__`.
+
+**Accepted as documented (third round).**
+
+- **The first frame of a bridge's ledger life is emitted unconditionally** and stamped only if bright —
+  worst case one delay of ≤ 0.34 s, never a missed safety gate.
+- **A refused onset now holds the light at the last emitted frame** rather than blacking it out, which
+  is both safer to look at and closer to the artistic intent.
+- **`.capabilityUnreadable` as a distinct reason is reserved** — unknown and unreadable render
+  identically today, so the distinction exists in the type but not on screen.
+- **`.effectsV2Unavailable` is now reachable only from an unsupported answer**, never from an unknown
+  one — the point of the colour fix above.
+
+### Fourth round (`14a0cac`)
+
+A third fresh adversarial pass, against the round-three fixes. Every BLOCKER and HIGH is closed.
+
+- **Flash — wire truth.** `emitGatedFrame` recorded and stamped a frame BEFORE a send the DTLS client
+  silently drops during a reconnect, so the ledger ran ahead of the wire and the first delivered frame
+  after the restore could be a full-scale unmeasured rise. `send`/`sendUniform` now return whether the
+  frame was handed to the transport; the gate is reserve → send → commit (`OnsetGate.admit` returns a
+  `Reservation`, `commit(_:delivered:at:)` moves the stamp to delivery time and rolls a dropped frame
+  back); `emitGatedFrame` returns `GatedFrameOutcome { verdict, delivered, landedOnWire }` and
+  `emitOnsetFrame` waits for delivery and exits on terminal failure. The 10 % threshold is measured in
+  **relative luminance** (`WireFrame.relativeLuminance` = L\*-cube dimming × sRGB-primaries chromaticity
+  factor: white 1.0, red 0.2126, blue 0.0722, storm ambient 0.176) above the trough since the last
+  admitted onset; rule 2 is a saturated-red chroma step with ≥ 0.02 luminance change; the
+  brightness-based exemptions (`lastAdmittedBrightness`, `onsetVisibleBrightness`) are gone.
+  `FlashSafetyTests` 54 → 69 (independent luminance measurement, dropped-send wire model, 2040-scenario
+  reconnect sweep); Guard 14 pins commit-after-send, the `Bool` return and the luminance symbols
+  (the round-four fixer reported 11/11 mutations caught; that figure is its report, not an artifact in the tree).
+- **Colour — effect-specific reach.** The mixed-room narrowing keyed on generic `effects_v2` support
+  while sends reach only the lights listing THIS effect. `targetSnapshot(for:)` measures effect-specific
+  reach via `runningEffectV2Name:` in `CustomizationSnapshotBuilder`, plus `effectV2ColorLights` /
+  `effectV2CTLights` intersection counts on `CustomizationTargetSnapshot`; the funnel narrows to the
+  intersection, and zero reach resolves `.unavailable(.partialHardwareCoverage, .addCapableLights)` with
+  "NO LIGHT HERE RESPONDS TO THIS" (a 0-of-n partial would be a live knob doing nothing).
+  Unverified-but-active controls render at full opacity, caption only; the joined caveat is shortened;
+  Guard 13(c) anchors the horizontal exclusion; Guard 15(k) pins non-shadowed funnel bindings; the
+  generator's `verify_send_path` matches subscript keys only. `StudioBoardAvailabilityTests` 42 → 48.
+- **Lifecycle — layered copy-back.** Copying a sparse live set into persisted defaults DELETED defaults
+  written after the instance started (the look browser's setup sliders): both copy-back sites now
+  `setDefaults(live.layered(over: defaults))`. The `effects_v2` body carries only the later-committed
+  member of the exclusive xy/mirek pair (`lastColourLikeCommit`). Confirmation cores replay with the
+  audition in flight (`withDeferredAuditionInFlight`); a deferred restore the confirmation refuses rolls
+  its defaults back (`pendingRestoreRollback` / `resolveDeferredRestoreRollback`); the three literal
+  `runningEffects.removeValue` sites notify only when a row existed; the failover removes
+  `studioEntClients[bridgeID]` only if `=== entClient`; cancels release via
+  `releaseDeferredPreviewIfUnresolved`. `StudioProductionWiringTests` 41 → 46,
+  `StudioPreviewLiveProductionTests` 21 → 27.
+
+### Fifth round (`b06df67`)
+
+Run by a fresh orchestrator after the Claude-account handoff, against `119aa4b..14a0cac` plus the
+uncommitted docs: ten read-only Opus lanes (flash wire safety; beat/reconnect/restart; lifecycle
+races; runtime seams; colour honesty; Preview Live; coalescing; guards/rules; docs claims;
+regression/scope). Every BLOCKER and HIGH was inspected in source by the orchestrator before being
+accepted, then fixed with deterministic tests that fail on the reverted fix.
+
+- **Flash — a dropped send changes nothing on the wire (2 BLOCKERs, one cause).** Round four's
+  `commit(delivered: false)` rolled the stamp back correctly but also `forgetWire()`d (`lastEmitted =
+  nil`, trough 0). A refused send was never handed to the transport, so the bridge is still showing the
+  last DELIVERED frame — and the forget produced three escapes measured by the suite's own viewer:
+  a refused bright frame was held **black at the REQUESTED chromaticity**, which against the frame on
+  the wire is a chroma step that satisfies the gate's own red rule (Party palette entry 0, or a red tint
+  drag → an unstamped onset, then the zeroed trough admits the next red frame: **1 frame**); the cold
+  path **re-based the trough upward** to the next frame's luminance (blue→cyan ramp across a single
+  dropped frame: **3 frames**); and the cold path judged candidacy on absolute luminance only, never
+  the red rule (in-catalog Thunderstorm, red ambient + dim white strike, one dropped frame: **1
+  frame**). The reviewer's independent sweeps: 1,184 / 31,752 ramp × drop scenarios and 3,941 / 50,544
+  in-catalog storm scenarios violating. Fix: `commit(delivered: false)` **restores** the pre-drop wire
+  state and trough (`Reservation.priorLastEmitted` / `priorTrough`, under the existing identity guard;
+  an interleaved instance still forgets); `admit` forgets a wire that has been **silent for a whole
+  ledger period** (`lastDeliveredAt`, moved by every delivered frame — also the production
+  `forgetWire()` trigger a card-switch teardown never had); the cold path applies the red rule against
+  `lastKnownFrame` (`isColdOnsetCandidate`), a cold refusal holds black at the last KNOWN
+  chromaticity, and the trough survives a forget as a running minimum (the "bridge may have reverted"
+  case is answered by the cold path's absolute rule, not by lowering the floor). Restoring
+  unconditionally — the reviewer's proposal — was rejected because it reopens the long-outage case.
+  `FlashSafetyTests` 69 → 75: the wire model drives either the production gate or a faithful replica of
+  the round-four gate, so every scenario is asserted on both (seeded ramps × drop 115/1380 violating
+  before → 0; Party tint drag 11/100 → 0; blue→cyan drops 13/120 → 0; in-catalog storm 36/60 → 0); the
+  viewer inlines its chroma distance; churn carries seeded outages; the drop sweep rotates saturated-red
+  storm palettes and requires ≥ 3 onsets. A full revert to the round-four gate kills 9 tests. Guard 14
+  gains no-exit-between-send-and-commit, `commit(at: CACurrentMediaTime())`, and declaration pins for the
+  restore and the silence clock (8/8 mutations caught); its direct-send count now covers
+  `.send(channels:`.
+- **Lifecycle — a same-card audition's edits survived Put It Back (HIGH).** Layering over the CURRENT
+  defaults kept keys the audition instance itself wrote into the shared card's defaults, so the restore
+  restarted with a mirek the previous look never had. The restore base subtracts the audition instance's
+  own sparse keys (`CustomizationValueScopes.ownValues(for:)`, `CustomizationValueSet.removing(keysOf:)`)
+  — only when the audition card is the previous card.
+- **Lifecycle — the audition bracket fired for every confirmation replay (HIGH, two lanes).**
+  `withDeferredAuditionInFlight` was gated on `previewLive.isPreviewing` alone. A deliberate apply of
+  another card on the audition's room that raised a handoff/takeover/area prompt was **armed as the
+  audition on confirmation** (its replacement stop's notice was suppressed, then the unconditional
+  `notePreviewAuditionOutcome` passed every guard — Put It Back would undo a deliberate apply); a
+  cross-room confirmation whose teardown removed the armed row left the machine armed on a dead row with
+  nothing said. The deferral is now **named** (`deferredAudition: (cardID, StudioSelectionKey)`,
+  recorded when an audition waits behind a prompt) and the bracket raises the flag only for that card
+  on that key; cleared on a successful outcome, on release, and on Stop All.
+- **Lifecycle — landed-test and per-card rollbacks (MEDIUM, two lanes).** The "did the restore land"
+  test was card-id only, trivially true for a same-card audition, so a refused restore skipped its
+  rollback and said nothing; it is now the identity idiom on both the immediate and deferred paths. A
+  second deferred restore for a different card overwrote the first card's pending rollback; pending
+  rollbacks are keyed per card and every entry is settled.
+- **Sends — the in-flight record is keyed (MEDIUM).** An older mailbox closure's unconditional
+  `inFlightParamSends[targetKey] = nil` could clear a SUCCESSOR window's record while that window's
+  enqueue was suspended, so the next window carried nothing and its enqueue replaced the pending
+  closure — the per-target loss the record exists to prevent. Each `PendingStudioSend` carries a
+  `token`; the closure clears only its own. Proven by a deterministic test that holds the first closure
+  pending behind a gated second scope.
+- **Colour — the badge shows the funnel's reach (HIGH).** The colour editor suppresses the coverage
+  note because it badges its own count, but that badge read the UN-narrowed `snapshot.color`. In a
+  mixed room (3 colour lights, one listing the effect) the editor rendered fully live with no badge and
+  no caption; with 3 of 4 colour lights and a reach of 1 the badge overstated.
+  `StudioBoardAvailability.editorCoverage(resolution:snapshotColor:)` feeds the resolution's partial
+  counts; `colorSection` hands a per-control context to `StageColorEditor`. `StudioBoardAvailabilityTests`
+  48 → 53 (incl. a source-shape pin). The look browser's setup-slider caption budget aligned to three
+  lines.
+- **Tooling (4 MEDIUM, mutation-tested).** Guard 12(b) pins read → stop → read ORDER; Guard 15(k)
+  fails a bare-literal `let interactive`/`let opacity`; Guard 13(a) bans `.popover(` (one pre-existing
+  Composer swatch popover carved out by literal string — debt below); the generator's `verify_send_path`
+  requires a non-nil assignment to the payload symbol (`SEND_PAYLOAD_SYMBOLS`), not merely a read of the
+  key, and a bare array literal no longer counts as a subscript read. `composer.mdc`'s stale "20
+  presets / …03" corrected to the verified 66 / …09.
+- **Regression/scope lane: clean.** 39 files in `89de143..HEAD`, all inside the Studio / customization
+  / flash-safety / guards / docs surface; `CompositionMixer.swift` untouched; `runCompositionEntertainment`
+  byte-identical to base; pbxproj = five test/source registrations only, `CURRENT_PROJECT_VERSION`
+  untouched; no test deleted or weakened (two round-three tests renamed in place); no `sleep`/`XCTSkip`
+  in the new suites; `.gitignore` ignores no tracked file.
+
+### Working — decisions taken, and why
+
+- **`entertainmentMaxLockHz` = 1/(17 × 0.02) = 2.94 Hz** for Entertainment beat locks. This is an
+  implementation *consequence* of the ≥ 17-frame realized-onset invariant on a 20 ms grid, not a new
+  product preference. Keeping 3.0 and letting a gate absorb the quantization was evaluated and
+  rejected: it produces unbounded lag (6.67 ms per cycle) and periodic dropped flashes across the
+  whole 3 Hz band, whereas at P ≥ 340 ms quantization alone can never yield fewer than 17 frames. The
+  musical cost is exactly three narrow tempo bands stepping to the next division — ×1 over
+  (176.47, 180] BPM, **3.53 BPM** wide; ×½ over (88.24, 90] BPM, **1.76 BPM** wide; ×¼ over
+  (44.12, 45] BPM, **0.88 BPM** wide — which are precisely the bands where the old lock realized
+  16-frame intervals. Recorded in spec §24 and the audit §2C safety correction.
+- **Staged controls stay editable**, per spec §17's own definition of staged ("editable and saved, not
+  affecting current output"): `.active` / `.partial` / `.staged` are interactive, staged renders at
+  reduced opacity with "STREAMING ONLY — INACTIVE IN ROOM MODE"; `.unavailable` / `.hidden` are
+  disabled with the local reason (NO COLOR LIGHTS HERE / CHECKING WHAT THESE LIGHTS SUPPORT). This
+  also aligns the numeric controls, which previously disabled staged in contradiction of the spec.
+  Bridge-native profiles never yield `.staged` on a running board, so shipping behaviour there is
+  unchanged.
+- **One global FIFO lifecycle chain**, not per-bridge: there is one preview machine, the dictionary
+  lookups are fail-closed and whole-map, and these are user-paced operations. A queued tap waits
+  behind an in-flight apply for at most the ~0.4–1 s settle sleeps. Re-entrancy is handled with a
+  task-local so a nested call runs inline rather than deadlocking on its own chain.
+- **SSE reconnect and capability refresh are deliberately NOT WIRED to rekey.** No test proves this
+  is safe — it is an ownership argument about code, and it is recorded in
+  source (`HueHome/Core/CustomizationIdentity.swift`, the `bump()` doc comment ~200–240, and again at
+  the orchestrator seam): a reconnect changes no component of a `RunningLookIdentity` — bridge id,
+  group id, kind, card, execution and generation are all app-side facts, and a re-registered client
+  keeps the same ip/token. The mutation authority for an app-driven look is the bridge+room engine
+  box, which SSE never touches; availability re-resolves at render from the light cache; per-light
+  SSE patches arrive constantly and bumping on them would drop every drag mid-gesture. A bridge
+  genuinely going away is a different event — `removeBridge` stops the rows first via
+  `stopEffectsForRemovedGroups`, which bumps `.stopped`. Only transport fallback and session loss
+  change what the identity means, and only those two are wired. **Membership staleness is recorded
+  in that comment as an accepted gap in the argument** (`2200e98`). Hardware §V-B rows **59** and
+  **63** remain **UNPROVEN** and are what would actually settle it — do not describe this as
+  "proven".
+- **Sends are coalesced, not split per parameter.** Per-param debounce keys would only have moved the
+  loss down into `RestSender`'s latest-wins mailbox per `RestScope`; accumulating into one pending set
+  per target and emitting one body per light is the only shape that loses nothing.
+- **Pre-existing `main` issues found during the sweep are recorded as debt, not fixed here** (see
+  Left).
+
+### Left — accepted debt, with owner
+
+Carried, not fixed, in this PR:
+
+- **Perform-pad strobe punch** (`HueHome/Core/Composer/CompositionMixer.swift:200-216`) renders at a 25 fps (40 ms) cadence
+  and can therefore realize 320 ms intervals — the same defect shape as R1, but **pre-existing on
+  `main` and outside this PR's diff**. Owner: a later slice, same fix shape (the wire-level emit gate
+  plus the shared onset ledger). Reviewer note from this session. **Still open.**
+- ~~**Storm beat-wait binding staleness.**~~ **FIXED in `2200e98`.**
+- **Fifth-round MEDIUMs recorded, not fixed** (bounded fixes were applied only where a reviewer's
+  scenario was confirmed in source and the fix stayed inside the remediation surface):
+  - Pre-existing on `main`: the apply-time `effects_v2` body (`applyStudioEffectV2Parameters`) still
+    carries a seeded colour AND a seeded mirek together on start. The live-edit path sends only the
+    later-committed member (`14a0cac`); the start path was deliberately left alone because the claim
+    that the bridge rejects the combined body is itself hardware-unverified (§V-B 38). Owner: hardware,
+    then Slice 3.
+  - Pre-existing on `main`: `stopCompositionMode` and `stopAppDrivenStudioEffect` remove
+    `studioEntClients[bid]` by key presence, not identity — the shape the failover's `=== entClient`
+    guard fixed on its own path. Owner: Slice 3.
+  - `speed` can be a live knob that sends nothing when the apply-time `v2CapableLightIDs` is empty but
+    the live cache later says v2-capable (a facet of the accepted apply-time staleness gap). Owner:
+    Slice 3.
+  - Both restore rollbacks replace `before` wholesale (a default written during the await window is
+    reverted with it); the deferred rollback's notice overwrites the confirmation's own failure
+    sentence. Owner: Slice 3.
+- **Fifth-round LOWs recorded**: zero effect-specific reach with generic v2 support skips the
+  narrowing (today such a row resolves `.legacy` with the UNVERIFIED caveat); the four prompt-dismissal
+  handlers write persisted defaults outside the lifecycle FIFO; the three guarded row-removal notice
+  sites have no test of their own; the layered copy-back comments overstate what layering preserves
+  (only keys ADDED after start are rescued); a concurrent-admit interleaving can keep a stamp slightly
+  early (mirror of the accepted slightly-late case); a non-finite clock sample leaves the cold gate open
+  (unreachable); saturated blue is never an onset (WCAG-correct, recorded); Guard 14 pins the names, not
+  the values, of the two flash constants (the tests pin the values); `send`/`sendUniform` stay
+  `@discardableResult`; Guard 13(a)'s `.popover(` ban carries one anchored exemption for the
+  pre-existing Composer swatch popover (`CompositionEditorPanel.swift`); the composition render loop
+  discards the delivery `Bool` and has no ledger (Composer-semantics debt, same as the strobe row);
+  `architecture.mdc`'s pre-existing contradictions remain untouched.
+- ~~**Storm afterglow / hold-frame cadence escapes.**~~ **FIXED in `119aa4b`** — the gate moved to the
+  wire (`emitGatedFrame`), and the afterglow is floored at the ambient level so the decay is monotone.
+- ~~**`speed` rendered without an unverified caveat.**~~ **FIXED in `119aa4b`** — the caveat derives
+  from `pendingHardwareCheckParamIDs`, and `speed` is labelled.
+- ~~**`LookDetailsPanel` setup slider bypassed the funnel.**~~ **FIXED in `119aa4b`** — it uses the
+  same fail-closed funnel form as the board.
+- **Warmth authoring range is not snapshot-driven.** Availability is snapshot-honest (the
+  `mirek_schema` intersection; a schemaless CT light resolves unknown, never a fake clamp), but the
+  knob's range is still the catalog's `153...500` (grep `kind: .slider(min: 153, max: 500)` in
+  `StudioViewModel.swift` — four declarations) and the board's slider control derives it from
+  `param.kind` in its own `range` computed property, not from the snapshot's `MirekRange`. The
+  *availability* half was closed in `2200e98` (app-driven warmth now requires `colorTemperature`
+  instead of resolving `.none`); the **authoring range** was not. Owner: Slice 3.
+  Checklist row: §V-B 58.
+- **`EffectEngine.swift`'s dead loops** still declare unsafe ranges (strobe 30–480 BPM ≈ 8 Hz;
+  thunderstorm 100 ms intra-burst). No production caller — dead code. Owner: delete in Slice 3.
+- **`EFFECT_PROFILES` / `profile(effect:paramID:)` are keyed by paramID only**, mirroring the Swift
+  table, so per-effect differences in a bridge-native parameter cannot be expressed. Owner: Slice 3.
+- **`StudioEffectsV2Tests.swift:232-238` polls up to 2 s** for the debounced write instead of pinning
+  it deterministically. Owner: Slice 3 (the suite is not on the no-timing-wait list for this reason).
+- **`targetSnapshot` hardcodes `entertainmentAvailable: .unknown`**
+  (`StudioViewModel+CustomizationWiring.swift:847` at `b06df67`). Owner: Slice 3.
+- **Deck `effectCoverage` is still card-keyed** (selection-guarded; the resolver-grade target-keyed
+  context ships beside it), and the `""` vs `"legacy"` bridge-key sentinel split between the engine
+  map and the REST scopes remains. Owner: Slice 3.
+- **`StudioParamFormat.flashHz` labels speed 97–100 as 2.9–3.0 Hz** while the realized ceiling is
+  2.94 Hz. Cosmetic.
+
+### Validation
+
+Destination as `run_tests.sh` resolves it (preferred model at the highest installed iOS, exact `id=`);
+all verdicts read from the xcresult bundles via `xcrun xcresulttool get test-results summary`.
+
+| Gate | Result |
+| --- | --- |
+| Focused: flash / colour / lifecycle (on `119aa4b`) | **132/132** / **107/107** / **523/523** |
+| Focused: flash / colour / lifecycle (on `14a0cac`, live tree) | **139/139** / **110/110** / **459/459** (identity suite moved to the colour set) |
+| Focused: flash / colour / lifecycle (on `b06df67`, live tree) | `**146/146** / **115/115** / **467/467**` |
+| Full registered suite on `7d8d14e` (pre-review-fix baseline), runs 1–2 | **1844/1844**, 0 failed, 0 skipped — twice |
+| Full registered suite on `2200e98` (round-one-fixed baseline), runs 3–4 | **1883/1883**, 0 failed, 0 skipped — twice |
+| Full registered suite on `119aa4b`, runs 5–6 | **1935/1935**, 0 failed, 0 skipped — twice (`~/Desktop/pr64-xcresults/full5.xcresult`, `full6.xcresult`) |
+| Full registered suite on `14a0cac`, run 7 | **1967/1967**, 0 failed, 0 skipped (`full7.xcresult`; run 8 on that tree was superseded by the fifth-round fixes) |
+| Full registered suite on `b06df67`, run 8 | **1987/1987**, 0 failed, 0 skipped (`~/Desktop/pr64-xcresults/full8.xcresult`) |
+| Full registered suite on `b06df67`, run 9 | **1987/1987**, 0 failed, 0 skipped (`~/Desktop/pr64-xcresults/full9.xcresult`) |
+| `./Scripts/hardening_guards.sh` (15 guards, re-hardened in rounds 2–5) | `hardening_guards: all guards passed.` |
+| `python3 Scripts/generate_capability_matrix.py --check` (citations, evidence classes and send paths verified) | `capability matrix: 4 citation(s) verified, doc up to date` |
+| `git diff --check` | clean |
+
+Round-1 focused figures (85/85, 68/68, 485/485) and round-2's are superseded by the `119aa4b` focused
+runs above. The two full-suite figures already recorded are kept as labelled baselines: 1844 is the
+pre-review-fix tree, 1883 the round-one-fixed tree.
+
+Suites added or extended in this remediation, counted with `grep -c "func test"` on each tree:
+
+| Suite | Round 1 (`7d8d14e`) | Round 2 (`2200e98`) | Round 3 (`119aa4b`) | Round 4 (`14a0cac`) | Round 5 (`b06df67`) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `HueHomeTests/FlashSafetyTests.swift` | 31 | 39 | 54 | 69 | **75** |
+| `HueHomeTests/StudioBoardAvailabilityTests.swift` | 11 | 22 | 42 | 48 | **53** |
+| `HueHomeTests/StudioProductionWiringTests.swift` | 24 (17 at Slice 2 + 7) | 31 | 41 | 46 | **47** |
+| `HueHomeTests/StudioPreviewLiveProductionTests.swift` | 7 | 19 | 21 | 27 | **34** |
+| `HueHomeTests/StudioLifecycleSerializationTests.swift` | 6 | 7 | 7 | 7 | **7** |
+| `HueHomeTests/CustomizationResolverTests.swift` (file) | 29 | 29 | 31 | 31 | **31** |
+| `HueHomeTests/CustomizationIdentityTests.swift` (Slice 1 suite) | 28 | 28 | 31 | 31 | **31** |
+| **Total across the five Slice-2 suites** | **79** | **118** (+39 = the 1844 → 1883 delta) | **165** | **197** | **216** |
+| `HueHomeTests/BeatMathTests.swift` (audio-ingest clamp test added in round 5) | 34 | 34 | 34 | 34 | **35** |
+
+Counting notes: `CustomizationResolverTests.swift` holds **two** classes — `CustomizationResolverTests`
+(**26**) and `CustomizationCatalogFactsTests` (**5**) — so the file greps 31 while the class the
+review named is 26. `CustomizationIdentityTests` is a single class of **31**. Round 2's commit message
+quotes `lifecycle 6 -> 9` and `preview production 7 -> 17`; the actual greps were 7 and 19, and only
+the greps reconcile to the +39 delta. The greps are per-file counts; the xcresult bundles are
+authoritative for what ran (`BeatMathTests` greps 34 but registers 21 cases — nested helpers named
+`test…` inflate the grep; `StudioParamCatalogTests` greps 20 / registers 19).
+
+All of the new production tests drive the real `apply()` path against the recording bridge client, with
+no timing waits. Two structural pins in `MultiBridgeRoutingTests` were retargeted to the coalesced
+closure and to `applyCore`. The Slice 2 delivery baseline was **1782/1782** twice consecutively
+(itself up from 1723).
+
+### Hardware
+
+**None run, none claimed.** Master checklist §V-B rows **37–65** are all **UNPROVEN** (row 65, added in round five, is the short-drop / long-silence wire assumption behind the gate's restore-on-drop). Rows 37–39 are
+the capability-matrix hardware-pending rows that gate re-classifying `brightness` and the legacy
+colour/warmth fallbacks as fully live; row 44 is the spec-§5.2 adaptive-fine-control feel gate; row 58
+is the Warmth authoring-range debt above; rows 59–64 are the reconnect, background/foreground,
+Preview-Live-across-reconnect, room-deletion, session-loss and ENT→REST-failover cases that audit §27
+requires and the checklist did not previously list. Row 59 is now **split by transport**: a bridge
+reboot on a **Room-mode (REST)** look must resume the same instance (row 59), while a bridge reboot on
+an **Entertainment** look loses the session and must END the row (row **59b**, which is row 63's
+behaviour) — expecting an Entertainment instance to resume would be the wrong test. Rows 59/59b and 63
+carry the whole burden of proof for the no-rekey ownership argument, since no test proves it. §V-A's Track A debt is untouched and still
+UNPROVEN. Nothing in the capability matrix has been validated on a physical bridge — "code-proven"
+means the write provably leaves the app, not that anyone watched a light obey it.
+
+### Gotchas
+
+- **PR #64 is open — DO NOT MERGE without Brian.** Nothing was merged and `main` was not touched.
+- `CURRENT_PROJECT_VERSION` is still NOT bumped — bump all 12 pbxproj entries when Brian takes a
+  device round.
+- `.cursor/mcp.json` was never tracked and must stay untracked; the eight restored rule/skill files
+  are tracked again.
+- The full registered suite must be run **twice on the same tree** (DEVLOG convention);
+  `run_tests.sh` writes its bundle to `mktemp`, so invoke `xcodebuild test` directly with the same
+  destination discovery and an explicit `-resultBundlePath`.
+- Guard 14 and Guard 15 are function-scoped awk checks over the Entertainment loops and the two board
+  renderers, and after `2200e98` their symbol checks are declaration-shaped — a comment mentioning a
+  symbol no longer satisfies them. Moving those functions, or renaming the loops, will trip them by
+  design; refresh the anchors rather than loosening the rule.
+- A suite **missing** from the no-timing-wait list now fails the guard instead of being silently
+  skipped, so a new test file must be added to that list when it lands.
+- The round-2 commit message quotes `lifecycle 6 -> 9` and `preview production 7 -> 17`; the actual
+  `grep -c "func test"` counts on that tree are **7** and **19**. The greps reconcile to the +39
+  suite delta (1844 → 1883); the commit message's two figures do not. Trust the greps.
+- `CustomizationResolverTests.swift` holds two classes (`CustomizationResolverTests` 26 +
+  `CustomizationCatalogFactsTests` 5), so a file-level `grep -c` gives 31 where a class-level count
+  gives 26. Say which you mean.
+- After `119aa4b`, `.gitignore` covers `.cursor/mcp.json`, `.cnvs/` and `Scripts/__pycache__/`, so
+  those no longer appear as untracked in `git status`. The eight `.cursor` rule/skill files remain
+  tracked — do not let a future `.gitignore` edit swallow them.
+- The flash gate is now at the **wire**: every frame the Entertainment loops send goes through
+  `emitGatedFrame`, and **no direct `sendUniform` may remain in the loops** (Guard 14 pins this). A
+  new loop that calls `sendUniform` directly bypasses photosensitivity safety entirely.
+- Capability-matrix citations are now machine-verified. After any edit that moves the engine loops,
+  run `python3 Scripts/generate_capability_matrix.py --refresh-citations` before `--check`.
+
 
 ## 2026-09-01 - [Claude] Unified Customization Engine, Slice 1 — VALIDATED, exit gate CLEARED
 

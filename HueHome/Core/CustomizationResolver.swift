@@ -91,13 +91,19 @@ enum CustomizationMutationBehavior: String, Hashable, Sendable {
     case requiresRestart
     /// Stored now, applied when the enabling condition arrives.
     case staged
+    /// Sends nothing itself — it shapes the NEXT write (Slice 2, for the
+    /// bridge-native `transition`/Smoothness parameter, which only feeds the
+    /// `dynamics.duration` of subsequent brightness/warmth/color sends).
+    /// The audit demanded an honest class for this instead of pretending it
+    /// is a live effect parameter.
+    case nextWrite
 
     /// Behaviours that can have a write in flight when the world changes.
     /// These are precisely the ones `CustomizationFence` must guard.
     var canLandLate: Bool {
         switch self {
-        case .debounced, .nextCycle, .requiresReapply: return true
-        case .immediate, .requiresRestart, .staged:    return false
+        case .debounced, .nextCycle, .requiresReapply:            return true
+        case .immediate, .requiresRestart, .staged, .nextWrite:   return false
         }
     }
 }
@@ -249,10 +255,32 @@ enum CustomizationResolver {
 
     // ── Reason mapping ──────────────────────────────────────────
 
+    /// The reason for an UNKNOWN outcome.
+    ///
+    /// THE RULE THIS ENCODES: unknown must never read as a refusal. Nothing
+    /// here may return a reason whose copy asserts a hardware fact, because
+    /// the whole point of `.unknown` is that no hardware fact was read.
+    ///
+    /// `.effectsV2` used to map to `.effectsV2Unavailable` — the same reason
+    /// the UNSUPPORTED branch returns — so a cold or unreadable snapshot made
+    /// the Speed knob say "THESE LIGHTS CAN'T CHANGE THIS WHILE RUNNING"
+    /// while `brightness`/`base_color`/`warmth` beside it, on the very same
+    /// snapshot, correctly said we were still checking. One snapshot, two
+    /// stories, and the louder one was a lie. `.effectsV2Unavailable` is now
+    /// reachable ONLY from `unsupportedReason`.
+    ///
+    /// `.effectParameter` keeps `.effectParameterUnverified` — the audit's own
+    /// word for "we have not verified this pair" — and the board renders that
+    /// reason as the checking copy when a retry is offered (see
+    /// `StudioBoardAvailability.note`), never as a hardware "no".
+    ///
+    /// `.capabilityUnreadable` stays reserved for a caller that wants to
+    /// distinguish "the read failed" from "we have not asked"; both render
+    /// identically today, so every coverage-shaped requirement answers with
+    /// the one reason rather than splitting a distinction the user never sees.
     private static func unknownReason(for requirement: CapabilityRequirement) -> CustomizationReason {
         switch requirement {
         case .effectParameter: return .effectParameterUnverified
-        case .effectsV2:       return .effectsV2Unavailable
         default:               return .capabilityUnknown
         }
     }

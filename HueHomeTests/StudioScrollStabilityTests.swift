@@ -194,16 +194,20 @@ final class StudioScrollStabilityTests: XCTestCase {
                 // satisfied by a caption over near-empty space — the fixture has to
                 // make a block tall enough to be unambiguous.
                 StudioParam(id: "warmth", label: "Warmth",
-                            kind: .slider(min: 0, max: 100), defaultValue: 30, tier: .advanced),
+                            kind: .slider(min: 0, max: 100), defaultValue: 30, tier: .support),
                 StudioParam(id: "transition", label: "Transition",
-                            kind: .slider(min: 0, max: 100), defaultValue: 40, tier: .advanced),
+                            kind: .slider(min: 0, max: 100), defaultValue: 40, tier: .support),
             ],
             strategy: .bridgeNative(effect: "candle"),
             compositionLayerActivity: nil)
         vm.selectedRoom = room
-        vm.runningEffects[RoomEffectKey(room: room)] = RunningEffect(
+        vm.runningEffects[StudioSelectionKey(room: room)] = RunningEffect(
             cardID: card.id, card: card, room: room, lightIDs: ["L1"],
-            isEntertainment: true, requestedTransport: nil, transportFallback: false)
+            isEntertainment: true, requestedTransport: nil, transportFallback: false,
+            identity: RunningLookIdentity(
+                bridgeID: room.bridgeID, groupID: room.id, kind: room.kind,
+                cardID: card.id, execution: .bridgeNative(effect: "candle"),
+                generation: vm.generationCounter.bump(.cardReplaced)))
         XCTAssertNotNil(vm.currentRoomEffect, "fixture: an effect must be running")
         return (vm, room)
     }
@@ -332,34 +336,68 @@ final class StudioScrollStabilityTests: XCTestCase {
     // The host scrolled continuously, but the advanced disclosure and "+N MORE"
     // presented a detached card/sheet. Worse, `showAdvanced` was never written
     // `true` anywhere in the repo, so the inline branch was unreachable and
-    // "+N MORE" could ONLY open `StudioParamSheet`. Advanced controls now render
-    // in the same column as the essentials, with no affordance to tap at all.
+    // "+N MORE" could ONLY open `StudioParamSheet`. Support-tier controls now
+    // render on the same board as the essentials, with no affordance to tap
+    // at all — and Slice 2 retired the user-facing Advanced concept entirely.
 
-    /// The claim in one line: advanced controls are on the page already.
-    func testAdvancedControlsRenderInlineInTheHostWithoutATap() async {
+    /// The claim in one line: support-tier controls are on the page already.
+    ///
+    /// Slice 2 geometry: the board lays controls out as knobs/faders on a
+    /// grid, so fixed per-row y-bands are gone. The fixture below declares
+    /// ONLY support-tier params — any control fill in the board region can
+    /// then only come from support controls having rendered, tap-free.
+    func testSupportControlsRenderInlineInTheHostWithoutATap() async {
         let orchestrator = await makeDemoOrchestrator()
-        let (vm, room) = stagedEntertainmentEffect()
+        let (vm, room) = supportOnlyEffect()
         let host = hostRolodexAboveCustomization(vm: vm, room: room, orchestrator: orchestrator)
         pump(0.4)
 
         // Not one tap, not one state write — just render and look.
-        let image = attachRender(of: host, named: "row36-advanced-inline-no-tap")
+        let image = attachRender(of: host, named: "row36-support-inline-no-tap")
 
-        // The fixture's card is essentials (speed ~y=371, intensity ~y=434) then
-        // ADVANCED (warmth ~y=526, transition ~y=589). This band is the advanced
-        // block alone, and it is measured by SLIDER FILL rather than colour
-        // variety: the card's own gradient satisfies "has colours in it" whether
-        // or not anything rendered, so a distinctColors probe here passes
-        // vacuously. Amber track fill appears only if those two rows actually drew.
-        XCTAssertGreaterThan(amberFraction(in: image, stripY: 500...620, of: 874), 0.005,
-            "no slider fill in the advanced band — the advanced controls did not "
+        // Two knobs' amber arcs measure ~0.28% of the band (thinner than the
+        // old full-width slider tracks); 0.15% still clears the empty-band
+        // control below by an order of magnitude.
+        XCTAssertGreaterThan(amberFraction(in: image, stripY: 230...700, of: 874), 0.0015,
+            "no control fill in the board region — the support controls did not "
             + "render inline, which is the row-36 defect")
 
-        // The detector's own control: bare host surface below the last row must
+        // The detector's own control: bare host surface at the bottom must
         // score zero, or the assertion above would mean nothing.
-        XCTAssertEqual(amberFraction(in: image, stripY: 650...800, of: 874), 0, accuracy: 0.001,
+        XCTAssertEqual(amberFraction(in: image, stripY: 790...860, of: 874), 0, accuracy: 0.001,
             "empty host surface is scoring as control fill — the probe cannot "
             + "distinguish rendered controls from background")
+    }
+
+    /// A fixture whose card declares ONLY support-tier params, so any board
+    /// fill is support-control fill.
+    private func supportOnlyEffect() -> (StudioViewModel, RoomDisplayItem) {
+        let vm = StudioViewModel()
+        let room = RoomDisplayItem(
+            id: "room-live", name: "Living Room", archetype: "living_room",
+            isOn: true, brightness: 80, groupedLightID: "gl-1", lightCount: 4,
+            bridgeID: "bridge-a", childResourceRefs: [])
+        let card = StudioCard(
+            id: "support-card", name: "Support", tagline: "Support only", icon: "flame",
+            accentColor: .orange, requiresForeground: true,
+            params: [
+                StudioParam(id: "warmth", label: "Warmth",
+                            kind: .slider(min: 0, max: 100), defaultValue: 30, tier: .support),
+                StudioParam(id: "smoothness", label: "Smoothness",
+                            kind: .slider(min: 0, max: 100), defaultValue: 40, tier: .support),
+            ],
+            strategy: .appDriven(engineKey: "support"),
+            compositionLayerActivity: nil)
+        vm.selectedRoom = room
+        vm.runningEffects[StudioSelectionKey(room: room)] = RunningEffect(
+            cardID: card.id, card: card, room: room, lightIDs: ["L1"],
+            isEntertainment: true, requestedTransport: nil, transportFallback: false,
+            identity: RunningLookIdentity(
+                bridgeID: room.bridgeID, groupID: room.id, kind: room.kind,
+                cardID: card.id, execution: .appDriven(engineKey: "support"),
+                generation: vm.generationCounter.bump(.cardReplaced)))
+        XCTAssertNotNil(vm.currentRoomEffect, "fixture: an effect must be running")
+        return (vm, room)
     }
 
     /// Nothing in this host may present a detached surface. `StudioParamSheet`
@@ -388,7 +426,7 @@ final class StudioScrollStabilityTests: XCTestCase {
     /// structural half of this claim — exactly one vertical ScrollView, and no
     /// sheet modifier in the host at all — is enforced by hardening_guards
     /// Guard 13, which is where a source-level claim belongs.
-    func testAdvancedControlsShareTheHostsSingleScrollSurface() async {
+    func testSupportControlsShareTheHostsSingleScrollSurface() async {
         let orchestrator = await makeDemoOrchestrator()
         let (vm, room) = stagedEntertainmentEffect()
         let host = hostRolodexAboveCustomization(vm: vm, room: room, orchestrator: orchestrator)
@@ -396,20 +434,18 @@ final class StudioScrollStabilityTests: XCTestCase {
 
         let image = attachRender(of: host, named: "row36-single-surface")
 
-        // Controls run UNBROKEN from the essentials into the advanced rows: both
-        // halves carry slider fill, in the same column, with no surface boundary
-        // between them. If the advanced controls lived on a sheet, the lower band
-        // would be bare host surface — which is what the empty band below proves
-        // this probe can actually detect.
-        let essentials = amberFraction(in: image, stripY: 350...450, of: 874)
-        let advanced = amberFraction(in: image, stripY: 500...620, of: 874)
-        let belowEverything = amberFraction(in: image, stripY: 650...800, of: 874)
+        // The board (essential AND support controls together) draws in the
+        // host's one region; the bottom stays bare host surface. If support
+        // controls lived on a sheet, the board band would carry only half its
+        // fill and a presented surface would exist — the companion
+        // `testNoSheetIsPresentedFromTheStudioHost` pins that half, and
+        // Guard 13 pins the source-level single-ScrollView claim.
+        let board = amberFraction(in: image, stripY: 230...700, of: 874)
+        let belowEverything = amberFraction(in: image, stripY: 790...860, of: 874)
 
-        XCTAssertGreaterThan(essentials, 0.005, "the essential rows did not render")
-        XCTAssertGreaterThan(advanced, 0.005,
-            "the advanced rows are not in the same column as the essentials")
+        XCTAssertGreaterThan(board, 0.003, "the board did not render its controls")
         XCTAssertEqual(belowEverything, 0, accuracy: 0.001,
-            "the probe scores bare surface as content — the two assertions above "
+            "the probe scores bare surface as content — the assertion above "
             + "would then hold no matter what rendered")
 
         // The host still owns one tall region below the wheel, not two stacked ones.

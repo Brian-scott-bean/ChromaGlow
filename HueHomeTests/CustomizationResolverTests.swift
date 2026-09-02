@@ -175,8 +175,66 @@ final class CustomizationResolverTests: XCTestCase {
         XCTAssertNotEqual(unreadable.availability, unsupported.availability)
     }
 
+    /// UNKNOWN `.effectsV2` must not borrow the UNSUPPORTED answer.
+    ///
+    /// The old mapping sent both outcomes to `.effectsV2Unavailable`, whose
+    /// board copy is "THESE LIGHTS CAN'T CHANGE THIS WHILE RUNNING" — a
+    /// hardware refusal asserted on evidence we never read. On a cold snapshot
+    /// that made the Speed knob contradict the three controls beside it, which
+    /// correctly said we were still checking. Unknown must never read as a
+    /// refusal; `.effectsV2Unavailable` is now reachable from `unsupported`
+    /// alone.
+    func testUnknownEffectsV2StaysInTheUnknownFamily() {
+        func target(_ evidence: CapabilityEvidence) -> CustomizationTargetSnapshot {
+            CustomizationTargetSnapshot(
+                identity: identity(), totalLights: 3,
+                dimming: .all(total: 3), color: .all(total: 3),
+                colorTemperature: .all(total: 3), gradient: .all(total: 3),
+                effectsV2: CapabilityCoverage(supported: 0, total: 3, evidence: evidence),
+                entertainmentAvailable: .known, transport: .bridgeEffectV2, running: true)
+        }
+
+        for evidence in [CapabilityEvidence.unknown, .unreadable] {
+            let resolution = CustomizationResolver.resolve(
+                control: control("speed", requirement: .effectsV2), on: target(evidence))
+            guard case .unavailable(let reason, let remediation) = resolution.availability else {
+                return XCTFail("expected unavailable for \(evidence), got \(resolution.availability)")
+            }
+            XCTAssertTrue(reason == .capabilityUnknown || reason == .capabilityUnreadable,
+                          "\(evidence) must stay unknown, got \(reason)")
+            XCTAssertNotEqual(reason, .effectsV2Unavailable,
+                              "unknown must never read as the hardware refusal")
+            XCTAssertEqual(remediation, .retryCapabilityFetch,
+                           "an unknown answer offers a retry; a refusal does not")
+        }
+    }
+
+    /// …and the refusal itself is untouched: a bridge that ANSWERED and said
+    /// no still gets the reason whose copy names the hardware fact.
+    func testUnsupportedEffectsV2KeepsTheRefusalReason() {
+        let target = CustomizationTargetSnapshot(
+            identity: identity(), totalLights: 3,
+            dimming: .all(total: 3), color: .all(total: 3),
+            colorTemperature: .all(total: 3), gradient: .all(total: 3),
+            effectsV2: .none(total: 3),
+            entertainmentAvailable: .known, transport: .legacy, running: true)
+
+        let resolution = CustomizationResolver.resolve(
+            control: control("speed", requirement: .effectsV2), on: target)
+
+        XCTAssertEqual(resolution.availability,
+                       .unavailable(reason: .effectsV2Unavailable,
+                                    remediation: .addCapableLights))
+    }
+
     /// An effect/parameter pair that was never verified must never be exposed
     /// as supported — audit §7's "never guess".
+    ///
+    /// The reason stays `.effectParameterUnverified` (the audit's own word),
+    /// but the REMEDIATION is what separates the two flavours for the board:
+    /// unknown offers a retry and renders as checking, unsupported offers
+    /// nothing and renders as a plain "not available". Unknown must never
+    /// read as a refusal.
     func testUnverifiedEffectParameterIsUnknownNotSupported() {
         let resolution = CustomizationResolver.resolve(
             control: control("tint", requirement: .effectParameter(effect: "prism",
@@ -507,7 +565,15 @@ final class CustomizationCatalogFactsTests: XCTestCase {
     /// `entOnly` is set on exactly the three params the audit recorded. When
     /// Slice 2 migrates these to `CapabilityRequirement.transport(.entertainment)`,
     /// this test is the inventory that says the migration is complete.
-    func testEntOnlyInventoryMatchesTheAuditedThree() {
+    func testEntOnlyInventoryMatchesTheAuditedSeven() {
+        // Slice 2 deliberately EXPANDED this inventory from the audited three:
+        // the engine-loop reverse-audit (audit §2C) proved four more params
+        // are read only by the Entertainment loops and silently ignored by
+        // the REST fallbacks — party.speed (REST runs a fixed 1 s cadence),
+        // party.min_brightness (REST sends peak brightness only), and
+        // thunderstorm.flash_length / afterglow (frame-level flash shaping
+        // that only the 50 fps stream can express). Flagging them is the
+        // transport honesty spec §17 demands; hiding the flag was the defect.
         var flagged: [String] = []
         for card in vm.effectCards + vm.liveModeCards {
             for param in card.params where param.entOnly {
@@ -515,6 +581,43 @@ final class CustomizationCatalogFactsTests: XCTestCase {
             }
         }
         XCTAssertEqual(flagged.sorted(),
-                       ["strobe.duty_cycle", "strobe.flash_color", "strobe.speed"])
+                       ["party.min_brightness", "party.speed",
+                        "strobe.duty_cycle", "strobe.flash_color", "strobe.speed",
+                        "thunderstorm.afterglow", "thunderstorm.flash_length"])
+
+        // The migration itself. `entOnly` is now catalog metadata only: the
+        // DECISION is made once, by `StudioBoardAvailability` translating the
+        // flag into `.transport(.entertainment)` for the resolver. Every
+        // flagged param must carry the requirement, and no unflagged one may.
+        var migrated: [String] = []
+        for card in vm.effectCards + vm.liveModeCards {
+            for param in card.params {
+                guard let descriptor = StudioBoardAvailability.descriptor(card: card,
+                                                                          param: param) else {
+                    XCTAssertFalse(param.entOnly,
+                                   "\(card.id).\(param.id) is entOnly but bypasses the funnel")
+                    continue
+                }
+                if Self.requiresEntertainmentTransport(descriptor.requirement) {
+                    migrated.append("\(card.id).\(param.id)")
+                }
+            }
+        }
+        XCTAssertEqual(migrated.sorted(), flagged.sorted(),
+                       "entOnly → .transport(.entertainment) migration is incomplete")
+    }
+
+    /// Does this requirement tree demand the Entertainment transport anywhere?
+    private static func requiresEntertainmentTransport(
+        _ requirement: CapabilityRequirement
+    ) -> Bool {
+        switch requirement {
+        case .transport(let transport):
+            return transport == .entertainment
+        case .all(let parts), .any(let parts):
+            return parts.contains { requiresEntertainmentTransport($0) }
+        default:
+            return false
+        }
     }
 }

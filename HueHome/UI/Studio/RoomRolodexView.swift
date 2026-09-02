@@ -22,7 +22,7 @@ struct RoomRolodexView: View {
     let rooms: [RoomDisplayItem]
     let zones: [RoomDisplayItem]
     let selectedRoom: RoomDisplayItem?
-    let runningEffects: [RoomEffectKey: RunningEffect]   // exact bridge+room key (round 4c)
+    let runningEffects: [StudioSelectionKey: RunningEffect]   // exact bridge+group+kind key
 
     /// The user chose this item. Fires ONCE, after the wheel has stopped —
     /// never mid-drag, and never when the finger merely lifts.
@@ -31,6 +31,10 @@ struct RoomRolodexView: View {
     /// never touches a playback API, so tapping an already-selected room still
     /// opens the surface.
     let onActivate: (RoomDisplayItem) -> Void
+    /// Slice 2 session manager: one-tap stop for an ACTIVE target from the
+    /// expanded picker (spec §15.3). Optional; the picker hides the affordance
+    /// when absent.
+    var onStopActive: ((StudioSelectionKey) -> Void)? = nil
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -69,9 +73,10 @@ struct RoomRolodexView: View {
         rooms: [RoomDisplayItem],
         zones: [RoomDisplayItem],
         selectedRoom: RoomDisplayItem?,
-        runningEffects: [RoomEffectKey: RunningEffect],
+        runningEffects: [StudioSelectionKey: RunningEffect],
         onCommit: @escaping (RoomDisplayItem) -> Void,
-        onActivate: @escaping (RoomDisplayItem) -> Void
+        onActivate: @escaping (RoomDisplayItem) -> Void,
+        onStopActive: ((StudioSelectionKey) -> Void)? = nil
     ) {
         self.rooms = rooms
         self.zones = zones
@@ -79,6 +84,7 @@ struct RoomRolodexView: View {
         self.runningEffects = runningEffects
         self.onCommit = onCommit
         self.onActivate = onActivate
+        self.onStopActive = onStopActive
 
         let startAsZone = selectedRoom?.kind == .zone
         let r = rooms.firstIndex { $0.id == selectedRoom?.id } ?? 0
@@ -193,7 +199,8 @@ struct RoomRolodexView: View {
                 onSelect: { item in
                     select(item)
                     showListFallback = false
-                }
+                },
+                onStopActive: onStopActive
             )
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
@@ -400,7 +407,7 @@ struct RoomRolodexView: View {
     private func wheelCell(
         item: RoomDisplayItem, isZone: Bool, isCenter: Bool, isCommitted: Bool
     ) -> some View {
-        let running = runningEffects[RoomEffectKey(room: item)]
+        let running = runningEffects[StudioSelectionKey(room: item)]
         return HStack(spacing: 7) {
             Image(systemName: isZone ? "square.3.layers.3d" : archetypeIcon(for: item.archetype))
                 .font(.system(size: 13, weight: .semibold))

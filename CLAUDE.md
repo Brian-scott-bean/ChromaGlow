@@ -15,9 +15,10 @@ Do not duplicate project strategy here. If strategy, status, rules, commands, or
 
 Important current facts (2026-07-10):
 
-- iOS scheme is `HueHome 1`, not `HueHome` (`run_tests.sh` still names the wrong one — pass the
-  scheme explicitly). Validate with:
-  `xcodebuild test -project HueHome.xcodeproj -scheme "HueHome 1" -destination 'platform=iOS Simulator,name=iPhone 17 Pro'`.
+- iOS scheme is `HueHome 1`, not `HueHome`. `run_tests.sh` targets the correct scheme and picks a
+  deterministic simulator (preferred model at the highest installed OS; `CHROMAGLOW_TEST_UDID` /
+  `CHROMAGLOW_TEST_MODEL` overrides). When invoking xcodebuild directly, use an exact `id=`
+  destination — several simulators share the name `iPhone 17 Pro`, so a bare `name=` is ambiguous.
 - **`main` is the branch Brian installs from** (Xcode → physical iPhone). Keep it releasable;
   fast-forward validated work to it. Current: `main`, 1.0.0 build 28 (see DEVLOG snapshot).
 - Brian's conventions: `checkpoint/*` rollback tag before any multi-commit run; bump

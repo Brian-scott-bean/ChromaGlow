@@ -19,17 +19,12 @@ enum MixerTrayMetrics {
     /// job was "drag or tap to dismiss"; dismissal is a named destination now,
     /// so the gesture that competed with every child control is gone.
     static let backToDecksRowHeight: CGFloat = 36
-    /// Row 1 of the tray header: 40pt icon/action circles plus padding.
-    static let headerHeight: CGFloat = 66
-    /// Row 2: the horizontally scrolling badge lane (LIVE, coverage, beat,
-    /// transport, room count). Fixed so the tray height never depends on how
-    /// many badges happen to be showing.
+    /// The badge lane inside the operational panel (LIVE, coverage,
+    /// transport, room count). Fixed so the panel never resizes with badge
+    /// count. (Slice 2 moved the lane from the pinned header into the panel
+    /// that expands from the identity.)
     static let badgeLaneHeight: CGFloat = 28
-    /// Row 3: the transport status sentence. Reserved for composition cards
-    /// so the tray does not resize when the sentence appears or clears.
-    static let statusLineHeight: CGFloat = 26
     static let sliderRowHeight: CGFloat = 56
-    static let moreRowHeight: CGFloat = 44
     static let verticalPadding: CGFloat = 16
     /// Floating tab bar + home indicator — the clearance a bottom-anchored
     /// Studio surface owes when nothing else is clearing the bar for it.
@@ -51,40 +46,18 @@ enum MixerTrayMetrics {
         barMounted ? HueSpacing.sm : tabBarClearance(bottomInset: bottomInset)
     }
 
-    /// Total height of the three-row tray header: identity+actions, badge
-    /// lane, and — for composition cards — the transport status sentence.
-    /// The status line is *reserved* rather than measured so the tray does not
-    /// resize when a transport switch makes the sentence appear or clear.
-    static func headerBlockHeight(hasStatusLine: Bool) -> CGFloat {
-        var height = headerHeight + HueSpacing.xs + badgeLaneHeight
-        if hasStatusLine { height += HueSpacing.xs + statusLineHeight }
-        return height
-    }
-
-    /// Compact-tray params: essentials plus every color picker — color is
-    /// the most-hunted adjustment, worth one always-visible row.
-    static func inlineParams(for card: StudioCard) -> [StudioParam] {
-        let essentials = card.params.filter { $0.tier == .essential }
-        let colors = card.params.filter {
-            if case .colorPicker = $0.kind { return $0.tier != .essential }
-            return false
-        }
-        return essentials + colors
-    }
-
-    /// Everything else, revealed by "+N more" (sheet) or inline when the
-    /// tray is dragged up.
-    static func overflowParams(for card: StudioCard) -> [StudioParam] {
-        let inlineIDs = Set(inlineParams(for: card).map(\.id))
-        return card.params.filter { !inlineIDs.contains($0.id) }
-    }
-
     // DELETED in Track A C5: `engineHeight`, `compositionHeight` and
-    // `compactHeightCap`. They computed a FIXED height for a bottom-anchored
-    // box. The customization surface is now an inline region that takes the
-    // space the decks would have taken, so there is no height to compute and a
-    // stale one would only fight the layout. `bottomClearance` is NOT dead and
-    // stays — it is the build-46 double-count fix.
+    // `compactHeightCap` — they sized a fixed-height bottom-anchored box.
+    //
+    // DELETED in Slice 2: `headerHeight`, `statusLineHeight`,
+    // `headerBlockHeight`, `moreRowHeight`, and the `inlineParams` /
+    // `overflowParams` tier partition. The three-row pinned header became
+    // the one-line identity (`StudioIdentityHeader`) with its status inside
+    // the scrolling operational panel — nothing to reserve — and the board
+    // layout comes from `StudioBoardCatalog.descriptor(for:)`, which places
+    // EVERY declared param on the one board (hero / primary / supporting),
+    // with no Advanced bucket to partition into. `bottomClearance` is NOT
+    // dead and stays — it is the build-46 double-count fix.
 }
 
 // MARK: - StudioParamRow
@@ -137,7 +110,7 @@ struct StudioParamRow: View {
 
     @ViewBuilder
     private func colorPickerRow(param: StudioParam) -> some View {
-        // sendColorParam persists via setParamColor AND live-tints running
+        // commitColorParam persists as the next-start default AND live-tints running
         // bridge-native effects per-light — the old row only persisted,
         // leaving base_color dead while an effect ran.
         VStack(alignment: .leading, spacing: 10) {
@@ -147,7 +120,7 @@ struct StudioParamRow: View {
                 selected: vm.paramColor(for: cardID, paramID: param.id),
                 onSelect: { color in
                     withAnimation(HueAnimation.fast) {
-                        vm.sendColorParam(cardID: cardID, paramID: param.id, color: color)
+                        vm.commitColorParam(cardID: cardID, paramID: param.id, color: color)
                     }
                 }
             )
@@ -163,7 +136,7 @@ struct StudioParamRow: View {
                     gamut: .c,
                     height: 120,
                     onChanged: { hue, sat, _ in
-                        vm.sendColorParam(
+                        vm.commitColorParam(
                             cardID: cardID, paramID: param.id,
                             color: Color(hue: hue, saturation: sat, brightness: 1.0)
                         )
@@ -180,7 +153,7 @@ struct StudioParamRow: View {
                             // Mirek-only swatches carry no xy; skip rather than guess.
                             guard let x = saved.x, let y = saved.y else { return }
                             let hsb = HueColorUtils.hsb(fromX: x, y: y, brightness: 100)
-                            vm.sendColorParam(
+                            vm.commitColorParam(
                                 cardID: cardID, paramID: param.id,
                                 color: Color(hue: hsb.h, saturation: hsb.s, brightness: 1.0)
                             )
@@ -208,7 +181,7 @@ struct StudioParamRow: View {
             title: param.label,
             isOn: Binding(
                 get: { vm.paramValue(for: cardID, paramID: param.id, default: param.defaultValue) > 0.5 },
-                set: { vm.setParamValue(for: cardID, paramID: param.id, value: $0 ? 1 : 0) }
+                set: { vm.commitParam(cardID: cardID, paramID: param.id, value: $0 ? 1 : 0) }
             )
         )
     }
@@ -228,8 +201,10 @@ struct StudioParamRow: View {
                         return options.min { abs($0.value - current) < abs($1.value - current) }?.value ?? param.defaultValue
                     },
                     set: { newValue in
-                        vm.setParamValue(for: cardID, paramID: param.id, value: newValue)
-                        vm.sendParam(cardID: cardID, paramID: param.id, value: newValue)
+                        // commitParam captures the exact running identity at
+                        // call time, commits through the fence, pushes the
+                        // engine box, and schedules the debounced bridge send.
+                        vm.commitParam(cardID: cardID, paramID: param.id, value: newValue)
                     }
                 )
             )
@@ -253,6 +228,11 @@ private struct StudioSliderRow: View {
     @State private var localValue: Double = 0
     @State private var isDragging = false
     @State private var seeded = false
+    /// The exact identity + routing facts captured when THIS gesture began.
+    /// Every tick commits against it — a selection change, stop, reset, or
+    /// card replacement mid-drag makes the remaining ticks drop instead of
+    /// landing on whatever is selected now.
+    @State private var editSession: StudioParamSession?
 
     var body: some View {
         StageSlider(
@@ -261,26 +241,37 @@ private struct StudioSliderRow: View {
                 get: { localValue },
                 set: { newValue in
                     localValue = newValue
-                    vm.setParamValue(for: cardID, paramID: param.id, value: newValue)
-                    // Same debounce + latest-wins mailbox discipline as before —
-                    // sendParam itself debounces 150 ms and enqueues.
-                    vm.sendParam(cardID: cardID, paramID: param.id, value: newValue)
+                    if let session = editSession {
+                        vm.updateParamEdit(session, value: newValue)
+                    } else {
+                        // No captured session (gesture began with the card not
+                        // running here, or a tick arrived before the editing
+                        // bracket) — one-shot capture-at-call is still exact.
+                        vm.commitParam(cardID: cardID, paramID: param.id, value: newValue)
+                    }
                 }
             ),
             range: min...max,
             format: param.format ?? { "\(Int($0.rounded()))" },
-            onEditingChanged: { isDragging = $0 }
+            onEditingChanged: { editing in
+                isDragging = editing
+                if editing {
+                    editSession = vm.beginParamEdit(cardID: cardID, paramID: param.id)
+                } else {
+                    if let session = editSession { vm.endParamEdit(session) }
+                    editSession = nil
+                }
+            }
         )
         .onAppear {
             guard !seeded else { return }
             localValue = vm.paramValue(for: cardID, paramID: param.id, default: param.defaultValue)
             seeded = true
         }
-        .onChange(of: vm.paramValues[cardID]?[param.id]) { _, newValue in
+        .onChange(of: vm.paramValue(for: cardID, paramID: param.id, default: param.defaultValue)) { _, newValue in
             guard !isDragging else { return }
-            // nil = the card was reset to defaults — snap back to the default.
-            let resolved = newValue ?? param.defaultValue
-            if resolved != localValue { localValue = resolved }
+            // Reset / target switch / external write — snap to the resolved value.
+            if newValue != localValue { localValue = newValue }
         }
     }
 }
@@ -297,7 +288,7 @@ struct StudioParamSheet: View {
 
     private var essentialParams: [StudioParam] { card.params.filter { $0.tier == .essential } }
     private var colorParams: [StudioParam]     { card.params.filter { $0.tier == .color } }
-    private var advancedParams: [StudioParam]   { card.params.filter { $0.tier == .advanced } }
+    private var advancedParams: [StudioParam]   { card.params.filter { $0.tier == .support } }
 
     var body: some View {
         StageSheetScaffold(title: card.name) {

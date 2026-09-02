@@ -55,7 +55,7 @@ It contains the full development history, architecture decisions, API constraint
 
 ## Current State (v0.16.0)
 - Multi-room concurrent effects: ✅ Built and committed
-- Effects are tracked per-room via `runningEffects: [String: RunningEffect]`
+- Effects are tracked via `runningEffects: [StudioSelectionKey: RunningEffect]`, keyed by bridge + group + KIND, never by a bare room ID (spec §19) — a room and a zone that share an identifier are two independent rows
 - Entertainment + bridgeNative effects can coexist
 - Next feature: **Composer** (v0.17.0) — dynamic scene creation engine with 4 layers (Palette, Motion, Envelope, Reaction)
 

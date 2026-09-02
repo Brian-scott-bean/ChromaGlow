@@ -1,0 +1,1700 @@
+//
+//  StudioProductionWiringTests.swift
+//  HueHomeTests
+//
+//  Unified Customization Engine — Slice 2 (Production Truth Wiring).
+//
+//  The Slice 1 tests proved the FOUNDATION behaves; these prove the ACTUAL
+//  production paths honor the identity contract. Every test drives the same
+//  API the shipping UI drives: `beginParamEdit` / `updateParamEdit` /
+//  `commitParam`, `paramValue` / `paramColor`, `resetParams`,
+//  `installRunningIdentity`, `stopRunningScopes`, `rekeyRunningInstance`,
+//  and the orchestrator's room-guarded `updateStudioParams`.
+//
+//  Convention (audit §24 / Slice 1): every race is expressed by CALL ORDERING
+//  against the pure fence — no sleeps, no waiters.
+//
+
+import XCTest
+import SwiftUI
+@testable import HueHome
+
+/// Records the coalesced bridge writes R4D emits.
+///
+/// `setLightEffectV2` lives in an EXTENSION of `HueAPIClient`, so it is
+/// statically dispatched and cannot be overridden by a subclass — the send site
+/// holds an `HueAPIClient`, so an override would never be called. The v2 bodies
+/// are therefore recorded one layer down, in the `put(path:body:ip:token:)` the
+/// extension funnels through, which is the same request the bridge would see.
+private final class WiringSpyClient: BridgeAPIClient, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _v2Puts: [(lightID: String, body: [String: Any])] = []
+    private var _groupedEffectPuts: [(id: String, brightness: Double?, xy: (Double, Double)?, mirek: Int?)] = []
+
+    /// Every `effects_v2` PUT, in order: which light, and the action payload.
+    var v2Puts: [(lightID: String, body: [String: Any])] {
+        lock.lock(); defer { lock.unlock() }
+        return _v2Puts
+    }
+    /// Every grouped-light effect PUT, in order, with the fields it carried.
+    var groupedEffectPuts: [(id: String, brightness: Double?, xy: (Double, Double)?, mirek: Int?)] {
+        lock.lock(); defer { lock.unlock() }
+        return _groupedEffectPuts
+    }
+
+    override func fetchLights() async throws -> [HueLight] { [] }
+    override func fetchRooms() async throws -> [HueRoom] { [] }
+    override func fetchZones() async throws -> [HueZone] { [] }
+    override func fetchGroupedLights() async throws -> [HueGroupedLight] { [] }
+    override func fetchScenes() async throws -> [HueScene] { [] }
+    override func fetchLightIDsForGroup(groupedLightID: String) async throws -> [String] { [] }
+    override func setLightNativeEffect(id: String, effect: String) async throws {}
+    private var _groupedStatePuts: [(id: String, brightness: Double)] = []
+    /// Every start-time grouped ON+brightness PUT — the bridge-native seed.
+    var groupedStatePuts: [(id: String, brightness: Double)] {
+        lock.lock(); defer { lock.unlock() }
+        return _groupedStatePuts
+    }
+    override func setGroupedLightState(id: String, on: Bool, brightness: Double) async throws {
+        lock.lock(); _groupedStatePuts.append((id: id, brightness: brightness)); lock.unlock()
+    }
+    override func setGroupedLight(id: String, on: Bool) async throws {}
+
+    override func setGroupedLightEffect(
+        id: String, on: Bool?, brightness: Double?,
+        xy: (Double, Double)?, mirek: Int?, duration: Int
+    ) async throws {
+        lock.lock()
+        _groupedEffectPuts.append((id: id, brightness: brightness, xy: xy, mirek: mirek))
+        lock.unlock()
+    }
+
+    override func get(path: String, ip: String, token: String) async throws -> Data {
+        Data(#"{"data": []}"#.utf8)
+    }
+
+    override func put(path: String, body: [String: Any], ip: String, token: String) async throws -> Data {
+        if let v2 = body["effects_v2"] as? [String: Any],
+           let action = v2["action"] as? [String: Any],
+           let lightID = path.split(separator: "/").last.map(String.init) {
+            lock.lock(); _v2Puts.append((lightID: lightID, body: action)); lock.unlock()
+        }
+        return Data("{}".utf8)
+    }
+}
+
+@MainActor
+final class StudioProductionWiringTests: XCTestCase {
+
+    private var vm: StudioViewModel!
+    private var orchestrator: UnifiedOrchestrator!
+
+    override func setUp() {
+        super.setUp()
+        MainActor.assumeIsolated {
+            vm = StudioViewModel()
+            orchestrator = UnifiedOrchestrator()
+            vm.configure(orchestrator: orchestrator)
+        }
+    }
+
+    override func tearDown() {
+        MainActor.assumeIsolated {
+            vm = nil
+            orchestrator = nil
+        }
+        super.tearDown()
+    }
+
+    // ── Fixtures ────────────────────────────────────────────────
+
+    private func room(_ id: String, bridge: String? = "bridge-a",
+                      kind: RoomDisplayItem.Kind = .room) -> RoomDisplayItem {
+        RoomDisplayItem(
+            kind: kind,
+            id: id, name: id, archetype: nil, isOn: true, brightness: 60,
+            groupedLightID: "gl-\(id)", lightCount: 2, bridgeID: bridge,
+            childResourceRefs: [])
+    }
+
+    private func partyCard() -> StudioCard {
+        vm.liveModeCards.first { $0.id == "party" }!
+    }
+
+    /// Start the card on a target through the PRODUCTION identity install —
+    /// the same helper every `apply()` arm composes.
+    @discardableResult
+    private func startRunning(_ card: StudioCard, on target: RoomDisplayItem,
+                              isEntertainment: Bool = false) -> RunningLookIdentity {
+        var execution: CustomizationExecution = .appDriven(engineKey: "party")
+        switch card.strategy {
+        case .bridgeNative(let effect): execution = .bridgeNative(effect: effect)
+        case .appDriven(let key):       execution = .appDriven(engineKey: key)
+        case .composition(let pid):     execution = .composition(presetID: pid)
+        }
+        let identity = vm.installRunningIdentity(room: target, card: card, execution: execution)
+        vm.runningEffects[StudioSelectionKey(room: target)] = RunningEffect(
+            cardID: card.id, card: card, room: target, lightIDs: ["L1"],
+            isEntertainment: isEntertainment, requestedTransport: nil,
+            transportFallback: false, identity: identity)
+        return identity
+    }
+
+    /// Edit through the production gesture path with the selection on `target`.
+    private func edit(_ card: StudioCard, on target: RoomDisplayItem,
+                      paramID: String = "speed", value: Double) {
+        vm.selectedRoom = target
+        let session = vm.beginParamEdit(cardID: card.id, paramID: paramID)
+        XCTAssertNotNil(session, "the card is running on the selected target")
+        vm.updateParamEdit(session!, value: value)
+        vm.endParamEdit(session!)
+    }
+
+    /// What the UI's slider row would display: the accessor with the catalog
+    /// default, exactly as `StudioParamRow` passes it.
+    private func displayedSpeed(_ card: StudioCard, on target: RoomDisplayItem) -> Double {
+        vm.selectedRoom = target
+        let catalogDefault = card.params.first { $0.id == "speed" }!.defaultValue
+        return vm.paramValue(for: card.id, paramID: "speed", default: catalogDefault)
+    }
+
+    // ── Same card, independent targets ──────────────────────────
+
+    func testSameCardOnTwoBridgesHoldsIndependentValuesThroughTheProductionPath() {
+        let a = room("room-1", bridge: "bridge-a")
+        let b = room("room-1", bridge: "bridge-b")   // SAME room id, other bridge
+        let card = partyCard()
+        startRunning(card, on: a)
+        startRunning(card, on: b)
+
+        edit(card, on: a, value: 20)
+        edit(card, on: b, value: 80)
+
+        XCTAssertEqual(displayedSpeed(card, on: a), 20, "bridge A shows its own instance")
+        XCTAssertEqual(displayedSpeed(card, on: b), 80, "bridge B shows its own instance")
+    }
+
+    func testTwoRoomsOnTheSameBridgeHoldIndependentValuesThroughTheProductionPath() {
+        let a = room("room-a"), b = room("room-b")
+        let card = partyCard()
+        startRunning(card, on: a)
+        startRunning(card, on: b)
+
+        edit(card, on: a, value: 25)
+        edit(card, on: b, value: 75)
+
+        XCTAssertEqual(displayedSpeed(card, on: a), 25)
+        XCTAssertEqual(displayedSpeed(card, on: b), 75, "a sibling room on the SAME bridge is independent")
+    }
+
+    /// BINDING correction #1: a room and a zone sharing an identifier on one
+    /// bridge remain independently represented, routed, edited, and stopped —
+    /// the production running collection is kind-aware.
+    func testRoomAndZoneSharingAnIDRemainIndependentInProduction() async {
+        let asRoom = room("shared-id", kind: .room)
+        let asZone = room("shared-id", kind: .zone)
+        let card = partyCard()
+        startRunning(card, on: asRoom)
+        startRunning(card, on: asZone)
+
+        XCTAssertEqual(vm.runningEffects.count, 2,
+                       "two rows — the kind-aware key does not collapse them")
+
+        edit(card, on: asRoom, value: 30)
+        edit(card, on: asZone, value: 90)
+        XCTAssertEqual(displayedSpeed(card, on: asRoom), 30)
+        XCTAssertEqual(displayedSpeed(card, on: asZone), 90)
+
+        // Stop the ZONE's instance; the room's survives untouched.
+        vm.stopRunningScopes(forRowAt: StudioSelectionKey(room: asZone))
+        vm.runningEffects.removeValue(forKey: StudioSelectionKey(room: asZone))
+        XCTAssertNotNil(vm.runningEffect(for: asRoom), "the room's row survives")
+        XCTAssertEqual(displayedSpeed(card, on: asRoom), 30, "…with its exact values")
+
+        // A record carrying only bridge+id cannot say which one it means —
+        // resolution fails closed while both were present, resolves after.
+        startRunning(card, on: asZone)
+        XCTAssertNil(vm.runningKey(bridgeID: "bridge-a", groupID: "shared-id"),
+                     "bridge+id alone is ambiguous while a room AND a zone hold the id")
+    }
+
+    // ── Gesture capture vs selection movement ───────────────────
+
+    func testDragCapturedOnOneRoomDoesNotLandOnASiblingAfterSelectionMoves() {
+        let a = room("room-a"), b = room("room-b")
+        let card = partyCard()
+        startRunning(card, on: a)
+        startRunning(card, on: b)
+        edit(card, on: b, value: 50)   // B's baseline
+
+        // The finger lands on A…
+        vm.selectedRoom = a
+        let session = vm.beginParamEdit(cardID: card.id, paramID: "speed")!
+        // …the wheel commits B mid-drag…
+        vm.selectedRoom = b
+        // …and the remaining ticks still address A, never B.
+        vm.updateParamEdit(session, value: 5)
+        vm.endParamEdit(session)
+
+        XCTAssertEqual(displayedSpeed(card, on: a), 5, "the captured target got the value")
+        XCTAssertEqual(displayedSpeed(card, on: b), 50, "the newly selected room did not")
+    }
+
+    // ── Reset isolation ─────────────────────────────────────────
+
+    func testResetOnOneInstanceLeavesTheSameCardEverywhereElse() async {
+        let a = room("room-a"), b = room("room-b")
+        let other = room("room-a", bridge: "bridge-b")
+        let card = partyCard()
+        startRunning(card, on: a)
+        startRunning(card, on: b)
+        startRunning(card, on: other)
+        edit(card, on: a, value: 11)
+        edit(card, on: b, value: 22)
+        edit(card, on: other, value: 33)
+
+        vm.selectedRoom = a
+        await vm.resetParams(for: card)
+
+        let catalogDefault = card.params.first { $0.id == "speed" }!.defaultValue
+        XCTAssertEqual(displayedSpeed(card, on: a), catalogDefault, "A reset to defaults")
+        XCTAssertEqual(displayedSpeed(card, on: b), 22, "same-bridge sibling untouched")
+        XCTAssertEqual(displayedSpeed(card, on: other), 33, "other bridge untouched")
+    }
+
+    func testResetDefeatsAWriteCapturedBeforeIt() async {
+        let a = room("room-a")
+        let card = partyCard()
+        startRunning(card, on: a)
+
+        vm.selectedRoom = a
+        let staleSession = vm.beginParamEdit(cardID: card.id, paramID: "speed")!
+        await vm.resetParams(for: card)
+        vm.updateParamEdit(staleSession, value: 99)   // authored pre-reset
+
+        let catalogDefault = card.params.first { $0.id == "speed" }!.defaultValue
+        XCTAssertEqual(displayedSpeed(card, on: a), catalogDefault,
+                       "the pre-reset write lost the generation fence")
+    }
+
+    // ── Stop isolation and fencing ──────────────────────────────
+
+    func testStopOnOneTargetLeavesTheOthersAndFencesItsPendingWrites() {
+        let a = room("room-a"), b = room("room-b")
+        let card = partyCard()
+        let identityA = startRunning(card, on: a)
+        startRunning(card, on: b)
+        edit(card, on: b, value: 60)
+
+        vm.selectedRoom = a
+        let session = vm.beginParamEdit(cardID: card.id, paramID: "speed")!
+        vm.stopRunningScopes(forRowAt: StudioSelectionKey(room: a))
+        vm.runningEffects.removeValue(forKey: StudioSelectionKey(room: a))
+
+        XCTAssertFalse(vm.valueScopes.isCurrent(identityA),
+                       "the debounced send's post-sleep re-fence now drops")
+        vm.updateParamEdit(session, value: 99)   // the late tick
+        XCTAssertEqual(vm.valueScopes.runningTargetCount, 1, "nothing resurrected A")
+        XCTAssertEqual(displayedSpeed(card, on: b), 60, "B untouched by A's stop or late write")
+    }
+
+    func testCardReplacementFencesTheOldCardsWrites() {
+        let a = room("room-a")
+        let party = partyCard()
+        let strobe = vm.liveModeCards.first { $0.id == "strobe" }!
+        startRunning(party, on: a)
+
+        vm.selectedRoom = a
+        let staleSession = vm.beginParamEdit(cardID: party.id, paramID: "speed")!
+
+        // The replacement, through the production teardown + install pair.
+        vm.stopRunningScopes(forRowAt: StudioSelectionKey(room: a))
+        startRunning(strobe, on: a)
+
+        vm.updateParamEdit(staleSession, value: 99)
+        vm.selectedRoom = a
+        XCTAssertEqual(vm.paramValue(for: strobe.id, paramID: "speed",
+                                     default: strobe.params.first { $0.id == "speed" }!.defaultValue),
+                       strobe.params.first { $0.id == "speed" }!.defaultValue,
+                       "the old card's write never reached the replacement")
+        XCTAssertFalse(vm.valueScopes.isCurrent(staleSession.identity))
+    }
+
+    func testRekeyOnTransportChangeFencesWritesWithoutBlankingLiveValues() {
+        let a = room("room-a")
+        let card = partyCard()
+        startRunning(card, on: a)
+        edit(card, on: a, value: 42)
+
+        vm.selectedRoom = a
+        let preRekeySession = vm.beginParamEdit(cardID: card.id, paramID: "speed")!
+        vm.rekeyRunningInstance(at: StudioSelectionKey(room: a), reason: .transportChanged)
+
+        XCTAssertEqual(displayedSpeed(card, on: a), 42,
+                       "the screen keeps the real values — no silent blanking")
+        vm.updateParamEdit(preRekeySession, value: 99)
+        XCTAssertEqual(displayedSpeed(card, on: a), 42,
+                       "…while the pre-rekey write is fenced out")
+    }
+
+    // ── Defaults vs live separation ─────────────────────────────
+
+    func testEditingWhileNotRunningWritesDefaultsOnly() {
+        let a = room("room-a")
+        let card = partyCard()
+        vm.selectedRoom = a
+
+        XCTAssertNil(vm.beginParamEdit(cardID: card.id, paramID: "speed"),
+                     "no running instance → no live session")
+        vm.commitParam(cardID: card.id, paramID: "speed", value: 64)
+
+        XCTAssertEqual(vm.paramValue(for: card.id, paramID: "speed", default: -1), 64,
+                       "the default is what the card will next start with")
+        XCTAssertEqual(vm.valueScopes.runningTargetCount, 0, "nothing started running")
+    }
+
+    func testLiveEditUpdatesTheCardsNextStartDefaults() {
+        let a = room("room-a")
+        let card = partyCard()
+        startRunning(card, on: a)
+        edit(card, on: a, value: 77)
+
+        XCTAssertEqual(vm.valueScopes.defaults(forCard: card.id).numbers["speed"], 77,
+                       "last-used behavior: the live edit becomes the next-start default")
+    }
+
+    // ── The orchestrator room guard ─────────────────────────────
+
+    func testUpdateStudioParamsRefusesASiblingRoomOnTheSameBridge() {
+        orchestrator.testInstallStudioEngineRuntime(
+            bridgeKey: "bridge-a", roomID: "room-a", values: ["speed": 50])
+
+        orchestrator.updateStudioParams(values: ["speed": 99], colors: [:],
+                                        bridgeID: "bridge-a", roomID: "room-b")
+        XCTAssertEqual(orchestrator.testStudioParamBoxValues(forBridge: "bridge-a")?["speed"], 50,
+                       "a write naming a sibling room does not touch the runtime's box")
+
+        orchestrator.updateStudioParams(values: ["speed": 99], colors: [:],
+                                        bridgeID: "bridge-a", roomID: "room-a")
+        XCTAssertEqual(orchestrator.testStudioParamBoxValues(forBridge: "bridge-a")?["speed"], 99,
+                       "the owning room's write lands")
+    }
+
+    func testCommittedEditReachesExactlyTheOwningEngineBox() {
+        let a = room("room-a"), b = room("room-b", bridge: "bridge-b")
+        let card = partyCard()
+        startRunning(card, on: a)
+        startRunning(card, on: b)
+        orchestrator.testInstallStudioEngineRuntime(bridgeKey: "bridge-a", roomID: "room-a")
+        orchestrator.testInstallStudioEngineRuntime(bridgeKey: "bridge-b", roomID: "room-b")
+
+        edit(card, on: a, value: 15)
+        XCTAssertEqual(orchestrator.testStudioParamBoxValues(forBridge: "bridge-a")?["speed"], 15)
+        XCTAssertNil(orchestrator.testStudioParamBoxValues(forBridge: "bridge-b")?["speed"],
+                     "the other bridge's engine box is untouched")
+
+        edit(card, on: b, value: 85)
+        XCTAssertEqual(orchestrator.testStudioParamBoxValues(forBridge: "bridge-b")?["speed"], 85)
+        XCTAssertEqual(orchestrator.testStudioParamBoxValues(forBridge: "bridge-a")?["speed"], 15)
+    }
+
+    // ── Session manager (2C) ────────────────────────────────────
+
+    /// Apply Current Look copies the source's exact live values ONCE; the
+    /// two instances then diverge freely (spec §14.6/§14.7).
+    func testApplyCurrentLookCopiesOnceThenInstancesDiverge() {
+        let a = room("room-a"), b = room("room-b")
+        let card = partyCard()
+        startRunning(card, on: a)
+        edit(card, on: a, value: 33)
+
+        // Viewing A (active), then selecting idle B — A is the source.
+        vm.selectedRoom = a
+        vm.noteSelectionChanged()
+        vm.selectedRoom = b
+        vm.noteSelectionChanged()
+        XCTAssertEqual(vm.applyCurrentLookSource?.room.id, "room-a")
+
+        // The production copy-once seed, then the start apply() performs.
+        let seeded = vm.seedApplyCurrentLook()
+        XCTAssertEqual(seeded?.id, card.id)
+        startRunning(card, on: b)
+
+        XCTAssertEqual(displayedSpeed(card, on: b), 33, "the copy landed once")
+        edit(card, on: b, value: 77)
+        XCTAssertEqual(displayedSpeed(card, on: a), 33, "…and the source never links")
+        XCTAssertEqual(displayedSpeed(card, on: b), 77)
+    }
+
+    func testApplyCurrentLookOffersNoSourceWhenSelectedRoomIsActive() {
+        let a = room("room-a")
+        let card = partyCard()
+        startRunning(card, on: a)
+        vm.selectedRoom = a
+        vm.noteSelectionChanged()
+        XCTAssertNil(vm.applyCurrentLookSource,
+                     "an active selected room needs no Apply-Current-Look path")
+    }
+
+    /// The session-manager row stop: exact kind-aware key, sibling survives,
+    /// and the stopped target's session memory dies with it.
+    func testStopActiveTargetIsExactAndClearsItsWorkingMemory() async {
+        let asRoom = room("shared-id", kind: .room)
+        let asZone = room("shared-id", kind: .zone)
+        let card = partyCard()
+        let roomIdentity = startRunning(card, on: asRoom)
+        startRunning(card, on: asZone)
+        vm.sessionMemory.update(roomIdentity.targetKey) { $0.identityPanelOpen = true }
+
+        await vm.stopActiveTarget(StudioSelectionKey(room: asRoom))
+
+        XCTAssertNil(vm.runningEffect(for: asRoom), "the exact row stopped")
+        XCTAssertNotNil(vm.runningEffect(for: asZone), "the same-id zone twin survives")
+        XCTAssertFalse(vm.sessionMemory.state(for: roomIdentity.targetKey).identityPanelOpen,
+                       "the stopped target's expansions die with it")
+        XCTAssertFalse(vm.valueScopes.isCurrent(roomIdentity),
+                       "its pending writes are fenced")
+    }
+
+    // ── Stop All ────────────────────────────────────────────────
+
+    func testStopAllClearsEveryTargetAndPendingSendSlot() async {
+        let a = room("room-a"), b = room("room-b", bridge: "bridge-b")
+        let card = partyCard()
+        startRunning(card, on: a)
+        startRunning(card, on: b)
+        edit(card, on: a, value: 10)
+        edit(card, on: b, value: 90)
+
+        await vm.stopAll()
+
+        XCTAssertEqual(vm.valueScopes.runningTargetCount, 0)
+        XCTAssertTrue(vm.paramSendTasks.isEmpty, "no pending send survives Stop All")
+        XCTAssertTrue(vm.pendingParamSends.isEmpty,
+                      "…and no accumulated field survives it either")
+        XCTAssertTrue(vm.runningEffects.isEmpty)
+    }
+
+    // ──────────────────────────────────────────────────────────
+    // MARK: - R4A: runtime truth corrections
+    // ──────────────────────────────────────────────────────────
+    //
+    // Two orchestrator-side events used to change what was RUNNING without
+    // ever reaching Studio's mirror. The row went on claiming a transport
+    // that no longer existed, so every live control resolved against it.
+
+    private func compositionPreset() -> CompositionPreset {
+        CompositionPreset(
+            id: UUID(), name: "Aurora Drift", icon: "sparkles", accentColorHex: "#FFB84D",
+            isBuiltIn: false, category: .ambient, seasonMonths: nil,
+            palette: PaletteConfig(), motion: MotionConfig(),
+            envelope: EnvelopeConfig(), reaction: ReactionConfig(),
+            createdAt: Date(timeIntervalSince1970: 1_000_000),
+            updatedAt: Date(timeIntervalSince1970: 1_000_000))
+    }
+
+    private func compositionCard() -> StudioCard {
+        vm.studioCard(for: CompositionPreset(
+            id: UUID(), name: "Aurora Drift", icon: "sparkles", accentColorHex: "#FFB84D",
+            isBuiltIn: false, category: .ambient, seasonMonths: nil,
+            palette: PaletteConfig(), motion: MotionConfig(),
+            envelope: EnvelopeConfig(), reaction: ReactionConfig(),
+            createdAt: Date(timeIntervalSince1970: 1_000_000),
+            updatedAt: Date(timeIntervalSince1970: 1_000_000)))
+    }
+
+    /// A lost Studio session removes EXACTLY the streaming row it names — and
+    /// fences the writes captured against it. Another bridge's row, which has
+    /// its own session, is untouched.
+    func testSessionLostRemovesExactlyTheStreamingRowAndFencesItsCapturedWrites() {
+        let a = room("room-1", bridge: "bridge-a")
+        let b = room("room-1", bridge: "bridge-b")   // SAME room id, other bridge
+        let card = partyCard()
+        let identityA = startRunning(card, on: a, isEntertainment: true)
+        let identityB = startRunning(card, on: b, isEntertainment: true)
+
+        // A drag captured while the session was still alive.
+        vm.selectedRoom = a
+        let captured = vm.beginParamEdit(cardID: card.id, paramID: "speed")!
+
+        orchestrator.testEmitStudioRuntimeEvent(
+            .entertainmentSessionLost(bridgeID: "bridge-a", roomID: "room-1"))
+
+        XCTAssertNil(vm.runningEffect(for: a),
+                     "a row with no session behind it is a claim about nothing")
+        XCTAssertNotNil(vm.runningEffect(for: b),
+                        "the other bridge streams independently and must survive")
+        XCTAssertFalse(vm.valueScopes.isCurrent(identityA), "its scope is retired")
+        XCTAssertTrue(vm.valueScopes.isCurrent(identityB))
+
+        vm.updateParamEdit(captured, value: 99)
+        XCTAssertNil(vm.paramSendTasks[identityA.targetKey],
+                     "a write captured before the loss lands on nothing")
+    }
+
+    /// A Room-mode row has no session to lose. Rewriting it would be inventing
+    /// a state change, so the event is ignored.
+    func testSessionLostIgnoresARoomModeRow() {
+        let a = room("room-a")
+        let card = partyCard()
+        let identity = startRunning(card, on: a, isEntertainment: false)
+
+        orchestrator.testEmitStudioRuntimeEvent(
+            .entertainmentSessionLost(bridgeID: "bridge-a", roomID: "room-a"))
+
+        XCTAssertNotNil(vm.runningEffect(for: a), "Room mode was never streaming")
+        XCTAssertTrue(vm.valueScopes.isCurrent(identity), "…so nothing was fenced")
+    }
+
+    /// A composition failing over DTLS→REST flips the row's transport and
+    /// rekeys it — WITHOUT blanking the values on screen — and the snapshot the
+    /// resolver reads follows to `.roomREST`.
+    func testCompositionFallbackFlipsTransportAndRekeysWithValuesPreserved() throws {
+        let a = room("room-a")
+        let card = compositionCard()
+        let identity = startRunning(card, on: a, isEntertainment: true)
+        edit(card, on: a, value: 42)
+        XCTAssertEqual(vm.targetSnapshot(for: try XCTUnwrap(vm.runningEffect(for: a))).transport,
+                       .entertainment, "the row starts out claiming the stream")
+
+        let box = CompositionParamBox(preset: compositionPreset())
+        vm.testInstallCompositionBox(box, at: StudioSelectionKey(room: a))
+        orchestrator.testEmitStudioRuntimeEvent(
+            .compositionFellBackToREST(bridgeID: "bridge-a", roomID: "room-a",
+                                       boxID: ObjectIdentifier(box)))
+
+        let row = try XCTUnwrap(vm.runningEffect(for: a))
+        XCTAssertFalse(row.isEntertainment, "the row stops claiming a stream it does not have")
+        XCTAssertTrue(row.transportFallback, "…and records WHY it is on Room mode")
+        XCTAssertEqual(vm.targetSnapshot(for: row).transport, .roomREST,
+                       "the resolver now measures the transport that is really carrying it")
+        vm.selectedRoom = a
+        XCTAssertEqual(vm.paramValue(for: card.id, paramID: "speed", default: -1), 42,
+                       "the look never stopped — the screen keeps its real values")
+        XCTAssertFalse(vm.valueScopes.isCurrent(identity),
+                       "…while writes authored against the streaming run are fenced")
+        XCTAssertTrue(vm.valueScopes.isCurrent(row.identity))
+    }
+
+    /// The seam fires in the SAME actor turn as the orchestrator's own fence:
+    /// after the runtime is retired and BEFORE `stopSession()` suspends. A
+    /// handler that ran later could act on a successor's row.
+    func testReconcileAfterLoopInvokesTheStudioHandlerBeforeStoppingTheSession() async throws {
+        let client = HueEntertainmentClient(
+            bridgeID: "bridge-a", bridgeIP: "192.0.2.1",
+            username: "spy-token", clientKeyHex: "00",
+            restClient: WiringSpyClient(bridgeID: "bridge-a", bridgeName: "Bridge A",
+                                        ip: "192.0.2.1", token: "spy-token"))
+        orchestrator.testInstallStudioEntertainmentOwner(
+            UnifiedOrchestrator.StudioEntertainmentOwner(
+                bridgeID: "bridge-a", roomID: "room-a",
+                engineKey: "party", configID: "cfg-1"),
+            client: client)
+        orchestrator.testForceStudioSessionTerminallyFailed = true
+        orchestrator.testResetStopAudit()
+
+        var handlerFired = false
+        var stopSessionAlreadyRecordedWhenHandlerRan = true
+        orchestrator.studioRuntimeEventHandler = { [orchestrator] _ in
+            handlerFired = true
+            stopSessionAlreadyRecordedWhenHandlerRan = orchestrator!.stopAuditEvents
+                .contains { $0.operation == .clientStopSession }
+        }
+
+        await orchestrator.testReconcileStudioSessionAfterLoop(
+            bridgeID: "bridge-a", roomID: "room-a")
+
+        XCTAssertTrue(handlerFired, "the reconciliation tells Studio its session is gone")
+        XCTAssertFalse(stopSessionAlreadyRecordedWhenHandlerRan,
+                       "…before the teardown suspends on stopSession()")
+        XCTAssertTrue(orchestrator.stopAuditEvents.contains { $0.operation == .clientStopSession },
+                      "…and the teardown did then run")
+    }
+
+    // ──────────────────────────────────────────────────────────
+    // MARK: - R4D: coalesced per-target sends
+    // ──────────────────────────────────────────────────────────
+
+    /// Two params committed inside one debounce window reach the bridge
+    /// TOGETHER — one `effects_v2` body per light, carrying both.
+    ///
+    /// Before R4D the slot held a single (number|color) pair, so the second
+    /// commit cancelled the first param's task and the first param's value
+    /// never reached the bridge at all.
+    func testTwoParamsInOneDebounceWindowReachTheBridgeInOneV2BodyPerLight() async throws {
+        let spy = WiringSpyClient(bridgeID: "bridge-a", bridgeName: "Bridge A",
+                                  ip: "192.0.2.1", token: "spy-token")
+        orchestrator.injectForTesting(clients: ["bridge-a": spy])
+
+        let a = room("room-a")
+        let candle = vm.effectCards.first { $0.id == "candle" }!
+        let identity = vm.installRunningIdentity(
+            room: a, card: candle, execution: .bridgeNative(effect: "candle"))
+        vm.runningEffects[StudioSelectionKey(room: a)] = RunningEffect(
+            cardID: candle.id, card: candle, room: a, lightIDs: ["L1", "L2"],
+            isEntertainment: false, requestedTransport: nil, transportFallback: false,
+            identity: identity, v2CapableLightIDs: ["L1", "L2"])
+
+        // Two commits, no interval between them — exactly the double-drag that
+        // used to lose the first value.
+        edit(candle, on: a, paramID: "speed", value: 80)
+        edit(candle, on: a, paramID: "warmth", value: 250)
+
+        await vm.testFlushPendingParamSends(for: identity.targetKey)
+        await drainStudioMailbox(bridgeID: "bridge-a", roomID: "room-a")
+
+        XCTAssertEqual(spy.v2Puts.count, 2, "one PUT per v2-capable light — not one per param")
+        XCTAssertEqual(spy.v2Puts.map(\.lightID), ["L1", "L2"])
+        for put in spy.v2Puts {
+            XCTAssertEqual(put.body["effect"] as? String, "candle")
+            let params = try XCTUnwrap(put.body["parameters"] as? [String: Any],
+                                       "the body must carry parameters")
+            XCTAssertEqual(params["speed"] as? Double, 0.8, "speed survived the window")
+            let temperature = try XCTUnwrap(params["color_temperature"] as? [String: Any])
+            XCTAssertEqual(temperature["mirek"] as? Int, 250, "…and so did warmth")
+        }
+        XCTAssertTrue(spy.groupedEffectPuts.isEmpty,
+                      "a v2-capable bridge-native look re-parameterizes the effect, "
+                      + "never a grouped PUT that would fight it")
+        XCTAssertNil(vm.pendingParamSends[identity.targetKey],
+                     "the window is consumed by its send, not inherited by the next one")
+    }
+
+    /// Grouped-routed params coalesce the same way: brightness and the legacy
+    /// colour fallback share ONE grouped PUT on a v1-only room.
+    func testGroupedRoutedParamsCoalesceIntoOneGroupedPut() async throws {
+        let spy = WiringSpyClient(bridgeID: "bridge-a", bridgeName: "Bridge A",
+                                  ip: "192.0.2.1", token: "spy-token")
+        orchestrator.injectForTesting(clients: ["bridge-a": spy])
+
+        let a = room("room-a")
+        let candle = vm.effectCards.first { $0.id == "candle" }!
+        let identity = vm.installRunningIdentity(
+            room: a, card: candle, execution: .bridgeNative(effect: "candle"))
+        vm.runningEffects[StudioSelectionKey(room: a)] = RunningEffect(
+            cardID: candle.id, card: candle, room: a, lightIDs: ["L1"],
+            isEntertainment: false, requestedTransport: nil, transportFallback: false,
+            identity: identity, v2CapableLightIDs: [])   // v1-only room
+
+        edit(candle, on: a, paramID: "brightness", value: 55)
+        edit(candle, on: a, paramID: "warmth", value: 300)
+
+        await vm.testFlushPendingParamSends(for: identity.targetKey)
+        await drainStudioMailbox(bridgeID: "bridge-a", roomID: "room-a")
+
+        XCTAssertEqual(spy.groupedEffectPuts.count, 1,
+                       "one PUT carrying every grouped field the window changed")
+        XCTAssertEqual(spy.groupedEffectPuts.first?.brightness, 55)
+        XCTAssertEqual(spy.groupedEffectPuts.first?.mirek, 300)
+        XCTAssertTrue(spy.v2Puts.isEmpty, "there is no v2-capable light to address")
+    }
+
+    /// A window whose instance was superseded between the last commit and the
+    /// send reaches the bridge not at all.
+    func testACoalescedWindowIsFencedOnTheCapturedIdentity() async {
+        let spy = WiringSpyClient(bridgeID: "bridge-a", bridgeName: "Bridge A",
+                                  ip: "192.0.2.1", token: "spy-token")
+        orchestrator.injectForTesting(clients: ["bridge-a": spy])
+
+        let a = room("room-a")
+        let candle = vm.effectCards.first { $0.id == "candle" }!
+        let identity = vm.installRunningIdentity(
+            room: a, card: candle, execution: .bridgeNative(effect: "candle"))
+        vm.runningEffects[StudioSelectionKey(room: a)] = RunningEffect(
+            cardID: candle.id, card: candle, room: a, lightIDs: ["L1"],
+            isEntertainment: false, requestedTransport: nil, transportFallback: false,
+            identity: identity, v2CapableLightIDs: ["L1"])
+
+        edit(candle, on: a, paramID: "speed", value: 80)
+        vm.rekeyRunningInstance(at: StudioSelectionKey(room: a), reason: .transportChanged)
+
+        await vm.testFlushPendingParamSends(for: identity.targetKey)
+        await drainStudioMailbox(bridgeID: "bridge-a", roomID: "room-a")
+
+        XCTAssertTrue(spy.v2Puts.isEmpty,
+                      "the rekey retired the window; nothing authored before it may land")
+    }
+
+
+    // ── Cross-instance leak: a running set must be COMPLETE ─────
+
+    /// Two rooms run the same card. Editing room A's speed must not move room
+    /// B's.
+    ///
+    /// It did. `live(for:)` layers an instance's own values over the card's
+    /// CURRENT defaults, and defaults track LAST-USED — so an instance started
+    /// while the defaults held no `speed` had no entry of its own, and every
+    /// later read fell through to whatever the OTHER instance had since
+    /// written into the defaults. Independence was an accident of which room
+    /// happened to be edited first.
+    func testEditingOneInstanceDoesNotMoveAnotherThroughTheSharedDefaults() {
+        let card = partyCard()
+        let catalogSpeed = card.params.first { $0.id == "speed" }!.defaultValue
+        // Deliberately NO persisted defaults: this is the state the leak needed.
+        vm.valueScopes.clearDefaults(forCard: card.id)
+
+        let a = room("room-a")
+        let b = room("room-b")
+        startRunning(card, on: a)
+        startRunning(card, on: b)
+
+        edit(card, on: a, paramID: "speed", value: 91)
+
+        XCTAssertEqual(displayedSpeed(card, on: a), 91, "room A holds its own edit")
+        XCTAssertEqual(displayedSpeed(card, on: b), catalogSpeed, """
+            room B never changed: its running set was materialized at start, so \
+            it cannot fall through to defaults room A has since moved
+            """)
+    }
+
+    /// The reset instance keeps its own floor. Resetting room A and then
+    /// editing room B must leave A exactly where the reset put it.
+    ///
+    /// `reset` used to write `defaults(forCard:)` INTO the running set, which
+    /// re-attached the reset instance to the shared dictionary the reset had
+    /// just cleared — so the very next edit anywhere else on that card pulled
+    /// the reset instance along with it. The leak, re-opened by the one
+    /// operation whose whole purpose is to end it.
+    func testResettingOneInstanceLeavesItImmuneToAnotherInstancesLaterEdits() async {
+        let card = partyCard()
+        let catalogSpeed = card.params.first { $0.id == "speed" }!.defaultValue
+        let a = room("room-a")
+        let b = room("room-b")
+        startRunning(card, on: a)
+        startRunning(card, on: b)
+        edit(card, on: a, paramID: "speed", value: 30)
+
+        vm.selectedRoom = a
+        await vm.resetParams(for: card)
+        XCTAssertEqual(displayedSpeed(card, on: a), catalogSpeed,
+                       "the reset instance is back at the catalog default")
+
+        edit(card, on: b, paramID: "speed", value: 77)
+
+        XCTAssertEqual(displayedSpeed(card, on: a), catalogSpeed, """
+            room B's edit wrote the card's persisted defaults; a reset instance \
+            that reads them live would follow it
+            """)
+        XCTAssertEqual(displayedSpeed(card, on: b), 77, "…and room B holds its own")
+    }
+
+    /// An instance's floor is the defaults as they were WHEN IT STARTED. A
+    /// later write to the card's persisted defaults — another instance's edit,
+    /// an Apply Current Look, a Preview Live restore — cannot move it.
+    func testAnInstancesFloorIsFrozenAtStartSoLaterDefaultWritesCannotMoveIt() {
+        let card = partyCard()
+        vm.valueScopes.setDefaults(CustomizationValueSet(numbers: ["speed": 40]),
+                                   forCard: card.id)
+        let a = room("room-a")
+        startRunning(card, on: a)
+        XCTAssertEqual(displayedSpeed(card, on: a), 40,
+                       "the instance starts from the defaults as they stood")
+
+        // An idle selection makes a one-shot write a defaults-only write.
+        vm.selectedRoom = room("room-idle")
+        vm.commitParam(cardID: card.id, paramID: "speed", value: 95)
+
+        XCTAssertEqual(vm.valueScopes.defaults(forCard: card.id).numbers["speed"], 95,
+                       "the card's next-start value moved")
+        XCTAssertEqual(displayedSpeed(card, on: a), 40, """
+            …and the RUNNING instance did not: it reads the base frozen at its \
+            own start, never the dictionary everything else keeps writing
+            """)
+    }
+
+    // ── What a copy of a live set may contain ───────────────────
+
+    /// "Apply Current Look" copies the source's live set into the card's
+    /// persisted defaults. It must copy only what that instance ACTUALLY
+    /// holds.
+    ///
+    /// A running set materialized with every catalog parameter made this copy
+    /// write a stored value for every control the user never touched — and the
+    /// apply-time warmth sentinel is exactly "a stored default exists ⇒ the
+    /// user set it", so from then on every bridge-native start shipped a mirek
+    /// nobody chose.
+    func testApplyCurrentLookCopiesOnlyWhatTheInstanceActuallyHolds() {
+        let candle = vm.effectCards.first { $0.id == "candle" }!
+        vm.valueScopes.clearDefaults(forCard: candle.id)
+        let a = room("room-a")
+        startRunning(candle, on: a)
+        edit(candle, on: a, paramID: "speed", value: 80)
+        // The selection parks on an idle room, so the source is unambiguous.
+        vm.selectedRoom = room("room-idle")
+
+        XCTAssertEqual(vm.seedApplyCurrentLook()?.id, "candle",
+                       "the only active target is the source")
+
+        let defaults = vm.valueScopes.defaults(forCard: candle.id)
+        XCTAssertEqual(defaults.numbers["speed"], 80, "what the user set is copied")
+        XCTAssertNil(defaults.numbers["warmth"], """
+            …and what they never touched is NOT: a stored warmth is the sentinel \
+            for 'the user chose a colour temperature', and inventing one makes \
+            every start of this card fight the firmware effect with a mirek
+            """)
+        XCTAssertNil(defaults.numbers["brightness"],
+                     "…the same goes for every other untouched control")
+        XCTAssertNil(defaults.numbers["transition"])
+    }
+
+    /// …and copying it must not DELETE the defaults it is SILENT about (H1).
+    ///
+    /// A running set is sparse own-values over a base frozen at start, so it
+    /// says nothing about a default written after that instant — which is
+    /// exactly what the look browser's setup sliders write while another room
+    /// runs the card. `setDefaults` replaces the whole dictionary, so seeding
+    /// it with the live set raw ERASED them: the user moved a setup slider,
+    /// tapped Apply Current Look on an idle room, and the slider was back to
+    /// the catalog default with nothing said.
+    func testApplyCurrentLookDoesNotDeleteDefaultsWrittenAfterTheInstanceStarted() {
+        let candle = vm.effectCards.first { $0.id == "candle" }!
+        vm.valueScopes.clearDefaults(forCard: candle.id)
+        let a = room("room-a")
+        startRunning(candle, on: a)
+        edit(candle, on: a, paramID: "speed", value: 80)
+
+        // The look browser's setup sliders on an IDLE room: defaults-only
+        // writes, landing AFTER room A's instance froze its base. One of them
+        // is a control the instance also holds (speed), one is a control it
+        // has never had an opinion about (brightness).
+        vm.selectedRoom = room("room-idle")
+        vm.commitParam(cardID: candle.id, paramID: "speed", value: 5)
+        vm.commitParam(cardID: candle.id, paramID: "brightness", value: 42)
+
+        XCTAssertEqual(vm.seedApplyCurrentLook()?.id, "candle",
+                       "the only active target is the source")
+
+        let defaults = vm.valueScopes.defaults(forCard: candle.id)
+        XCTAssertEqual(defaults.numbers["speed"], 80, """
+            copy-once still WINS for everything the instance actually holds — \
+            the later default write does not survive on that control
+            """)
+        XCTAssertEqual(defaults.numbers["brightness"], 42, """
+            …but a default this instance never had an opinion about is not \
+            destroyed by copying one that it did
+            """)
+        XCTAssertNil(defaults.numbers["warmth"],
+                     "…and layering still invents nothing")
+    }
+
+    // ── Apply seeds from the room it is STARTING ON ─────────────
+
+    /// An apply that names a room other than the selected one must seed from
+    /// the card's persisted defaults, not from the SELECTED room's live
+    /// instance.
+    ///
+    /// `paramValue`/`paramColor` are selection-aware, so a restore or an
+    /// "Apply Current Look" onto room A while room B was on screen running the
+    /// same card seeded A's firmware effect from B's live values.
+    func testApplyingToAnotherRoomSeedsFromDefaultsNotTheSelectedRoomsInstance() async {
+        let spy = WiringSpyClient(bridgeID: "bridge-a", bridgeName: "Bridge A",
+                                  ip: "192.0.2.1", token: "spy-token")
+        orchestrator.injectForTesting(clients: ["bridge-a": spy])
+
+        let a = room("room-a")
+        let b = room("room-b")
+        let candle = vm.effectCards.first { $0.id == "candle" }!
+
+        // Room A runs Candle at brightness 20 — a LIVE value on that instance.
+        startRunning(candle, on: a)
+        edit(candle, on: a, paramID: "brightness", value: 20)
+        // The card's persisted defaults are moved elsewhere, from an idle
+        // selection where a one-shot write is a defaults-only write.
+        vm.selectedRoom = b
+        vm.commitParam(cardID: candle.id, paramID: "brightness", value: 70)
+        // …and the selection goes back to A, the room whose live values the
+        // selection-aware accessors would answer with.
+        vm.selectedRoom = a
+
+        await vm.apply(candle, roomOverride: b, preferEntertainmentOverride: nil)
+
+        let started = spy.groupedStatePuts.first { $0.id == "gl-room-b" }
+        XCTAssertEqual(started?.brightness, 70, """
+            the new instance on room B starts from the card's next-start \
+            defaults — room A's live 20 belongs to room A's run alone
+            """)
+    }
+
+    // ── One grouped PUT cannot carry both colour fields ─────────
+
+    /// `color` and `color_temperature` are mutually exclusive in one CLIP
+    /// grouped body: the bridge rejects the whole PUT, `try?` swallows it, and
+    /// the brightness travelling in the same window is lost with it. Coalescing
+    /// them into one request turned a working pair of PUTs into a silent
+    /// no-op.
+    func testColourAndWarmthInOneWindowTravelAsSeparateGroupedPuts() async throws {
+        let spy = WiringSpyClient(bridgeID: "bridge-a", bridgeName: "Bridge A",
+                                  ip: "192.0.2.1", token: "spy-token")
+        orchestrator.injectForTesting(clients: ["bridge-a": spy])
+
+        let a = room("room-a")
+        let candle = vm.effectCards.first { $0.id == "candle" }!
+        let identity = vm.installRunningIdentity(
+            room: a, card: candle, execution: .bridgeNative(effect: "candle"))
+        vm.runningEffects[StudioSelectionKey(room: a)] = RunningEffect(
+            cardID: candle.id, card: candle, room: a, lightIDs: ["L1"],
+            isEntertainment: false, requestedTransport: nil, transportFallback: false,
+            identity: identity, v2CapableLightIDs: [])   // v1-only: grouped fallbacks
+
+        vm.selectedRoom = a
+        vm.commitParam(cardID: candle.id, paramID: "brightness", value: 55)
+        vm.commitParam(cardID: candle.id, paramID: "warmth", value: 300)
+        vm.commitColorParam(cardID: candle.id, paramID: "base_color", color: .green)
+
+        await vm.testFlushPendingParamSends(for: identity.targetKey)
+        await drainStudioMailbox(bridgeID: "bridge-a", roomID: "room-a")
+
+        XCTAssertEqual(spy.groupedEffectPuts.count, 2, """
+            the exclusive pair travels as two requests — one body carrying both \
+            is rejected whole, taking the brightness down with it
+            """)
+        for put in spy.groupedEffectPuts {
+            XCTAssertFalse(put.xy != nil && put.mirek != nil,
+                           "no single body may carry colour AND colour temperature")
+        }
+        XCTAssertEqual(spy.groupedEffectPuts.compactMap(\.brightness), [55],
+                       "the brightness in the window still reaches the bridge exactly once")
+        XCTAssertEqual(spy.groupedEffectPuts.compactMap(\.mirek), [300], "…and so does warmth")
+        XCTAssertEqual(spy.groupedEffectPuts.filter { $0.xy != nil }.count, 1,
+                       "…and so does the colour")
+    }
+
+    /// The two PUTs must go out in COMMIT ORDER: whichever of the exclusive
+    /// pair the user chose LAST is the one the room ends up showing.
+    ///
+    /// The emit order was fixed (xy, then mirek), so a warmth value the window
+    /// merely carried — set earlier in the same drag, or carried forward from a
+    /// dropped in-flight window — overwrote the colour the user had just
+    /// picked. The colour was in the scopes, in the defaults, and on the
+    /// screen; it was simply not what the lights were doing.
+    func testTheExclusivePairIsEmittedInCommitOrderWarmthThenColour() async throws {
+        let spy = WiringSpyClient(bridgeID: "bridge-a", bridgeName: "Bridge A",
+                                  ip: "192.0.2.1", token: "spy-token")
+        orchestrator.injectForTesting(clients: ["bridge-a": spy])
+        let a = room("room-a")
+        let candle = vm.effectCards.first { $0.id == "candle" }!
+        let identity = installV1OnlyCandle(candle, on: a)
+
+        vm.selectedRoom = a
+        vm.commitParam(cardID: candle.id, paramID: "warmth", value: 300)
+        vm.commitColorParam(cardID: candle.id, paramID: "base_color", color: .green)
+
+        await vm.testFlushPendingParamSends(for: identity.targetKey)
+        await drainStudioMailbox(bridgeID: "bridge-a", roomID: "room-a")
+
+        XCTAssertEqual(spy.groupedEffectPuts.count, 2)
+        XCTAssertNotNil(spy.groupedEffectPuts.first?.mirek,
+                        "the OLDER field goes first, where it can be overwritten")
+        XCTAssertNotNil(spy.groupedEffectPuts.last?.xy, """
+            the colour was chosen last, so it is the one that lands last and \
+            the one the room is actually left showing
+            """)
+        XCTAssertNil(spy.groupedEffectPuts.last?.mirek,
+                     "no single body may carry colour AND colour temperature")
+    }
+
+    /// …and the mirror image: warmth chosen after a colour must land second.
+    func testTheExclusivePairIsEmittedInCommitOrderColourThenWarmth() async throws {
+        let spy = WiringSpyClient(bridgeID: "bridge-a", bridgeName: "Bridge A",
+                                  ip: "192.0.2.1", token: "spy-token")
+        orchestrator.injectForTesting(clients: ["bridge-a": spy])
+        let a = room("room-a")
+        let candle = vm.effectCards.first { $0.id == "candle" }!
+        let identity = installV1OnlyCandle(candle, on: a)
+
+        vm.selectedRoom = a
+        vm.commitColorParam(cardID: candle.id, paramID: "base_color", color: .green)
+        vm.commitParam(cardID: candle.id, paramID: "warmth", value: 300)
+
+        await vm.testFlushPendingParamSends(for: identity.targetKey)
+        await drainStudioMailbox(bridgeID: "bridge-a", roomID: "room-a")
+
+        XCTAssertEqual(spy.groupedEffectPuts.count, 2)
+        XCTAssertNotNil(spy.groupedEffectPuts.first?.xy)
+        XCTAssertEqual(spy.groupedEffectPuts.last?.mirek, 300,
+                       "warmth was chosen last, so warmth wins on the wall")
+        XCTAssertNil(spy.groupedEffectPuts.last?.xy)
+    }
+
+    // ── …and one effects_v2 body cannot carry them either ───────
+
+    /// The v2 path is the PREFERRED one for every bridge-native look on a
+    /// v2-capable light, and `EffectsV2Body.dictionary()` emits
+    /// `parameters.color` and `parameters.color_temperature` out of ONE body.
+    /// The bridge rejects a body carrying both, and `gate.send(retry: false)`
+    /// swallows the rejection — so a window that changed colour AND warmth
+    /// lost the colour, the warmth AND the speed riding with them, silently.
+    ///
+    /// Only the LATER-committed member travels, exactly as the grouped path's
+    /// second PUT is the one that wins on the wall.
+    func testTheV2BodyCarriesOnlyTheLaterCommittedMemberOfTheExclusivePair() async throws {
+        let spy = WiringSpyClient(bridgeID: "bridge-a", bridgeName: "Bridge A",
+                                  ip: "192.0.2.1", token: "spy-token")
+        orchestrator.injectForTesting(clients: ["bridge-a": spy])
+        let a = room("room-a")
+        let candle = vm.effectCards.first { $0.id == "candle" }!
+        let identity = installV2Candle(candle, on: a)
+
+        vm.selectedRoom = a
+        vm.commitColorParam(cardID: candle.id, paramID: "base_color", color: .green)
+        vm.commitParam(cardID: candle.id, paramID: "warmth", value: 300)
+        vm.commitParam(cardID: candle.id, paramID: "speed", value: 80)
+
+        await vm.testFlushPendingParamSends(for: identity.targetKey)
+        await drainStudioMailbox(bridgeID: "bridge-a", roomID: "room-a")
+
+        XCTAssertEqual(spy.v2Puts.count, 1, "one body per v2-capable light")
+        let params = try XCTUnwrap(spy.v2Puts.first?.body["parameters"] as? [String: Any])
+        XCTAssertNil(params["color"], """
+            the colour was committed FIRST, so it is the one dropped — a body \
+            carrying both is rejected whole and nothing lands at all
+            """)
+        let temperature = try XCTUnwrap(params["color_temperature"] as? [String: Any])
+        XCTAssertEqual(temperature["mirek"] as? Int, 300,
+                       "the later-committed member is the one that travels")
+        XCTAssertEqual(params["speed"] as? Double, 0.8, """
+            …and the speed riding in the same window survives, which the \
+            swallowed rejection used to take down with it
+            """)
+    }
+
+    /// …and the mirror image: a colour picked after a warmth drag is the one
+    /// that reaches the lights.
+    func testTheV2BodyKeepsTheColourWhenTheColourWasCommittedLast() async throws {
+        let spy = WiringSpyClient(bridgeID: "bridge-a", bridgeName: "Bridge A",
+                                  ip: "192.0.2.1", token: "spy-token")
+        orchestrator.injectForTesting(clients: ["bridge-a": spy])
+        let a = room("room-a")
+        let candle = vm.effectCards.first { $0.id == "candle" }!
+        let identity = installV2Candle(candle, on: a)
+
+        vm.selectedRoom = a
+        vm.commitParam(cardID: candle.id, paramID: "warmth", value: 300)
+        vm.commitColorParam(cardID: candle.id, paramID: "base_color", color: .green)
+        vm.commitParam(cardID: candle.id, paramID: "speed", value: 80)
+
+        await vm.testFlushPendingParamSends(for: identity.targetKey)
+        await drainStudioMailbox(bridgeID: "bridge-a", roomID: "room-a")
+
+        XCTAssertEqual(spy.v2Puts.count, 1)
+        let params = try XCTUnwrap(spy.v2Puts.first?.body["parameters"] as? [String: Any])
+        XCTAssertNil(params["color_temperature"],
+                     "warmth was committed first, so warmth is the one dropped")
+        XCTAssertNotNil(params["color"], "the colour the user picked last is what travels")
+        XCTAssertEqual(params["speed"] as? Double, 0.8)
+    }
+
+    /// A v2-capable bridge-native look on one light, for the exclusive-pair
+    /// tests — the PREFERRED routing, where the pair has no second PUT to fall
+    /// back on.
+    private func installV2Candle(_ card: StudioCard,
+                                 on target: RoomDisplayItem) -> RunningLookIdentity {
+        let identity = vm.installRunningIdentity(
+            room: target, card: card, execution: .bridgeNative(effect: "candle"))
+        vm.runningEffects[StudioSelectionKey(room: target)] = RunningEffect(
+            cardID: card.id, card: card, room: target, lightIDs: ["L1"],
+            isEntertainment: false, requestedTransport: nil, transportFallback: false,
+            identity: identity, v2CapableLightIDs: ["L1"])
+        return identity
+    }
+
+    // ── A dropped in-flight window is carried, not lost ─────────
+
+    /// `RestSender` keeps a latest-wins mailbox per scope, so the closure one
+    /// window enqueued can be DROPPED for the next one — and that window's
+    /// fields were already removed from `pendingParamSends` when it was
+    /// enqueued. Without the carry, they are simply gone: the user's
+    /// brightness never reaches the bridge and nothing in the app knows.
+    ///
+    /// The in-flight window is installed directly rather than raced into
+    /// existence: whether the mailbox drops a given closure depends on when its
+    /// flush task is scheduled, and a test that has to win that race is a test
+    /// that goes flaky. What is under test is the MERGE, and this is exactly
+    /// the state the drop leaves behind.
+    func testANewWindowCarriesTheFieldsOfAnInFlightWindowTheMailboxMayDrop() async throws {
+        let spy = WiringSpyClient(bridgeID: "bridge-a", bridgeName: "Bridge A",
+                                  ip: "192.0.2.1", token: "spy-token")
+        orchestrator.injectForTesting(clients: ["bridge-a": spy])
+        let a = room("room-a")
+        let candle = vm.effectCards.first { $0.id == "candle" }!
+        let identity = installV1OnlyCandle(candle, on: a)
+        vm.selectedRoom = a
+
+        // W1: brightness, enqueued and now in flight.
+        let session = try XCTUnwrap(vm.beginParamEdit(cardID: candle.id, paramID: "brightness"))
+        vm.inFlightParamSends[identity.targetKey] = PendingStudioSend(
+            session: session, numbers: ["brightness": 55], colors: [:],
+            lastColourLikeCommit: nil)
+
+        // W2: a newer window on the same target, whose enqueue drops W1's
+        // closure before it ever ran.
+        vm.commitParam(cardID: candle.id, paramID: "warmth", value: 300)
+
+        let window = try XCTUnwrap(vm.pendingParamSends[identity.targetKey])
+        XCTAssertEqual(window.numbers["brightness"], 55,
+                       "W1's field is carried into W2 rather than dropped with its closure")
+        XCTAssertEqual(window.numbers["warmth"], 300)
+
+        await vm.testFlushPendingParamSends(for: identity.targetKey)
+        await drainStudioMailbox(bridgeID: "bridge-a", roomID: "room-a")
+
+        XCTAssertEqual(spy.groupedEffectPuts.compactMap(\.brightness), [55],
+                       "the carried field reaches the bridge exactly once")
+        XCTAssertEqual(spy.groupedEffectPuts.compactMap(\.mirek), [300])
+        XCTAssertNil(vm.inFlightParamSends[identity.targetKey],
+                     "the closure clears the in-flight record when it actually runs")
+    }
+
+    /// …and the closure that DOES run must clear only its OWN record.
+    ///
+    /// THE INTERLEAVING (fifth review round). The clear was unkeyed — the
+    /// closure's first statement nilled `inFlightParamSends[targetKey]`
+    /// whatever was sitting there. But the mailbox runs closures LATE: W1 can
+    /// still be pending behind a busy `RestSender` when W2 merges it, records
+    /// ITSELF as the in-flight window and suspends on its own enqueue. W1's
+    /// closure, dequeued in that suspension, erased W2's record — so W3 then
+    /// carried none of W2's fields forward while its enqueue replaced W2's
+    /// still-pending closure. W2's values were in the scopes, in the persisted
+    /// defaults and on the screen, and reached the bridge never.
+    ///
+    /// `RunningLookIdentity` cannot tell these apart: W1 and W2 are two windows
+    /// on ONE running instance and carry the same identity. The window's own
+    /// token can.
+    ///
+    /// Deterministic, not raced: the sender is held busy by a gate closure on
+    /// another scope, so W1 is provably still pending when W2's record is
+    /// installed, and the drain sentinel is FIFO-ordered behind W1.
+    func testALateWindowsClosureClearsOnlyItsOwnInFlightRecord() async throws {
+        let spy = WiringSpyClient(bridgeID: "bridge-a", bridgeName: "Bridge A",
+                                  ip: "192.0.2.1", token: "spy-token")
+        orchestrator.injectForTesting(clients: ["bridge-a": spy])
+        let a = room("room-a")
+        let candle = vm.effectCards.first { $0.id == "candle" }!
+        let identity = installV1OnlyCandle(candle, on: a)
+        vm.selectedRoom = a
+
+        // Occupy the sender on ANOTHER scope, so anything enqueued for
+        // room-a/.studio sits pending until this is released.
+        let gate = MailboxGate()
+        let sender = orchestrator.testRestSender(for: "bridge-a")
+        Task { await sender.enqueue(scope: RestScope(roomID: "gate-room", owner: .studio)) { _ in
+            await gate.hold()
+        } }
+        await gate.waitUntilHeld()
+
+        // W1 fires: it records itself in flight and its closure is enqueued —
+        // and stays pending, because the sender is held.
+        vm.commitParam(cardID: candle.id, paramID: "brightness", value: 55)
+        await vm.testFlushPendingParamSends(for: identity.targetKey)
+        let w1 = try XCTUnwrap(vm.inFlightParamSends[identity.targetKey])
+        XCTAssertTrue(spy.groupedEffectPuts.isEmpty, "W1 has not reached the bridge yet")
+
+        // W2 takes the in-flight slot, exactly as `performBridgeSend` does the
+        // instant before it suspends on its own enqueue. Installed directly for
+        // the same reason the drop-carry test installs one: what is under test
+        // is the CLEAR, not which closure the mailbox happened to schedule.
+        let session = try XCTUnwrap(vm.beginParamEdit(cardID: candle.id, paramID: "warmth"))
+        let w2 = PendingStudioSend(session: session, numbers: ["warmth": 300],
+                                   colors: [:], lastColourLikeCommit: .mirek)
+        vm.inFlightParamSends[identity.targetKey] = w2
+        XCTAssertNotEqual(w1.token, w2.token, "two windows, two tokens")
+        XCTAssertEqual(w1.session.identity, w2.session.identity,
+                       "…on ONE running instance, which is why identity cannot separate them")
+
+        await gate.release()
+        await drainStudioMailbox(bridgeID: "bridge-a", roomID: "room-a")
+
+        XCTAssertEqual(spy.groupedEffectPuts.compactMap(\.brightness), [55],
+                       "W1's closure really did run")
+        XCTAssertEqual(vm.inFlightParamSends[identity.targetKey]?.token, w2.token, """
+            …and left W2's record standing: erasing it is what made the NEXT \
+            window carry none of W2's fields while dropping its closure
+            """)
+    }
+
+    /// A v1-only bridge-native row, so the grouped fallbacks are the path
+    /// under test rather than the per-light `effects_v2` one.
+    @discardableResult
+    private func installV1OnlyCandle(_ card: StudioCard,
+                                     on target: RoomDisplayItem) -> RunningLookIdentity {
+        let identity = vm.installRunningIdentity(
+            room: target, card: card, execution: .bridgeNative(effect: "candle"))
+        vm.runningEffects[StudioSelectionKey(room: target)] = RunningEffect(
+            cardID: card.id, card: card, room: target, lightIDs: ["L1"],
+            isEntertainment: false, requestedTransport: nil, transportFallback: false,
+            identity: identity, v2CapableLightIDs: [])
+        return identity
+    }
+
+    // ── A stop must silence an already-enqueued closure ─────────
+
+    /// `stillCurrent()` is bound to the Studio `RestScope` EPOCH, which only
+    /// the app-driven teardown bumps. For a bridge-native row a closure already
+    /// in the mailbox when Stop landed kept sending `effects_v2` bodies AFTER
+    /// the `no_effect` sweep — re-arming the firmware effect on lights the user
+    /// had just turned off. The identity fence answers for every strategy.
+    func testAStopSilencesAnAlreadyEnqueuedBridgeNativeSend() async {
+        let spy = WiringSpyClient(bridgeID: "bridge-a", bridgeName: "Bridge A",
+                                  ip: "192.0.2.1", token: "spy-token")
+        orchestrator.injectForTesting(clients: ["bridge-a": spy])
+
+        let a = room("room-a")
+        let candle = vm.effectCards.first { $0.id == "candle" }!
+        let identity = vm.installRunningIdentity(
+            room: a, card: candle, execution: .bridgeNative(effect: "candle"))
+        vm.runningEffects[StudioSelectionKey(room: a)] = RunningEffect(
+            cardID: candle.id, card: candle, room: a, lightIDs: ["L1"],
+            isEntertainment: false, requestedTransport: nil, transportFallback: false,
+            identity: identity, v2CapableLightIDs: ["L1"])
+
+        edit(candle, on: a, paramID: "speed", value: 80)
+        // The closure is now IN THE MAILBOX. Everything from here to the drain
+        // is synchronous on the main actor, so it cannot have run yet: the
+        // mailbox's work is `@MainActor`, and this test never suspends.
+        await vm.testFlushPendingParamSends(for: identity.targetKey)
+        vm.stopRunningScopes(forRowAt: StudioSelectionKey(room: a))
+
+        await drainStudioMailbox(bridgeID: "bridge-a", roomID: "room-a")
+
+        XCTAssertTrue(spy.v2Puts.isEmpty, """
+            the row was retired before the closure ran, so not one v2 body may \
+            land — a late one re-arms the firmware effect after the stop swept it
+            """)
+    }
+
+    // ── A superseded failover must not relabel its successor ────
+
+    /// The failover's emit gates on a `.rest` claim its own re-entry set, so it
+    /// proves only that SOMETHING is on REST there. A user who stopped one
+    /// composition and started another across the failover's two long awaits
+    /// would have the SUCCESSOR's row rekeyed and relabelled by the
+    /// predecessor's event. The param box is what tells them apart.
+    func testAFailoverEventNamingAForeignBoxMutatesNothing() throws {
+        let a = room("room-a")
+        let card = compositionCard()
+        let identity = startRunning(card, on: a, isEntertainment: true)
+        vm.testInstallCompositionBox(CompositionParamBox(preset: compositionPreset()),
+                                     at: StudioSelectionKey(room: a))
+
+        // An event from a SUPERSEDED failover: its box is not the one this room
+        // is running now.
+        let foreign = CompositionParamBox(preset: compositionPreset())
+        orchestrator.testEmitStudioRuntimeEvent(
+            .compositionFellBackToREST(bridgeID: "bridge-a", roomID: "room-a",
+                                       boxID: ObjectIdentifier(foreign)))
+
+        let row = try XCTUnwrap(vm.runningEffect(for: a))
+        XCTAssertTrue(row.isEntertainment,
+                      "the successor is streaming; a predecessor's event may not say otherwise")
+        XCTAssertFalse(row.transportFallback)
+        XCTAssertEqual(row.identity, identity, "…and it may not be rekeyed either")
+    }
+
+    // ── A rename replaces the CARD, not the row ─────────────────
+
+    /// Renaming a composition preset rebuilt every matching row from a field
+    /// list — dropping `recovered`, `v2CapableLightIDs` and
+    /// `bridgeNativeOwnership`. A bridge-stored mirror therefore lost its
+    /// manifest: `stopEffect` took the live branch instead of the recovered
+    /// one, live editing became possible on a row with no runtime, and hydrate
+    /// never repaired it because the row still looked live.
+    func testRenamingAPresetKeepsTheRowsIdentityBearingFields() throws {
+        let url = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("rename-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = CompositionStore(fileURL: url, loadsSynchronously: true)
+        vm.injectForTesting(compositionStore: store)
+        var preset = compositionPreset()
+        preset.name = "Aurora Drift"
+        store.save(preset)
+        let card = vm.studioCard(for: preset)
+
+        let a = room("room-a")
+        let identity = startRunning(card, on: a)
+        let manifest = UnifiedOrchestrator.RecoveredBridgeAnimationKey(
+            bridgeID: "bridge-a", manifestID: UUID())
+        let key = StudioSelectionKey(room: a)
+        vm.runningEffects[key]?.recovered = manifest
+        vm.runningEffects[key]?.v2CapableLightIDs = ["L1", "L2"]
+
+        vm.renameCompositionPreset(id: preset.id, to: "Midnight Drift")
+
+        let row = try XCTUnwrap(vm.runningEffects[key])
+        XCTAssertEqual(row.card.name, "Midnight Drift", "the rename shows through")
+        XCTAssertEqual(row.recovered, manifest, """
+            …without losing the manifest that makes Stop route to the bridge \
+            animation instead of a runtime that does not exist
+            """)
+        XCTAssertEqual(row.v2CapableLightIDs, ["L1", "L2"])
+        XCTAssertEqual(row.identity, identity,
+                       "a rename is not a new run — the identity carries over")
+    }
+
+    // ── A same-card restart is not a new target ─────────────────
+
+    /// Re-applying the SAME card on the SAME place (a reset's re-apply, a
+    /// handoff replay, a transport change that goes back through `apply`)
+    /// retires and immediately re-registers ONE target key. The place-level
+    /// belt cleared that key's working memory anyway, so the board jumped back
+    /// to the top and every expansion collapsed for a run that never changed.
+    func testASameCardRestartKeepsTheTargetsWorkingMemory() {
+        let card = partyCard()
+        let a = room("room-a")
+        let identity = startRunning(card, on: a)
+        vm.sessionMemory.update(identity.targetKey) { $0.scrollAnchorID = "colour-section" }
+
+        let restarted = startRunning(card, on: a)
+
+        XCTAssertEqual(restarted.targetKey, identity.targetKey,
+                       "same place, same look, same execution — one target key")
+        XCTAssertNotEqual(restarted, identity,
+                          "…under a new generation, so older writes still lose the fence")
+        XCTAssertEqual(vm.sessionMemory.state(for: restarted.targetKey).scrollAnchorID,
+                       "colour-section", """
+            the working memory describes the PLACE the user is looking at, and \
+            this run is the same one — clearing it scrolls the board out from \
+            under them for nothing
+            """)
+    }
+
+    /// …but a DIFFERENT card taking the place still clears it: that memory
+    /// described another look's controls.
+    func testAReplacementCardClearsTheRetiredTargetsWorkingMemory() {
+        let party = partyCard()
+        let strobe = vm.liveModeCards.first { $0.id == "strobe" }!
+        let a = room("room-a")
+        let first = startRunning(party, on: a)
+        vm.sessionMemory.update(first.targetKey) { $0.identityPanelOpen = true }
+
+        startRunning(strobe, on: a)
+
+        XCTAssertFalse(vm.sessionMemory.state(for: first.targetKey).identityPanelOpen,
+                       "the retired look's UI state must not be handed to its successor")
+    }
+
+    // ── The raw-light cache is FILLED, never clobbered ──────────
+
+    /// `seedRawLightCache` is the "we fetched the whole inventory anyway, do
+    /// not drop it" path used by `apply()`, the coverage refresh and the
+    /// entertainment cache warm. Its contract has always been fill-only — only
+    /// the doc comment enforced it.
+    ///
+    /// It wrote unconditionally, so an apply-time fetch issued BEFORE a
+    /// `loadAll` and answered AFTER it replaced the merged inventory with a
+    /// staler one, and bumped the capability generation so every Studio board
+    /// re-resolved against the worse answer. `replace: true` stays available
+    /// for a caller whose inventory genuinely is the newer truth.
+    func testSeedingTheRawLightCacheFillsAGapButNeverClobbersAFresherInventory() {
+        let fresh = [capabilityLight(id: "L1"), capabilityLight(id: "L2")]
+        let stale = [capabilityLight(id: "L1")]
+
+        XCTAssertTrue(orchestrator.seedRawLightCache(bridgeID: "bridge-a", lights: fresh),
+                      "an empty cache is a gap, and filling it is the whole point")
+        let generationAfterFill = orchestrator.capabilityInventoryGeneration
+
+        XCTAssertFalse(orchestrator.seedRawLightCache(bridgeID: "bridge-a", lights: stale),
+                       "a late fetch may not overwrite an inventory that is already there")
+        XCTAssertEqual(orchestrator.cachedRawLights(for: "bridge-a")?.map(\.id), ["L1", "L2"])
+        XCTAssertEqual(orchestrator.capabilityInventoryGeneration, generationAfterFill, """
+            …and a no-op must not bump the generation either: it is an \
+            observation trigger, and firing it re-renders every board for nothing
+            """)
+
+        XCTAssertTrue(orchestrator.seedRawLightCache(bridgeID: "bridge-a", lights: stale,
+                                                     replace: true),
+                      "an explicit replace is still available for a newer truth")
+        XCTAssertEqual(orchestrator.cachedRawLights(for: "bridge-a")?.map(\.id), ["L1"])
+        XCTAssertGreaterThan(orchestrator.capabilityInventoryGeneration, generationAfterFill,
+                             "…and that one DID write, so the boards re-resolve")
+    }
+
+    private func capabilityLight(id: String) -> HueLight {
+        HueLight(
+            id: id,
+            metadata: LightMetadata(name: id, archetype: nil),
+            on: OnState(on: true),
+            dimming: nil, color: nil, color_temperature: nil, owner: nil,
+            effects: nil, effects_v2: nil, timed_effects: nil, gradient: nil)
+    }
+
+    // ── effects_v2 coverage is EFFECT-SPECIFIC while a look runs ─
+
+    /// The board narrows `base_color`/`warmth`/`speed` to the snapshot's
+    /// `effectsV2` coverage, and the live send fans out to exactly the lights
+    /// whose `effects_v2.action.effect_values` name THIS effect. Reporting
+    /// generic v2 support instead made a mixed room read 3 of 3 while Cosmos
+    /// ran on one light and the other two never moved.
+    func testEffectsV2CoverageIsSpecificToTheRunningEffect() throws {
+        let a = room("room-a")
+        let cosmos = try XCTUnwrap(vm.effectCards.first { $0.id == "cosmos" })
+        // One light can run cosmos and does colour; the other two run only
+        // candle/fire and are CT-only white bulbs.
+        orchestrator.seedRawLightCache(bridgeID: "bridge-a", lights: [
+            v2Light(id: "L1", effects: ["cosmos", "candle"], color: true, ct: true),
+            v2Light(id: "L2", effects: ["candle", "fire"], color: false, ct: true),
+            v2Light(id: "L3", effects: ["candle", "fire"], color: false, ct: true)
+        ])
+        let identity = vm.installRunningIdentity(
+            room: a, card: cosmos, execution: .bridgeNative(effect: "cosmos"))
+        let effect = RunningEffect(
+            cardID: cosmos.id, card: cosmos, room: a, lightIDs: ["L1", "L2", "L3"],
+            isEntertainment: false, requestedTransport: nil, transportFallback: false,
+            identity: identity, v2CapableLightIDs: ["L1"])
+
+        let snapshot = vm.targetSnapshot(for: effect)
+
+        XCTAssertEqual(snapshot.totalLights, 3)
+        XCTAssertEqual(snapshot.effectsV2.supported, 1, """
+            all three lights support effects_v2 GENERICALLY, but only one lists \
+            cosmos — and the per-light send reaches only that one
+            """)
+        XCTAssertEqual(snapshot.effectsV2.total, 3)
+        XCTAssertEqual(snapshot.color.supported, 1,
+                       "colour coverage is unchanged: it measures the room")
+        XCTAssertEqual(snapshot.colorTemperature.supported, 3)
+        XCTAssertEqual(snapshot.effectV2ColorLights, 1, """
+            the TRUE intersection — a caller narrowing a colour control must not \
+            have to take min(v2, colour), which overstates a partial overlap
+            """)
+        XCTAssertEqual(snapshot.effectV2CTLights, 1, """
+            …and likewise for warmth: three lights do CT, but only one of them \
+            takes a cosmos effects_v2 body
+            """)
+    }
+
+    /// The intersection counts describe a read that HAPPENED. A target whose
+    /// lights could not be read reports unknown, not zero.
+    func testAnUnreadableTargetReportsNoEffectV2IntersectionAtAll() throws {
+        let a = room("room-a")
+        let cosmos = try XCTUnwrap(vm.effectCards.first { $0.id == "cosmos" })
+        let identity = vm.installRunningIdentity(
+            room: a, card: cosmos, execution: .bridgeNative(effect: "cosmos"))
+        let effect = RunningEffect(
+            cardID: cosmos.id, card: cosmos, room: a, lightIDs: ["L1", "L2", "L3"],
+            isEntertainment: false, requestedTransport: nil, transportFallback: false,
+            identity: identity, v2CapableLightIDs: [])
+
+        let snapshot = vm.targetSnapshot(for: effect)
+
+        XCTAssertEqual(snapshot.effectsV2.evidence, .unreadable,
+                       "no cached lights: the answer is unknown, not unsupported")
+        XCTAssertNil(snapshot.effectV2ColorLights,
+                     "an intersection of two sets we could not read is not zero")
+        XCTAssertNil(snapshot.effectV2CTLights)
+    }
+
+    /// A light with a v2 capability list, colour and CT as asked for.
+    private func v2Light(id: String, effects: [String],
+                         color: Bool, ct: Bool) -> HueLight {
+        HueLight(
+            id: id,
+            metadata: LightMetadata(name: id, archetype: nil),
+            on: OnState(on: true),
+            dimming: DimmingState(brightness: 100),
+            color: color ? LightColor(xy: CIExy(x: 0.4, y: 0.4), gamut_type: "C") : nil,
+            color_temperature: ct
+                ? LightColorTemp(mirek: 300,
+                                 mirek_schema: MirekSchema(mirek_minimum: 153,
+                                                           mirek_maximum: 500),
+                                 mirek_valid: true)
+                : nil,
+            owner: nil,
+            effects: nil,
+            effects_v2: LightEffectsV2(action: LightEffectsV2.Action(effect_values: effects),
+                                       status: nil),
+            timed_effects: nil, gradient: nil)
+    }
+
+    // ── The orchestrator never calls back into Studio's stop ────
+
+    /// The engine start/stop paths must never reach `studioStopHandler` or
+    /// `requestNowPlayingStop`: Studio owns row teardown, and a callback from
+    /// inside a start would re-enter the lifecycle chain it is already running
+    /// under. This was a prose pin; it is a checked one now.
+    func testEngineStartAndStopPathsNeverCallBackIntoStudiosStop() throws {
+        let code = try productionCode("HueHome/Core/Network/UnifiedOrchestrator.swift")
+        // Transitively: every body the start/stop paths reach must obey the
+        // same rule. A callback three frames down the stack re-enters the
+        // lifecycle chain just as fatally as one in `startStudioMode` itself,
+        // and these are the bodies those five actually call into — the
+        // Entertainment prepare/commit pair, the cache warm they both run, the
+        // two consent resolutions, and the composition Entertainment loop with
+        // its REST failover.
+        for signature in ["func startStudioMode(",
+                          "func stopStudioMode(",
+                          "func stopAppDrivenStudioEffect(",
+                          "func startCompositionMode(",
+                          "func stopCompositionMode(",
+                          "func prepareEntertainment(",
+                          "func verifyAndCommitEntertainment(",
+                          "func warmEntertainmentCaches(",
+                          "func resolveForeignTakeover(",
+                          "func resolveStudioHandoff(",
+                          "func runCompositionEntertainment(",
+                          "func failCompositionEntertainmentToREST(",
+                          "func performCompositionPrime("] {
+            let body = try XCTUnwrap(functionBody(code, startingWith: signature),
+                                     "\(signature) must be findable")
+            for needle in ["requestNowPlayingStop(", "studioStopHandler"] {
+                XCTAssertFalse(body.contains { $0.contains(needle) },
+                               "\(signature) must not reach \(needle)")
+            }
+        }
+    }
+
+    // ── A superseded failover must not start over its successor ─
+
+    /// The mid-session DTLS→REST failover guards ownership by ROOM ID before
+    /// its awaits, and `stopSession()` is a long one. A successor composition
+    /// started on that same room in the gap re-installs the very id the guard
+    /// reads, so the failover sailed on and called `startCompositionMode` with
+    /// the PREDECESSOR's param box — clobbering the successor's live run. (The
+    /// view model's box fence then correctly declined to relabel the row, which
+    /// left the mirror wrong instead of right.)
+    ///
+    /// Source shape, deliberately: the failover body is private, only reachable
+    /// from a terminally-failed DTLS render task, and a test that could observe
+    /// it would have to stand up the whole streaming stack to watch two long
+    /// awaits interleave. What is checkable — and what actually broke — is that
+    /// the re-check exists and sits BETWEEN the teardown await and the restart.
+    func testTheFailoverRechecksItsGenerationBetweenTheTeardownAndTheRestart() throws {
+        let code = try productionCode("HueHome/Core/Network/UnifiedOrchestrator.swift")
+        let body = try XCTUnwrap(
+            functionBody(code, startingWith: "func failCompositionEntertainmentToREST("),
+            "the failover body must be findable")
+        let joined = body.joined(separator: "\n")
+
+        let stop = try XCTUnwrap(joined.range(of: "stopSession()"),
+                                 "the failover still tears the session down")
+        let recheck = try XCTUnwrap(
+            joined.range(of: "compositionGenerations[playbackKey] == failoverGeneration"),
+            "the exact playback generation captured before the awaits is re-checked")
+        let restart = try XCTUnwrap(joined.range(of: "await startCompositionMode("),
+                                    "the failover still re-enters on REST")
+
+        XCTAssertLessThan(stop.lowerBound, recheck.lowerBound,
+                          "a check before the await proves nothing about the gap")
+        XCTAssertLessThan(recheck.lowerBound, restart.lowerBound, """
+            …and a check after the restart is too late: the successor's run has \
+            already been overwritten by the predecessor's box
+            """)
+        XCTAssertTrue(joined.contains("compositionEntParamBoxes[bridgeID] == nil"), """
+            the second half of the same question: a successor that installed its \
+            own Entertainment box in the gap is not this failover's run either
+            """)
+
+        // …and the value the re-check measures against must be READ BEFORE the
+        // body's first suspension point. A capture after any await is a
+        // capture of the successor's world, and the re-check then compares the
+        // successor to itself and always passes — the guard would be present,
+        // ordered correctly, and completely inert.
+        let capture = try XCTUnwrap(joined.range(of: "let failoverGeneration ="),
+                                    "the generation is captured into a local")
+        let firstAwait = try XCTUnwrap(joined.range(of: "await "),
+                                       "the failover still suspends")
+        XCTAssertLessThan(capture.lowerBound, firstAwait.lowerBound, """
+            the generation must be captured before the body's FIRST await — \
+            after one, it already describes whoever took the bridge
+            """)
+    }
+
+    /// Production source with comment-only lines stripped — a doc comment that
+    /// names a symbol is documentation, not a call site.
+    private func productionCode(_ relativePath: String) throws -> String {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()   // HueHomeTests/
+            .deletingLastPathComponent()   // repo root
+        return try String(contentsOf: repoRoot.appendingPathComponent(relativePath), encoding: .utf8)
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            .joined(separator: "\n")
+    }
+
+    /// The body of a top-level func in a Swift source, by brace depth.
+    private func functionBody(_ source: String, startingWith signature: String) -> [String]? {
+        let lines = source.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        guard let start = lines.firstIndex(where: { $0.contains(signature) }) else { return nil }
+        var depth = 0
+        var started = false
+        var body: [String] = []
+        for line in lines[start...] {
+            for ch in line {
+                if ch == "{" { depth += 1; started = true }
+                if ch == "}" { depth -= 1 }
+            }
+            if started { body.append(line) }
+            if started && depth == 0 { return body }
+        }
+        return nil
+    }
+
+    /// Drain the bridge's Studio mailbox deterministically.
+    ///
+    /// `RestSender` flushes on an unstructured task, so "the write has reached
+    /// the client" cannot be observed by returning from `enqueue`. Instead a
+    /// sentinel is enqueued on a DIFFERENT scope: the sender's cross-scope
+    /// order is FIFO, so the sentinel's closure cannot run until the Studio
+    /// scope's closure has finished. No sleeps, no polling.
+    private func drainStudioMailbox(bridgeID: String, roomID: String) async {
+        let sender = orchestrator.testRestSender(for: bridgeID)
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            let box = ContinuationBox(cont)
+            Task {
+                await sender.enqueue(
+                    scope: RestScope(roomID: "\(roomID)-drain-sentinel", owner: .studio)
+                ) { _ in box.resume() }
+            }
+        }
+    }
+}
+
+/// Holds a `RestSender` busy on demand, so "this closure is still pending"
+/// is a fact the test establishes rather than a race it has to win.
+///
+/// Two handshakes, no timing: `waitUntilHeld` returns once the gate closure is
+/// actually executing inside the sender's flush loop, and `release` lets it
+/// return so the loop moves on to whatever queued behind it.
+private actor MailboxGate {
+    private var heldWaiter: CheckedContinuation<Void, Never>?
+    private var isHeld = false
+    private var releaseWaiter: CheckedContinuation<Void, Never>?
+    private var isReleased = false
+
+    func hold() async {
+        isHeld = true
+        heldWaiter?.resume()
+        heldWaiter = nil
+        guard !isReleased else { return }
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            releaseWaiter = cont
+        }
+    }
+
+    func waitUntilHeld() async {
+        guard !isHeld else { return }
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            heldWaiter = cont
+        }
+    }
+
+    func release() {
+        isReleased = true
+        releaseWaiter?.resume()
+        releaseWaiter = nil
+    }
+}
+
+/// One-shot continuation carrier — the mailbox closure is `@Sendable`, and a
+/// `CheckedContinuation` captured directly would not cross that boundary.
+private final class ContinuationBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cont: CheckedContinuation<Void, Never>?
+    init(_ cont: CheckedContinuation<Void, Never>) { self.cont = cont }
+    func resume() {
+        lock.lock()
+        let pending = cont
+        cont = nil
+        lock.unlock()
+        pending?.resume()
+    }
+}

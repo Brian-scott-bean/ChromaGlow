@@ -7,7 +7,9 @@ globs:
 # Xcode Project File Rules
 
 ## Adding New Files
-When creating a new .swift file, it MUST be added to `HueHome.xcodeproj/project.pbxproj` in 4 places:
+This 4-place recipe applies to the **main `HueHome` app target only** — it is the one classic-group target left. The widget and watch targets use `PBXFileSystemSynchronizedRootGroup`s and self-register new files; do not hand-edit those.
+
+When creating a new .swift file for the main target, it MUST be added to `HueHome.xcodeproj/project.pbxproj` in 4 places:
 
 1. **PBXBuildFile section** — `{isa = PBXBuildFile; fileRef = <REF_ID>; };`
 2. **PBXFileReference section** — `{isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = <path>; sourceTree = "<group>"; };`
@@ -27,5 +29,5 @@ Use 24-character uppercase hex strings for IDs. Generate deterministically from 
 After ANY file change, run:
 ```bash
 PROJ=/Users/brianbean/Desktop/huehome-pro-v0.3.0
-xcodebuild -project "$PROJ/HueHome.xcodeproj" -scheme HueHome -destination 'generic/platform=iOS' build 2>&1 | grep -E 'error:|BUILD SUCCEEDED|BUILD FAILED'
+xcodebuild -project "$PROJ/HueHome.xcodeproj" -scheme "HueHome 1" -destination 'generic/platform=iOS' build 2>&1 | grep -E 'error:|BUILD SUCCEEDED|BUILD FAILED'
 ```
