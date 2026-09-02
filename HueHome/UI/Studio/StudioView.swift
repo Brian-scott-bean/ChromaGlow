@@ -130,7 +130,6 @@ struct StudioView: View {
     @State private var performVM: PerformanceViewModel? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.isTabActive) private var isTabActive
-    @State private var activeCompositionTab: CompositionLayerTab = .palette
     @State private var showCompositionSaveSheet = false
     @State private var compositionSaveName = ""
     @State private var compositionSaveIcon = "sparkles"
@@ -656,7 +655,6 @@ struct StudioView: View {
             StudioCustomizationHost(
                 vm: vm,
                 performVM: $performVM,
-                activeCompositionTab: $activeCompositionTab,
                 activeHarmonyRule: $activeHarmonyRule,
                 editingSwatch: $editingSwatch,
                 onBackToDecks: {

@@ -7,11 +7,20 @@
 // only access levels and parameter plumbing changed.
 //
 // Ownership:
-//   - Panel owns transient editor state (hue-pad drag, prompts, sheets).
-//   - StudioView keeps @State for the pieces it must outlive the panel:
-//     activeCompositionTab / activeHarmonyRule / editingSwatch (bindings),
-//     because the harmony-restore onChange chain and tab persistence run at
-//     StudioView scope even while the mixer tray is closed.
+//   - Panel owns transient editor state (hue-pad drag, prompts).
+//   - The active layer tab is PER-TARGET session working memory
+//     (`TargetWorkingState.activeCompositionTab`, spec §14.4 / plan §24): two
+//     rooms running compositions no longer share one tab, and a stopped
+//     target's tab dies with it. The host hands the binding in.
+//   - StudioView keeps @State for activeHarmonyRule / editingSwatch because the
+//     harmony-restore onChange chain runs at StudioView scope even while the
+//     customization region is closed.
+//
+// One surface (Guard 13): each layer is ONE StageCard holding its essential
+// controls and, directly below them in the same column, its supporting tier
+// (`ComposerSupportingControls`). There is no "Advanced" card and no
+// `.id(tab)` split — the `switch` gives each layer its own structural
+// identity and the whole card lives and dies as one.
 
 import SwiftUI
 import CoreGraphics
@@ -50,10 +59,13 @@ struct SwatchEditItem: Identifiable { let id: Int }
 // MARK: - CompositionEditorPanel
 
 struct CompositionEditorPanel: View {
-    @Environment(UnifiedOrchestrator.self) private var orchestrator
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     let vm: StudioViewModel
+    /// Handed in by the host rather than read from the environment, so the
+    /// panel's body is evaluable outside a SwiftUI graph — the structural
+    /// migration tests walk the evaluated tree (`ComposerConvergenceTests`).
+    let orchestrator: UnifiedOrchestrator
     @Binding var activeCompositionTab: CompositionLayerTab
     @Binding var activeHarmonyRule: HarmonyRule
     @Binding var editingSwatch: SwatchEditItem?
@@ -110,6 +122,11 @@ struct CompositionEditorPanel: View {
             .contentMargins(.horizontal, 12, for: .scrollContent)
             .scrollTargetBehavior(.viewAligned)
 
+            // Each case is a distinct view, so the switch alone gives every
+            // layer its own structural identity — the transition fires on the
+            // swap without an `.id(tab)` that would ALSO have torn down a
+            // knob's in-flight exact-entry draft on every programmatic tab
+            // change (the beat quick-toggle jumps here).
             Group {
                 switch activeCompositionTab {
                 case .palette: compositionPaletteControls
@@ -118,21 +135,21 @@ struct CompositionEditorPanel: View {
                 case .reaction: compositionReactionControls
                 }
             }
-            .id(activeCompositionTab)
             .transition(.opacity.combined(with: .scale(scale: 0.985)))
             .animation(HueAnimation.fast, value: activeCompositionTab)
-
-            // Essentials above, the rest below — in the SAME column. The panel
-            // renders inside Studio's single continuous customization surface, so
-            // "advanced" is a position on the page, not a second surface to open.
-            let advancedCount = ComposerControlCatalog.advancedCount(
-                tab: activeCompositionTab, box: vm.activeCompositionBox)
-            if advancedCount > 0 {
-                StageCard(title: "Advanced") {
-                    ComposerAdvancedControls(vm: vm, tab: activeCompositionTab)
-                }
-            }
         }
+    }
+
+    /// The supporting tier for the active layer, rendered at the bottom of
+    /// that layer's card. A hairline — not a caption — marks where the
+    /// essentials end; there is nothing to tap and nothing to open.
+    @ViewBuilder
+    private func supportingTier(_ tab: CompositionLayerTab) -> some View {
+        Rectangle()
+            .fill(StagePalette.line)
+            .frame(height: 1)
+            .padding(.top, 2)
+        ComposerSupportingControls(vm: vm, orchestrator: orchestrator, tab: tab)
     }
 
     /// One-tap beat enable for the whole composition: flips the Reaction
@@ -266,6 +283,8 @@ struct CompositionEditorPanel: View {
             }
 
             harmonyChipRow
+
+            supportingTier(.palette)
         }
             }
     }
@@ -584,7 +603,7 @@ struct CompositionEditorPanel: View {
 
             // .static ignores speed/forward/spread/offset/mirror entirely —
             // showing them would be dead controls (the engine returns a
-            // fixed phase). Direction and the rest live in Advanced.
+            // fixed phase). Direction and the rest are the supporting tier.
             let pattern = vm.activeCompositionBox?.motion.pattern ?? .cascade
             if pattern != .static {
                 StageSlider(
@@ -610,6 +629,10 @@ struct CompositionEditorPanel: View {
                     .font(.system(size: 11))
                     .foregroundStyle(.white.opacity(0.40))
                     .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            if pattern != .static {
+                supportingTier(.motion)
             }
         }
             }
@@ -660,6 +683,8 @@ struct CompositionEditorPanel: View {
                     range: 0...100
                 )
             }
+
+            supportingTier(.envelope)
         }
             }
     }
@@ -715,6 +740,10 @@ struct CompositionEditorPanel: View {
                     ),
                     range: 0...100
                 )
+            }
+
+            if (vm.activeCompositionBox?.reaction.source ?? .none) != .none {
+                supportingTier(.reaction)
             }
         }
             }

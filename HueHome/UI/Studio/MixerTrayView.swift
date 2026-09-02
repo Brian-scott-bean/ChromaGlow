@@ -40,7 +40,6 @@ struct StudioCustomizationHost: View {
 
     let vm: StudioViewModel
     @Binding var performVM: PerformanceViewModel?
-    @Binding var activeCompositionTab: CompositionLayerTab
     @Binding var activeHarmonyRule: HarmonyRule
     @Binding var editingSwatch: SwatchEditItem?
     /// Return to the card decks. Owned by StudioView (it also owns the
@@ -461,9 +460,15 @@ struct StudioCustomizationHost: View {
                     // a fixed-height box; inline they would be a second vertical
                     // scroller fighting the parent. The ScrollViewReader and the
                     // beat auto-anchor moved up to the host's single surface.
+                    // The layer tab is this TARGET's working memory, not a
+                    // StudioView-wide slot: keyed by the exact running
+                    // identity (bridge + group + kind + card), so the same
+                    // preset on two rooms edits two layers.
                     CompositionEditorPanel(
                         vm: vm,
-                        activeCompositionTab: $activeCompositionTab,
+                        orchestrator: orchestrator,
+                        activeCompositionTab: vm.sessionMemory.binding(
+                            for: effect.identity.targetKey, \.activeCompositionTab),
                         activeHarmonyRule: $activeHarmonyRule,
                         editingSwatch: $editingSwatch
                     )

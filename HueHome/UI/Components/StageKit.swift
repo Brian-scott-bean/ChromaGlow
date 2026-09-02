@@ -434,36 +434,6 @@ struct StageColorSwatchRow: View {
     }
 }
 
-// MARK: - Stage More Button
-
-/// The "+N more ▾" progressive-disclosure affordance shared by the mixer tray
-/// and the composer layer tabs.
-struct StageMoreButton: View {
-    let count: Int
-    var isExpanded: Bool = false
-    let action: () -> Void
-
-    var body: some View {
-        Button {
-            HapticManager.shared.light()
-            action()
-        } label: {
-            HStack(spacing: 5) {
-                Text(isExpanded ? "SHOW LESS" : "+\(count) MORE")
-                    .font(HueFont.stageTag)
-                    .tracking(1.0)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .bold))
-                    .rotationEffect(.degrees(isExpanded ? 180 : 0))
-            }
-            .foregroundStyle(StagePalette.muted)
-            .frame(maxWidth: .infinity, minHeight: 44)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-}
-
 // MARK: - Stage Sheet Scaffold
 
 /// Unified chrome for every adjustment sheet: stage background, mono tracked

@@ -31,7 +31,7 @@ final class ComposerControlCatalogTests: XCTestCase {
                           pattern: MotionConfig.Pattern = .cascade,
                           shape: EnvelopeConfig.Shape = .breathe,
                           source: ReactionConfig.Source = .none) -> [String] {
-        ComposerControlCatalog.advancedControlIDs(
+        ComposerControlCatalog.supportingControlIDs(
             tab: tab, paletteMode: mode, motionPattern: pattern,
             envelopeShape: shape, reactionSource: source)
     }
@@ -125,8 +125,8 @@ final class ComposerControlCatalogTests: XCTestCase {
         XCTAssertFalse(advanced(.palette, mode: .gradient).contains("saturation"))
     }
 
-    /// Essential and advanced sets never overlap for any state.
-    func testEssentialAndAdvancedAreDisjoint() {
+    /// Essential and supporting sets never overlap for any state.
+    func testEssentialAndSupportingAreDisjoint() {
         for tab in CompositionLayerTab.allCases {
             for mode in allModes {
                 for pattern in allPatterns {

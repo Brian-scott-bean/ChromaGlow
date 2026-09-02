@@ -21,6 +21,10 @@ struct TargetWorkingState: Equatable {
     var expandedColorControlID: CustomizationControlID? = nil
     /// Whether the identity header's operational panel is open.
     var identityPanelOpen: Bool = false
+    /// The Composer layer this target is editing (plan §24 "current domain").
+    /// Per target, so two rooms running compositions keep their own layer;
+    /// a stopped target's selection dies with its memory.
+    var activeCompositionTab: CompositionLayerTab = .palette
 }
 
 @MainActor

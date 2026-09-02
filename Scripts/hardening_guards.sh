@@ -1205,9 +1205,14 @@ R36_PANEL="HueHome/UI/Composer/CompositionEditorPanel.swift"
 # `isExpanded` ban stays on the host + panel, because StageColorEditor owns a
 # caller-bound `isExpanded` BY DESIGN, and (c)'s one-vertical-ScrollView count
 # is a claim about the host alone.
+# Slice 3 adds the Composer supporting tier: `ComposerSupportingControls`
+# (historical filename ComposerLayerSheet.swift — no sheet lives there any
+# more) renders INSIDE each layer's card, so it is on the one-surface path.
+R36_COMPOSER_SUPPORT="HueHome/UI/Composer/ComposerLayerSheet.swift"
 R36_SURFACES=(
     "$R36_HOST"
     "$R36_PANEL"
+    "$R36_COMPOSER_SUPPORT"
     "HueHome/UI/Studio/StudioBoardView.swift"
     "HueHome/UI/Studio/StudioLookBrowserView.swift"
     "HueHome/UI/Components/StageInstrumentControls.swift"
@@ -1216,9 +1221,10 @@ R36_SURFACES=(
     "HueHome/UI/Components/StageBeatSection.swift"
 )
 
-# (a) No detached presentation from any file on this path. `StudioParamSheet`,
-# `ComposerLayerSheet` and `StageMoreButton` stay DEFINED — Track B owns them —
-# but nothing here may present them.
+# (a) No detached presentation from any file on this path. `StudioParamSheet`
+# stays DEFINED (Track B owns it); `ComposerLayerSheet` and `StageMoreButton`
+# were DELETED in Slice 3 (zero call sites) — their tokens stay in the regex
+# so a resurrection on this path fails the same way a presentation would.
 for f in "${R36_SURFACES[@]}"; do
     [[ -f "$f" ]] || fail "studio-one-surface" "$f is missing — the row-36 rule is unenforceable"
     # Anchored comment filter, as in 14(d): the unanchored `:[[:space:]]*//`
@@ -1238,6 +1244,16 @@ for f in "${R36_SURFACES[@]}"; do
     # form, the same call moved to another surface — still fails.
     if [[ "$f" == "$R36_PANEL" ]]; then
         r36_present=$(echo "$r36_present" | grep -vF '.popover(item: $editingSwatch)' || true)
+    fi
+    # PERMITTED, anchored so it cannot widen: the Entertainment-area BUILDER
+    # (`EntertainmentConfigBuilderView`) is a multi-step creation workflow that
+    # POSTs a new bridge resource — a genuine destination, not a place where a
+    # control was hidden. Exactly that one `isPresented:` binding is exempt, in
+    # exactly that one file; the row that opens it renders inline in the card.
+    # Any other sheet here — a different binding, a `.popover(`, the same call
+    # moved to the panel — still fails.
+    if [[ "$f" == "$R36_COMPOSER_SUPPORT" ]]; then
+        r36_present=$(echo "$r36_present" | grep -vF '.sheet(isPresented: $showEntertainmentBuilder)' || true)
     fi
     if [[ -n "$r36_present" ]]; then
         fail "studio-one-surface" $'the customization host presents a detached surface for its controls again — advanced controls must expand in place:\n'"$f"$':\n'"$r36_present"
@@ -1297,6 +1313,39 @@ fi
 if ! grep -q '\.id("reactionBeatControls")' "$R36_PANEL"; then
     fail "studio-one-surface" "the \"reactionBeatControls\" anchor target is gone from $R36_PANEL — the host's scrollTo would resolve to nothing"
 fi
+
+# (e) Slice 3: Composer has NO user-facing "Advanced" concept. The literal
+# `StageCard(title: "Advanced")` was the last Advanced caption in the app; its
+# controls now render in the same card as the essentials. Any string literal
+# containing `Advanced` in either Composer file is a regression — a caption, a
+# sheet title, an accessibility label — as is the retired symbol.
+# Anchored comment filter (two files ⇒ `<file>:<line>:` prefix).
+r36_advanced=$(grep -nE '"[^"]*Advanced[^"]*"|ComposerAdvancedControls|advancedControlIDs|advancedCount\(' "$R36_PANEL" "$R36_COMPOSER_SUPPORT" 2>/dev/null \
+    | grep -vE '^[^:]*:[0-9]+:[[:space:]]*//' || true)
+if [[ -n "$r36_advanced" ]]; then
+    fail "studio-one-surface" $'Composer exposes an "Advanced" concept again — supporting controls belong in the layer card, not behind a caption or a sheet:\n'"$r36_advanced"
+fi
+# The supporting tier must be rendered INSIDE the panel's layer cards (the
+# thing that replaced the Advanced card), and the tab subtree may not regain
+# the `.id(tab)` split that gave the two tiers different identity lifetimes.
+if ! grep -q 'ComposerSupportingControls(vm: vm, orchestrator: orchestrator, tab: tab)' "$R36_PANEL"; then
+    fail "studio-one-surface" "$R36_PANEL no longer renders ComposerSupportingControls inside its layer cards — the supporting tier has no surface"
+fi
+r36_tab_id=$(grep -nE '\.id\(activeCompositionTab\)' "$R36_PANEL" 2>/dev/null \
+    | grep -vE '^[0-9]+:[[:space:]]*//' || true)
+if [[ -n "$r36_tab_id" ]]; then
+    fail "studio-one-surface" $'the Composer tab subtree is keyed by `.id(activeCompositionTab)` again — a tab change tears down in-flight exact entry, and the tiers split lifetimes:\n'"$r36_tab_id"
+fi
+# The migration proof exists and runs: the render test that walks every
+# catalog control id per layer/gating state and asserts each one is on the
+# page, with no "Advanced" text and no colour popover.
+R36_CONVERGENCE_TESTS="HueHomeTests/ComposerConvergenceTests.swift"
+[[ -f "$R36_CONVERGENCE_TESTS" ]] \
+    || fail "studio-one-surface" "$R36_CONVERGENCE_TESTS is missing — the Advanced-retirement migration has no proof"
+grep -q 'ComposerConvergenceTests.swift in Sources' HueHome.xcodeproj/project.pbxproj \
+    || fail "studio-one-surface" "ComposerConvergenceTests.swift exists but is not in the test target — it never runs"
+grep -q 'testEveryFormerAdvancedControlIsStillRendered' "$R36_CONVERGENCE_TESTS" \
+    || fail "studio-one-surface" "the per-control migration test is gone from $R36_CONVERGENCE_TESTS"
 
 # ──────────────────────────────────────────────────────────────
 # Guard 14 (Slice 2 R1): the 3 Hz flash ceiling is a REALIZED-FRAME invariant.

@@ -1,23 +1,30 @@
 // ComposerLayerSheet.swift
-// CastChroma — Composer advanced controls (adjustment-settings revamp).
+// CastChroma — Composer supporting controls (Slice 3 convergence).
 //
-// The "+N more" surface for the active composer layer tab. The editor panel
-// keeps 3-5 essential controls inline (COMPOSER_SPEC progressive-disclosure
-// model); everything else renders here — in a StageSheetScaffold sheet from
-// the more button, or inline via ComposerAdvancedControls when the tray is
-// dragged up. All bindings write the live CompositionParamBox directly, the
-// same data path the panel uses (no debounce, no API calls; the render loop
-// reads the box every frame).
+// The filename is historical (Xcode project churn is not worth a rename —
+// execution plan §25): there is no sheet here any more. `ComposerControlCatalog`
+// partitions each layer's controls into an ESSENTIAL tier and a SUPPORTING
+// tier, and `ComposerSupportingControls` renders the supporting tier INSIDE
+// the same StageCard as the essentials — quieter rows further down the one
+// column, exactly as the Studio board's `.supporting` prominence band. There
+// is no "Advanced" card, no reveal affordance and no detached destination:
+// progressive reveal is contextual gating (a swell shape reveals attack/decay,
+// a spatial pattern reveals direction), never a second surface to open.
+//
+// All bindings write the live CompositionParamBox directly, the same data
+// path the panel uses (no debounce, no API calls; the render loop reads the
+// box every frame).
 
 import SwiftUI
 import CoreGraphics
 
 // MARK: - Control Catalog
 
-/// Pure control-inventory functions: which controls are essential (inline in
-/// the tray) vs advanced (sheet / expanded tray) for a given layer state.
-/// Gating rules mirror what the engine actually consumes — controls that are
-/// no-ops for the current pattern/shape/source don't render at all.
+/// Pure control-inventory functions: which controls are essential (the top of
+/// the layer's card) vs supporting (the quieter rows below them, same card)
+/// for a given layer state. Gating rules mirror what the engine actually
+/// consumes — controls that are no-ops for the current pattern/shape/source
+/// don't render at all.
 enum ComposerControlCatalog {
 
     static func isMicSource(_ source: ReactionConfig.Source) -> Bool {
@@ -82,7 +89,7 @@ enum ComposerControlCatalog {
         }
     }
 
-    static func advancedControlIDs(
+    static func supportingControlIDs(
         tab: CompositionLayerTab,
         paletteMode: PaletteConfig.Mode,
         motionPattern: MotionConfig.Pattern,
@@ -121,44 +128,34 @@ enum ComposerControlCatalog {
         }
     }
 
-    /// Convenience: advanced-control count for the live box state.
-    @MainActor
-    static func advancedCount(tab: CompositionLayerTab, box: CompositionParamBox?) -> Int {
-        advancedControlIDs(
-            tab: tab,
-            paletteMode: box?.palette.mode ?? .gradient,
-            motionPattern: box?.motion.pattern ?? .cascade,
-            envelopeShape: box?.envelope.shape ?? .breathe,
-            reactionSource: box?.reaction.source ?? .none
-        ).count
+    /// Every control the layer renders for this state, essential first — the
+    /// list a migration test walks to prove nothing that used to live behind
+    /// "Advanced" silently disappeared.
+    static func renderedControlIDs(
+        tab: CompositionLayerTab,
+        paletteMode: PaletteConfig.Mode,
+        motionPattern: MotionConfig.Pattern,
+        envelopeShape: EnvelopeConfig.Shape,
+        reactionSource: ReactionConfig.Source
+    ) -> [String] {
+        essentialControlIDs(tab: tab, paletteMode: paletteMode, motionPattern: motionPattern,
+                            envelopeShape: envelopeShape, reactionSource: reactionSource)
+        + supportingControlIDs(tab: tab, paletteMode: paletteMode, motionPattern: motionPattern,
+                               envelopeShape: envelopeShape, reactionSource: reactionSource)
     }
 }
 
-// MARK: - Layer Sheet
+// MARK: - Supporting Controls
 
-/// StageSheetScaffold wrapper around the advanced controls — the "+N more"
-/// target from the composer editor panel.
-struct ComposerLayerSheet: View {
+/// The supporting tier of one layer tab, rendered by the editor panel INSIDE
+/// that layer's card, directly under the essentials. One column, one card,
+/// one identity lifetime — the old `.id(activeCompositionTab)` split put the
+/// essentials and the "Advanced" card on different lifetimes, so a tab switch
+/// rebuilt one half of the page and not the other.
+struct ComposerSupportingControls: View {
     let vm: StudioViewModel
-    let tab: CompositionLayerTab
-
-    var body: some View {
-        StageSheetScaffold(title: "\(tab.title) · Advanced") {
-            StageCard(icon: tab.symbolName, title: tab.title) {
-                ComposerAdvancedControls(vm: vm, tab: tab)
-            }
-        }
-    }
-}
-
-// MARK: - Advanced Controls
-
-/// The advanced control set for one layer tab. Rendered inside the sheet
-/// AND inline in the editor panel when the tray is dragged up.
-struct ComposerAdvancedControls: View {
-    @Environment(UnifiedOrchestrator.self) private var orchestrator
-
-    let vm: StudioViewModel
+    /// Explicit, not `@Environment`: see `CompositionEditorPanel`.
+    let orchestrator: UnifiedOrchestrator
     let tab: CompositionLayerTab
 
     @State private var showEntertainmentBuilder = false
@@ -168,10 +165,10 @@ struct ComposerAdvancedControls: View {
     var body: some View {
         VStack(spacing: HueSpacing.sm) {
             switch tab {
-            case .palette: paletteAdvanced
-            case .motion: motionAdvanced
-            case .envelope: envelopeAdvanced
-            case .reaction: reactionAdvanced
+            case .palette: paletteSupporting
+            case .motion: motionSupporting
+            case .envelope: envelopeSupporting
+            case .reaction: reactionSupporting
             }
         }
         // Whether directional motion is offered is now a room-membership
@@ -187,7 +184,7 @@ struct ComposerAdvancedControls: View {
     // ── Palette ───────────────────────────────────────────────
 
     @ViewBuilder
-    private var paletteAdvanced: some View {
+    private var paletteSupporting: some View {
         if (vm.activeCompositionBox?.palette.mode ?? .gradient) == .spectrum {
             StageSlider(
                 title: "Hue Shift",
@@ -221,7 +218,8 @@ struct ComposerAdvancedControls: View {
         )
 
         // Round 3 (E): export this palette as a NATIVE Hue dynamic scene —
-        // the bridge cycles it forever with the app closed.
+        // the bridge cycles it forever with the app closed. An ACTION, not a
+        // control — it closes the card, below the last control row.
         Button {
             dynamicSceneName = ""
             showDynamicScenePrompt = true
@@ -327,7 +325,7 @@ struct ComposerAdvancedControls: View {
     // ── Motion ────────────────────────────────────────────────
 
     @ViewBuilder
-    private var motionAdvanced: some View {
+    private var motionSupporting: some View {
         let pattern = vm.activeCompositionBox?.motion.pattern ?? .cascade
 
         if ComposerControlCatalog.isSpatialPattern(pattern) {
@@ -374,11 +372,12 @@ struct ComposerAdvancedControls: View {
     // ── Envelope ──────────────────────────────────────────────
 
     @ViewBuilder
-    private var envelopeAdvanced: some View {
+    private var envelopeSupporting: some View {
         let shape = vm.activeCompositionBox?.envelope.shape ?? .breathe
 
-        // The configured curve, live — these sliders reshape it in place.
-        EnvelopeStripView(envelope: vm.activeCompositionBox?.envelope ?? EnvelopeConfig())
+        // The live curve preview renders ONCE, at the top of the card with the
+        // essentials — it used to render a second time here, when this tier
+        // lived on its own card.
 
         // Shape-specific controls (the engine has always consumed these).
         if shape == .swell {
@@ -433,11 +432,11 @@ struct ComposerAdvancedControls: View {
     // ── Reaction ──────────────────────────────────────────────
 
     @ViewBuilder
-    private var reactionAdvanced: some View {
+    private var reactionSupporting: some View {
         let source = vm.activeCompositionBox?.reaction.source ?? .none
 
         if ComposerControlCatalog.isMicSource(source) {
-            MicLevelMeterView(threshold: vm.activeCompositionBox?.reaction.threshold)
+            // The level meter renders ONCE, with the essentials above.
             // The engine has consumed smoothing (one-pole response lag) all
             // along — this is its first slider.
             StageSlider(
