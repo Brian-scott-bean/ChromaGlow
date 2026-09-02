@@ -5878,6 +5878,7 @@ final class UnifiedOrchestrator {
                     guard let self else { return }
                     await self.runCompositionEntertainment(
                         entClient: entClient,
+                        bridgeID: bridgeID,
                         channelIDs: channelIDs,
                         paramBox: paramBox,
                         gamut: compositionGamut
@@ -6144,6 +6145,7 @@ final class UnifiedOrchestrator {
     /// Composition render loop via Entertainment API — per-light colors at 25fps.
     private func runCompositionEntertainment(
         entClient: HueEntertainmentClient,
+        bridgeID: String,
         channelIDs: [UInt8],
         paramBox: CompositionParamBox,
         gamut: HueColorUtils.Gamut
@@ -6151,6 +6153,17 @@ final class UnifiedOrchestrator {
         // Note: paramBox cleanup is handled by stopCompositionMode (keyed by bridgeID).
         let frameInterval: UInt64 = 40_000_000  // 40ms = 25fps
         let startTime = CFAbsoluteTimeGetCurrent()
+        // THE bridge's ledger, shared with every uniform flash loop on the same
+        // wire — see `emitGatedCompositionFrame`. Resolved once: `flashOnsetLedger`
+        // vends a reference type, and re-resolving per frame would be the same
+        // object anyway, but taking it here makes the sharing explicit at the
+        // top of the loop that depends on it.
+        let flashLedger = flashOnsetLedger(forBridge: bridgeID)
+        // The per-channel frame currently on the wire, for `.hold` to repeat.
+        // Only a DELIVERED frame updates it: a frame the transport dropped is
+        // not what the bridge is showing, and holding it would repeat something
+        // no light ever displayed.
+        var lastEmitted: [(id: UInt8, x: Double, y: Double, brightness: Double)]?
         // Packet 5: the renderer now speaks render-channel INDICES (Int), not
         // one-byte DTLS ids. The wire ids stay in `channelIDs` and are never
         // re-derived from render output, so the retype introduces no new
@@ -6211,7 +6224,15 @@ final class UnifiedOrchestrator {
                 let xy = HueColorUtils.clampXYToGamut(x: frame.x, y: frame.y, gamut: gamut)
                 return (id: id, x: xy.x, y: xy.y, brightness: frame.brightness)
             }
-            await entClient.send(channels: channels)
+            // Through the bridge's shared onset ledger — never straight to the
+            // transport. Guard 14(h) pins that this loop makes no direct send.
+            guard let gated = await emitGatedCompositionFrame(
+                entClient: entClient,
+                ledger: flashLedger,
+                channels: channels,
+                lastEmitted: lastEmitted
+            ) else { break }   // cancelled inside the emit
+            if gated.outcome.delivered { lastEmitted = gated.onWire }
 
             try? await Task.sleep(nanoseconds: frameInterval)
         }
@@ -8254,6 +8275,74 @@ final class UnifiedOrchestrator {
         ledger.commit(reservation, delivered: delivered, at: CACurrentMediaTime())
         try? await Task.sleep(nanoseconds: BeatMath.FlashSafety.entertainmentFrameNanoseconds)
         return GatedFrameOutcome(verdict: reservation.verdict, delivered: delivered)
+    }
+
+    /// One per-channel composition frame, through the SAME per-bridge onset
+    /// ledger the uniform flash loops use.
+    ///
+    /// **This is the only place the composition ENT loop may call
+    /// `send(channels:)`**, for exactly the reason `emitGatedFrame` is the only
+    /// place a uniform loop may call `sendUniform` (Guard 14(h)). Until this
+    /// existed, `runCompositionEntertainment` streamed straight to the transport
+    /// at 25 fps with no ledger at all and discarded the delivery `Bool` — and
+    /// `EnvelopeConfig.value(at:)` makes `.pulse` a SQUARE WAVE at `bpm/60` Hz
+    /// with `bpm` authored to 240, i.e. a full-depth 4 Hz on/off, while
+    /// `.flicker` carries an unconditional ~3.68 Hz component (`sin(t · 23.14)`)
+    /// at any bpm. Both were above the ≤ 3 Hz realized ceiling, on the wire.
+    ///
+    /// Three things make this the same mechanism rather than a second one:
+    ///
+    ///  • **The ledger is the bridge's, not the loop's** (`flashOnsetLedger(forBridge:)`).
+    ///    A composition and a Strobe on one bridge share a wire, so they must
+    ///    share the record of what is on it; two ledgers would let each admit an
+    ///    onset 0.02 s after the other's.
+    ///  • **The measurement is `fieldFrame`**, which is the identity for a uniform
+    ///    frame — so a composition holding every light at one colour is gated on
+    ///    precisely the numbers Strobe would be gated on.
+    ///  • **Reserve → send → commit, in that order, with no exit between them**,
+    ///    and the stamp lands at delivery. A frame the transport refused changed
+    ///    no light, so it must not hold the ledger's onset (M-2 / H-3).
+    ///
+    /// A refusal is a DELAY, not a skip: `.hold` re-sends `lastEmitted` — the
+    /// actual per-channel frame already on the wire, not a reconstruction — so
+    /// the DTLS stream never pauses and the held frame cannot itself be a rise.
+    /// Returns the outcome and the channels that reached the wire, or `nil` if
+    /// the task was cancelled before the reservation was taken.
+    private func emitGatedCompositionFrame(
+        entClient: HueEntertainmentClient,
+        ledger: BeatMath.FlashSafety.OnsetLedger,
+        channels: [(id: UInt8, x: Double, y: Double, brightness: Double)],
+        lastEmitted: [(id: UInt8, x: Double, y: Double, brightness: Double)]?
+    ) async -> (outcome: GatedFrameOutcome, onWire: [(id: UInt8, x: Double, y: Double, brightness: Double)])? {
+        guard !Task.isCancelled else { return nil }
+        // RESERVE, on the field reduction of the requested frame.
+        let reservation = ledger.admit(
+            frame: BeatMath.FlashSafety.fieldFrame(
+                channels: channels.map { (x: $0.x, y: $0.y, brightness: $0.brightness) }),
+            at: CACurrentMediaTime(),
+            minPeriod: BeatMath.FlashSafety.minOnsetLedgerPeriod)
+        // A refusal streams the frame the bridge is ALREADY showing. On the very
+        // first frame of a run there is nothing on the wire yet to hold, and the
+        // ledger cannot have refused it either (nothing precedes it in this
+        // bridge's record unless another loop just flashed) — if it did refuse,
+        // holding the requested frame's own colour at zero brightness is the one
+        // answer that is certainly not a rise.
+        let onWire: [(id: UInt8, x: Double, y: Double, brightness: Double)]
+        if reservation.verdict.wasAdmitted {
+            onWire = channels
+        } else if let lastEmitted {
+            onWire = lastEmitted
+        } else {
+            onWire = channels.map { (id: $0.id, x: $0.x, y: $0.y, brightness: 0) }
+        }
+        // SEND. `send(channels:)` answers whether the frame reached the transport
+        // at all — it drops every frame while DTLS is re-establishing, and
+        // `isTerminallyFailed` stays false for the whole reconnect budget, so
+        // nothing else in this loop can tell.
+        let delivered = await entClient.send(channels: onWire)
+        // COMMIT, unconditionally and immediately, including under cancellation.
+        ledger.commit(reservation, delivered: delivered, at: CACurrentMediaTime())
+        return (GatedFrameOutcome(verdict: reservation.verdict, delivered: delivered), onWire)
     }
 
     /// Streams gate-held frames until the REQUESTED frame itself reaches the

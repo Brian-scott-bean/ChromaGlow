@@ -279,6 +279,25 @@ enum BeatMath {
             return min(1, max(0, v * v * v))
         }
 
+        /// The exact inverse of `dimmingLuminance` on 0…1: `bri = (116·∛Y − 16) / 100`.
+        ///
+        /// Needed only by `fieldFrame(channels:)`, which averages luminance across
+        /// a per-channel frame and must hand the gate a `WireFrame` — and a
+        /// `WireFrame` states its luminance through a *dimming* level, not
+        /// directly. Round-tripping through the real inverse is what makes
+        /// `fieldFrame`'s luminance exact rather than approximately right: see the
+        /// identity asserted in `FlashSafetyFieldFrameTests`.
+        ///
+        /// Total: a non-finite or ≤ 0 luminance is dimming 0. Luminances below the
+        /// cube's offset (`(16/116)³ ≈ 0.0026`) map to a negative root and clamp to
+        /// 0, which is the same "off is off" convention `dimmingLuminance` uses.
+        static func inverseDimmingLuminance(_ luminance: Double) -> Double {
+            guard luminance.isFinite, luminance > 0 else { return 0 }
+            let y = min(max(luminance, 0), 1)
+            let bri = (116.0 * cbrt(y) - 16.0) / 100.0
+            return min(1, max(0, bri))
+        }
+
         /// CIE xy → linear **sRGB** drive, normalized so the largest channel is
         /// 1.0 — i.e. the colour as the fixture actually renders it at full
         /// drive, which is what a bridge does with an xy request.
@@ -429,6 +448,94 @@ enum BeatMath {
                 FlashSafety.redDriveFraction(x: x, y: y)
                     >= FlashSafety.saturatedRedFraction - FlashSafety.onsetComparisonTolerance
             }
+        }
+
+        /// Reduces ONE per-channel Entertainment frame to the single field frame
+        /// the onset gate measures.
+        ///
+        /// The strobe/party/thunderstorm loops stream a UNIFORM frame — one
+        /// colour and one brightness to every channel — so `WireFrame` describes
+        /// their wire exactly. Composer streams a frame PER CHANNEL: an eight-light
+        /// room can chase, scatter or twinkle, and there is no single x/y/brightness
+        /// that is "the frame". Forcing the uniform abstraction onto it would have
+        /// to pick one channel and call it the room, which is wrong in both
+        /// directions — it would miss an all-lights pulse measured on a channel that
+        /// happens to sit at its floor, and it would gate a single twinkling light as
+        /// though the whole room flashed.
+        ///
+        /// What a photosensitive viewer receives is the **field**: WCAG's general
+        /// flash threshold is stated over a proportion of the visual field, not over
+        /// one lamp. So the reduction is:
+        ///
+        ///  • **luminance = the MEAN of the channels' relative luminances.** Mean,
+        ///    not max: eight lights where one twinkles moves the field by an eighth,
+        ///    and that is what the eye sees. Mean of the LUMINANCES, not of the
+        ///    brightnesses — `dimmingLuminance` is a cube, so averaging dimming
+        ///    levels first and cubing after would *understate* every mixed frame
+        ///    (Jensen), and understating is the direction that lets a flash through.
+        ///  • **chromaticity = the luminance-WEIGHTED mean of the channels' xy.**
+        ///    A channel at its floor contributes almost nothing to what colour the
+        ///    room is, so it must not drag the hue — otherwise a chase's dark tail
+        ///    would dilute the red rule until a saturated-red strike stopped reading
+        ///    as red. With no light at all the weights vanish and the plain mean is
+        ///    used, which is defined and harmless: at zero luminance the red rule
+        ///    cannot fire anyway, and `chromaDistance` still wants a real coordinate.
+        ///
+        /// The brightness is then the exact `inverseDimmingLuminance` of the field
+        /// luminance at that chromaticity, so the returned frame's own
+        /// `relativeLuminance` **is** the field luminance rather than an
+        /// approximation of it.
+        ///
+        /// Load-bearing property, and the reason this is safe to share one ledger
+        /// with the uniform loops: for a uniform frame the reduction is the
+        /// IDENTITY. Every channel carries the same luminance, so the mean is that
+        /// luminance; every channel carries the same xy, so any weighting returns
+        /// that xy; and the inverse round-trip returns the original brightness. A
+        /// composition holding every light at one colour is therefore gated on
+        /// exactly the same numbers Strobe would be — the two cannot disagree about
+        /// the same wire.
+        ///
+        /// Total: an empty frame is black at D65 (a room with no channels puts no
+        /// light in the field), and every per-channel coordinate is laundered
+        /// through `WireFrame`'s own NaN totality before it is weighed.
+        static func fieldFrame(
+            channels: [(x: Double, y: Double, brightness: Double)]
+        ) -> WireFrame {
+            guard !channels.isEmpty else {
+                // D65, the same white `WireFrame`'s own totality falls back to.
+                return WireFrame(x: 0.3127, y: 0.3290, brightness: 0)
+            }
+            // Launder through WireFrame first: a NaN coordinate resolves to D65
+            // and a NaN brightness to 0 there, so nothing below can be poisoned
+            // by one corrupt channel.
+            let frames = channels.map {
+                WireFrame(x: $0.x, y: $0.y, brightness: $0.brightness)
+            }
+            let count = Double(frames.count)
+            let fieldLuminance = frames.reduce(0.0) { $0 + $1.relativeLuminance } / count
+
+            // Luminance-weighted chromaticity, with the unweighted mean as the
+            // zero-light fallback.
+            let totalWeight = frames.reduce(0.0) { $0 + $1.relativeLuminance }
+            let fieldX: Double
+            let fieldY: Double
+            if totalWeight > 0 {
+                fieldX = frames.reduce(0.0) { $0 + $1.x * $1.relativeLuminance } / totalWeight
+                fieldY = frames.reduce(0.0) { $0 + $1.y * $1.relativeLuminance } / totalWeight
+            } else {
+                fieldX = frames.reduce(0.0) { $0 + $1.x } / count
+                fieldY = frames.reduce(0.0) { $0 + $1.y } / count
+            }
+
+            // Express that luminance as a dimming level AT the field chromaticity,
+            // so the frame's own `relativeLuminance` reproduces it exactly.
+            let chromaFactor = chromaticityLuminanceFactor(x: fieldX, y: fieldY)
+            guard chromaFactor > 0 else {
+                return WireFrame(x: fieldX, y: fieldY, brightness: 0)
+            }
+            let dimming = min(1, max(0, fieldLuminance / chromaFactor))
+            return WireFrame(x: fieldX, y: fieldY,
+                             brightness: inverseDimmingLuminance(dimming))
         }
 
         /// What the caller must put on the wire for the frame it asked for.

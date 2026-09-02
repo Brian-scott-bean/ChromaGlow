@@ -1556,6 +1556,83 @@ for loop in runStrobeEntertainment runPartyEntertainment runThunderstormEntertai
         || fail "slice2-r1" "$loop makes no emitGatedFrame( call — a loop that streams nothing through the gate is not gated at all"
 done
 
+# (i) (Slice 3) THE COMPOSITION LOOP IS FLASH-CLASS TOO.
+#
+#     `runCompositionEntertainment` was omitted from the list above because it
+#     streams a frame PER CHANNEL and so cannot call `emitGatedFrame`, which is
+#     uniform. The omission was not a judgement that compositions cannot flash:
+#     `EnvelopeConfig.value(at:)` renders `.pulse` as a SQUARE wave at `bpm/60`
+#     Hz with `bpm` authored to 240 — a full-depth 4 Hz on/off across every
+#     light — and `.flicker` carries an unconditional ~3.68 Hz component at any
+#     tempo. The loop sent straight to the transport at 25 fps, with no ledger
+#     and the delivery answer discarded, so both realized above the ceiling.
+#
+#     Same structural rule, its own gate: zero direct sends, every frame through
+#     `emitGatedCompositionFrame`.
+hc_comp_body=$(hc_ent_loop runCompositionEntertainment)
+[[ -n "$hc_comp_body" ]] \
+    || fail "slice3-flash" "runCompositionEntertainment not found in $HC_ORCH — the composition flash rule is unenforceable"
+hc_comp_direct=$(echo "$hc_comp_body" | grep -cE 'sendUniform\(|\.send\(channels:' || true)
+[[ "$hc_comp_direct" == "0" ]] \
+    || fail "slice3-flash" "runCompositionEntertainment makes $hc_comp_direct direct transport call(s) — a composition frame that skips emitGatedCompositionFrame( is a frame the ledger never measured, and .pulse @ 240 bpm is 4 Hz"
+echo "$hc_comp_body" | grep -q 'emitGatedCompositionFrame(' \
+    || fail "slice3-flash" "runCompositionEntertainment no longer streams through emitGatedCompositionFrame("
+# The ledger must be THE BRIDGE'S, shared with the uniform loops. A composition
+# holding its own would get a fresh 0.34 s budget beside a Strobe on the same
+# wire, and each could admit an onset one frame after the other's.
+echo "$hc_comp_body" | grep -q 'flashOnsetLedger(forBridge:' \
+    || fail "slice3-flash" "runCompositionEntertainment no longer resolves the per-bridge shared ledger — a private ledger measures one loop, not the wire"
+# Only a DELIVERED frame becomes the held frame. Holding a dropped one would
+# repeat something no light ever displayed.
+echo "$hc_comp_body" | grep -qE 'if[[:space:]]+gated\.outcome\.delivered[[:space:]]*\{[[:space:]]*lastEmitted' \
+    || fail "slice3-flash" "runCompositionEntertainment updates its held frame without checking delivery — a frame the transport dropped is not what the bridge is showing"
+
+# The composition gate's own body: reserve → send → commit, in that order, with
+# nothing between the send and the commit, and the reservation taken on the
+# FIELD reduction rather than on one arbitrary channel.
+hc_comp_emit=$(awk '/private func emitGatedCompositionFrame\(/,/^    }$/' "$HC_ORCH" 2>/dev/null | grep -vE '^[[:space:]]*//' || true)
+[[ -n "$hc_comp_emit" ]] \
+    || fail "slice3-flash" "emitGatedCompositionFrame is gone from $HC_ORCH"
+echo "$hc_comp_emit" | grep -q 'BeatMath.FlashSafety.fieldFrame(' \
+    || fail "slice3-flash" "emitGatedCompositionFrame no longer reserves on FlashSafety.fieldFrame( — measuring one channel is not measuring the field a viewer receives"
+echo "$hc_comp_emit" | grep -q 'BeatMath.FlashSafety.minOnsetLedgerPeriod' \
+    || fail "slice3-flash" "emitGatedCompositionFrame no longer enforces minOnsetLedgerPeriod (0.34 s, the invariant's own unit)"
+hc_ce_admit=$(echo "$hc_comp_emit" | grep -n 'ledger.admit(' | head -1 | cut -d: -f1)
+hc_ce_send=$(echo "$hc_comp_emit" | grep -n '\.send(channels:' | head -1 | cut -d: -f1)
+hc_ce_commit=$(echo "$hc_comp_emit" | grep -n 'ledger.commit(' | head -1 | cut -d: -f1)
+[[ -n "$hc_ce_admit" && -n "$hc_ce_send" && -n "$hc_ce_commit" ]] \
+    || fail "slice3-flash" "emitGatedCompositionFrame is missing one of admit/send/commit — all three, in that order, are the mechanism"
+[[ "$hc_ce_admit" -lt "$hc_ce_send" && "$hc_ce_send" -lt "$hc_ce_commit" ]] \
+    || fail "slice3-flash" "emitGatedCompositionFrame's admit/send/commit are out of order (admit=$hc_ce_admit send=$hc_ce_send commit=$hc_ce_commit) — committing before the send stamps an onset the wire may never have shown"
+# No exit between the send and the commit: bailing out there leaves the ledger
+# holding a frame the wire never saw (M-2), the same defect as a dropped send by
+# another route.
+hc_ce_between=$(echo "$hc_comp_emit" | sed -n "$((hc_ce_send + 1)),$((hc_ce_commit - 1))p" \
+    | grep -cE '(^|[^A-Za-z0-9_])(return|throw|break|continue)([^A-Za-z0-9_]|$)' || true)
+[[ "$hc_ce_between" == "0" ]] \
+    || fail "slice3-flash" "emitGatedCompositionFrame can exit between its send and its commit — the ledger would keep an onset the wire never showed"
+# A refusal repeats the frame ALREADY on the wire. Reconstructing one is how the
+# first pass shipped a hold frame that was itself a rise (blocker B1).
+echo "$hc_comp_emit" | grep -q 'lastEmitted' \
+    || fail "slice3-flash" "emitGatedCompositionFrame no longer holds the last emitted per-channel frame — a refusal must repeat what the bridge is showing, not a reconstruction"
+
+# The field reduction itself. These pin the two choices that decide whether a
+# real flash is measured: the MEAN of the channels' luminances (not the max, and
+# not the cube of the mean dimming, which understates every mixed frame), and a
+# LUMINANCE-WEIGHTED chromaticity (so a chase's dark tail cannot dilute the red
+# rule). Scoped to the function body so the prose above it cannot satisfy them.
+hc_field=$(awk '/static func fieldFrame\(/,/^        \}$/' "$HC_BEAT" 2>/dev/null | grep -vE '^[[:space:]]*//' || true)
+[[ -n "$hc_field" ]] \
+    || fail "slice3-flash" "BeatMath.FlashSafety.fieldFrame is gone from $HC_BEAT"
+echo "$hc_field" | grep -q 'relativeLuminance } / count' \
+    || fail "slice3-flash" "fieldFrame no longer averages the channels' relativeLuminance — a max reduction gates a single twinkling lamp as a room-wide flash, and averaging DIMMING instead understates every mixed frame"
+echo "$hc_field" | grep -q 'relativeLuminance } / totalWeight' \
+    || fail "slice3-flash" "fieldFrame's chromaticity is no longer luminance-weighted — an unweighted mean lets a dark tail drag a saturated-red strike off red until the red rule stops firing"
+echo "$hc_field" | grep -q 'inverseDimmingLuminance(' \
+    || fail "slice3-flash" "fieldFrame no longer inverts the dimming curve — without it the returned frame's own relativeLuminance is not the field luminance the gate was asked to measure"
+# (The suite that proves all of the above is pinned into the target's Sources
+# phase by the existing FlashSafetyTests membership check further down.)
+
 # The gate tracks the wire state it measures rises against, and RECORDS what it
 # emitted. Scoped to the struct body: a file-wide grep would be satisfied by the
 # prose above each fix, which necessarily names every symbol it explains.

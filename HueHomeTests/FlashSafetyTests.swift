@@ -174,6 +174,73 @@ struct LegacyForgetOnDropGate: ModelledOnsetGate {
     }
 }
 
+/// The field a viewer receives from ONE per-channel composition frame, written
+/// from the definition and sharing no line with `FlashSafety.fieldFrame`.
+///
+/// Transcribes the same three statements the production reduction is documented
+/// in — mean of the channels' relative luminances, luminance-weighted mean
+/// chromaticity, and the CIE L* cube inverted to express that luminance as a
+/// dimming level — with every coefficient and threshold written out as a bare
+/// literal. If the shipped reduction and this one ever disagree, the composition
+/// models below grade a wire the shipped gate did not measure, and the rate
+/// assertions fail.
+///
+/// (File scope because `WireModel` is nested and cannot reach the test class's
+/// own `viewer*` helpers; those and this deliberately duplicate the arithmetic
+/// rather than share it.)
+private func viewerFieldFrame(
+    _ channels: [(x: Double, y: Double, brightness: Double)]
+) -> BeatMath.FlashSafety.WireFrame {
+    func drive(_ x: Double, _ y: Double) -> (r: Double, g: Double, b: Double) {
+        guard x.isFinite, y.isFinite, y > 0 else { return (0, 0, 0) }
+        let bigX = x / y, bigZ = (1.0 - x - y) / y
+        var r =  3.2404542 * bigX - 1.5371385 - 0.4985314 * bigZ
+        var g = -0.9692660 * bigX + 1.8760108 + 0.0415560 * bigZ
+        var b =  0.0556434 * bigX - 0.2040259 + 1.0572252 * bigZ
+        r = max(r, 0); g = max(g, 0); b = max(b, 0)
+        let peak = max(r, max(g, b))
+        guard peak > 0 else { return (0, 0, 0) }
+        return (r / peak, g / peak, b / peak)
+    }
+    func luminance(_ x: Double, _ y: Double, _ bri: Double) -> Double {
+        let c = drive(x, y)
+        let chroma = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
+        guard bri.isFinite, bri > 0 else { return 0 }
+        let l = (100.0 * min(max(bri, 0), 1) + 16.0) / 116.0
+        return chroma * min(1, max(0, l * l * l))
+    }
+    guard !channels.isEmpty else {
+        return BeatMath.FlashSafety.WireFrame(x: 0.3127, y: 0.3290, brightness: 0)
+    }
+    // Non-finite coordinates resolve to D65 and non-finite brightness to 0, the
+    // same totality the production frame applies before it weighs anything.
+    let safe = channels.map { c -> (x: Double, y: Double, brightness: Double) in
+        (x: c.x.isFinite ? c.x : 0.3127,
+         y: c.y.isFinite ? c.y : 0.3290,
+         brightness: c.brightness.isFinite ? min(max(c.brightness, 0), 1) : 0)
+    }
+    let lums = safe.map { luminance($0.x, $0.y, $0.brightness) }
+    let n = Double(safe.count)
+    let fieldLuminance = lums.reduce(0, +) / n
+    let total = lums.reduce(0, +)
+    let fx: Double, fy: Double
+    if total > 0 {
+        fx = zip(safe, lums).reduce(0) { $0 + $1.0.x * $1.1 } / total
+        fy = zip(safe, lums).reduce(0) { $0 + $1.0.y * $1.1 } / total
+    } else {
+        fx = safe.reduce(0) { $0 + $1.x } / n
+        fy = safe.reduce(0) { $0 + $1.y } / n
+    }
+    let c = drive(fx, fy)
+    let chroma = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
+    guard chroma > 0 else {
+        return BeatMath.FlashSafety.WireFrame(x: fx, y: fy, brightness: 0)
+    }
+    let dim = min(1, max(0, fieldLuminance / chroma))
+    let bri = dim > 0 ? min(1, max(0, (116.0 * cbrt(dim) - 16.0) / 100.0)) : 0
+    return BeatMath.FlashSafety.WireFrame(x: fx, y: fy, brightness: bri)
+}
+
 final class FlashSafetyTests: XCTestCase {
 
     private typealias FS = BeatMath.FlashSafety
@@ -2280,7 +2347,13 @@ final class FlashSafetyTests: XCTestCase {
         /// The production gate by default; the reconnect tests swap in
         /// `LegacyForgetOnDropGate` to show what the fix replaced.
         var gate: any ModelledOnsetGate = ProductionOnsetGate()
-        private let fd = BeatMath.FlashSafety.entertainmentFrameDuration
+        /// The loop's own cadence. The uniform flash loops sleep one 20 ms
+        /// Entertainment quantum inside `emitGatedFrame`; the COMPOSITION loop
+        /// keeps its own 40 ms (25 fps) sleep and gates without sleeping, so its
+        /// model has to advance the clock at 40 ms or it would grade a run twice
+        /// as fast as the one that ships. Default unchanged, so every existing
+        /// model below is untouched.
+        var fd = BeatMath.FlashSafety.entertainmentFrameDuration
         private(set) var frame = 0
         private(set) var wire: [Emission] = []
         private(set) var dropped = 0
@@ -2334,6 +2407,56 @@ final class FlashSafetyTests: XCTestCase {
                 if emit(brightness, x: x, y: y) { return }
             }
             XCTFail("emitOnsetFrame never landed — the gate must admit within a bounded wait")
+        }
+
+        /// The last PER-CHANNEL frame the transport accepted — what a `.hold`
+        /// re-sends. Mirrors `lastEmitted` in `runCompositionEntertainment`, and
+        /// for the same reason: only a delivered frame is what the bridge shows.
+        private var lastEmittedChannels: [(x: Double, y: Double, brightness: Double)]?
+
+        /// Pure mirror of `UnifiedOrchestrator.emitGatedCompositionFrame` — one
+        /// per-channel composition frame, reserve → send → commit, no sleep.
+        ///
+        /// What lands in `wire` is the INDEPENDENTLY reduced field frame of the
+        /// channels that reached the transport, so `realizedOnsets` grades what a
+        /// viewer standing in the room received. Production's own
+        /// `FlashSafety.fieldFrame` is used for the RESERVE (that is the code
+        /// under test) and never for the measurement.
+        @discardableResult
+        func emitComposition(_ channels: [(x: Double, y: Double, brightness: Double)]) -> Bool {
+            let decided = gate.reserve(
+                BeatMath.FlashSafety.fieldFrame(channels: channels), at: time)
+            let onWire: [(x: Double, y: Double, brightness: Double)]
+            if decided.admitted {
+                onWire = channels
+            } else if let lastEmittedChannels {
+                onWire = lastEmittedChannels
+            } else {
+                onWire = channels.map { (x: $0.x, y: $0.y, brightness: 0) }
+            }
+            let delivered = transportAccepts
+            if delivered {
+                wire.append(Emission(time: time, frame: viewerFieldFrame(onWire)))
+                lastEmittedChannels = onWire
+            } else {
+                dropped += 1
+            }
+            gate.settle(delivered: ledgerIgnoresDrops || delivered, at: time)
+            frame += 1
+            return decided.admitted && (ledgerIgnoresDrops || delivered)
+        }
+
+        /// **The composition loop as it SHIPPED before this slice** — straight to
+        /// the transport, no ledger, delivery answer discarded. Kept for the same
+        /// reason `LegacyForgetOnDropGate` is: a fix whose regression test cannot
+        /// fail on the code it replaced is a fix nobody can check.
+        func emitUngatedComposition(_ channels: [(x: Double, y: Double, brightness: Double)]) {
+            if transportAccepts {
+                wire.append(Emission(time: time, frame: viewerFieldFrame(channels)))
+            } else {
+                dropped += 1
+            }
+            frame += 1
         }
     }
 
@@ -2846,5 +2969,270 @@ final class FlashSafetyTests: XCTestCase {
             wasBright = bright
         }
         return gaps
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // MARK: - Composer (Slice 3): the per-channel loop joins the same gate
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    //
+    // `runCompositionEntertainment` streamed straight to the transport at 25 fps
+    // with no ledger and discarded the delivery `Bool`. Two authored looks put a
+    // realized flash above the ceiling on the wire:
+    //
+    //  • `.pulse` is a SQUARE wave at `bpm/60` Hz (`EnvelopeConfig.value(at:)`),
+    //    and `bpm` is authored to 240 → 4 Hz, full depth, every light together.
+    //  • `.flicker` carries an unconditional `sin(t · 23.14)` ≈ 3.68 Hz component
+    //    at ANY bpm.
+    //
+    // The loop is per-channel, so it cannot use `emitGatedFrame`. It reduces the
+    // frame to the field a viewer receives and reserves on THAT. Everything below
+    // grades the wire with `realizedOnsets`, which re-derives the WCAG rules from
+    // the delivered frames alone.
+
+    /// One channel's worth of the composition loop's per-frame output, gamut
+    /// clamp omitted (these fixtures are already in gamut).
+    private func compositionChannels(
+        box: CompositionParamBox, time: Double, channels: Int
+    ) -> [(x: Double, y: Double, brightness: Double)] {
+        CompositionEngine
+            .render(time: time, channelIDs: Array(0..<channels), params: box)
+            .map { (x: $0.x, y: $0.y, brightness: $0.brightness) }
+    }
+
+    /// Drives the composition ENT loop's frame production through the gate at
+    /// its real 40 ms cadence. `gated: false` models the loop as it shipped —
+    /// straight to the transport, no ledger — so every rate assertion below can
+    /// be shown to FAIL on the code it replaced.
+    private func compositionWire(
+        envelope: EnvelopeConfig,
+        palette: PaletteConfig = PaletteConfig(),
+        motion: MotionConfig = MotionConfig(pattern: .static),
+        channels: Int = 4,
+        seconds: Double = 6.0,
+        gated: Bool = true,
+        dropWindow: Range<Int>? = nil,
+        model: WireModel? = nil
+    ) -> WireModel {
+        let m = model ?? WireModel()
+        m.fd = 0.04                      // 25 fps, the composition loop's own cadence
+        m.dropWindow = dropWindow
+        let box = CompositionParamBox(
+            palette: palette, motion: motion, envelope: envelope, reaction: ReactionConfig())
+        let frames = Int((seconds / 0.04).rounded())
+        for i in 0..<frames {
+            let chans = compositionChannels(box: box, time: Double(i) * 0.04, channels: channels)
+            if gated {
+                m.emitComposition(chans)
+            } else {
+                m.emitUngatedComposition(chans)
+            }
+        }
+        return m
+    }
+
+    // ── The field reduction ──
+
+    func testFieldFrameOfAUniformFrameIsThatFrame() {
+        // The property that lets a composition share one ledger with Strobe: on
+        // a uniform frame the reduction must be the IDENTITY, or the two loops
+        // would be gated on different numbers for the same wire.
+        for bri in [0.0, 0.13, 0.5, 0.901, 1.0] {
+            for (x, y) in [(0.3127, 0.3290), (0.675, 0.322), (0.17, 0.70), (0.167, 0.04)] {
+                let uniform = Array(repeating: (x: x, y: y, brightness: bri), count: 7)
+                let field = BeatMath.FlashSafety.fieldFrame(channels: uniform)
+                let one = BeatMath.FlashSafety.WireFrame(x: x, y: y, brightness: bri)
+                XCTAssertEqual(field.x, one.x, accuracy: 1e-12)
+                XCTAssertEqual(field.y, one.y, accuracy: 1e-12)
+                XCTAssertEqual(field.relativeLuminance, one.relativeLuminance, accuracy: 1e-12,
+                               "uniform reduction must be the identity at bri=\(bri) xy=(\(x),\(y))")
+            }
+        }
+    }
+
+    func testFieldLuminanceIsTheMeanNotTheMaximum() {
+        // Eight lights, one at full, seven dark: the field moved by an eighth,
+        // and gating it as though the whole room flashed would refuse motion
+        // that no viewer perceives as a flash.
+        var chans = Array(repeating: (x: 0.3127, y: 0.3290, brightness: 0.0), count: 8)
+        chans[0].brightness = 1.0
+        let field = BeatMath.FlashSafety.fieldFrame(channels: chans)
+        let full = BeatMath.FlashSafety.WireFrame(x: 0.3127, y: 0.3290, brightness: 1.0)
+        XCTAssertEqual(field.relativeLuminance, full.relativeLuminance / 8.0, accuracy: 1e-12)
+        XCTAssertLessThan(field.relativeLuminance, full.relativeLuminance / 4.0,
+                          "a max-reduction would report the single lamp as the whole field")
+    }
+
+    func testFieldLuminanceAveragesLuminanceNotDimming() {
+        // `dimmingLuminance` is a cube, so averaging the DIMMING levels first
+        // and cubing after understates every mixed frame (Jensen) — and
+        // understating is the direction that lets a flash through.
+        let mixed = [(x: 0.3127, y: 0.3290, brightness: 1.0),
+                     (x: 0.3127, y: 0.3290, brightness: 0.0)]
+        let field = BeatMath.FlashSafety.fieldFrame(channels: mixed)
+        let meanOfLuminances =
+            (BeatMath.FlashSafety.WireFrame(x: 0.3127, y: 0.3290, brightness: 1.0).relativeLuminance
+             + BeatMath.FlashSafety.WireFrame(x: 0.3127, y: 0.3290, brightness: 0.0).relativeLuminance) / 2
+        let cubeOfMeanDimming =
+            BeatMath.FlashSafety.WireFrame(x: 0.3127, y: 0.3290, brightness: 0.5).relativeLuminance
+        XCTAssertEqual(field.relativeLuminance, meanOfLuminances, accuracy: 1e-12)
+        XCTAssertGreaterThan(meanOfLuminances, cubeOfMeanDimming + 0.05,
+                             "the two must differ enough that this test can tell them apart")
+    }
+
+    func testFieldChromaticityIsWeightedByLuminance() {
+        // A chase's dark tail must not dilute the hue: an unweighted mean would
+        // drag a saturated-red strike off red until the red rule stopped firing.
+        let red = (x: 0.675, y: 0.322, brightness: 1.0)
+        let darkBlue = (x: 0.167, y: 0.04, brightness: 0.0)
+        let field = BeatMath.FlashSafety.fieldFrame(channels: [red, darkBlue, darkBlue, darkBlue])
+        XCTAssertEqual(field.x, red.x, accuracy: 1e-9)
+        XCTAssertEqual(field.y, red.y, accuracy: 1e-9)
+        XCTAssertTrue(field.isSaturatedRed,
+                      "the lit channel decides the field's colour; the dark ones contribute none")
+        let unweightedX = (red.x + 3 * darkBlue.x) / 4
+        XCTAssertGreaterThan(abs(unweightedX - field.x), 0.2,
+                             "an unweighted mean must be visibly different, or this proves nothing")
+    }
+
+    func testFieldFrameLuminanceIsExactNotApproximate() {
+        // The inverse round-trip is what makes the reserved frame's own
+        // luminance BE the field luminance rather than near it.
+        let chans = [(x: 0.3127, y: 0.3290, brightness: 0.8),
+                     (x: 0.675, y: 0.322, brightness: 0.35),
+                     (x: 0.17, y: 0.70, brightness: 0.6)]
+        let expected = chans
+            .map { BeatMath.FlashSafety.WireFrame(x: $0.x, y: $0.y, brightness: $0.brightness) }
+            .reduce(0.0) { $0 + $1.relativeLuminance } / 3.0
+        XCTAssertEqual(BeatMath.FlashSafety.fieldFrame(channels: chans).relativeLuminance,
+                       expected, accuracy: 1e-12)
+    }
+
+    func testInverseDimmingLuminanceRoundTrips() {
+        for bri in stride(from: 0.0, through: 1.0, by: 0.01) {
+            let round = BeatMath.FlashSafety.inverseDimmingLuminance(
+                BeatMath.FlashSafety.dimmingLuminance(bri))
+            XCTAssertEqual(round, bri, accuracy: 1e-9, "round trip failed at \(bri)")
+        }
+        // Totality: nothing traps, nothing escapes 0…1.
+        for bad in [Double.nan, -.infinity, .infinity, -1, 2] {
+            let v = BeatMath.FlashSafety.inverseDimmingLuminance(bad)
+            XCTAssertTrue(v >= 0 && v <= 1, "inverse must stay in 0…1 for \(bad)")
+        }
+    }
+
+    func testFieldFrameIsTotal() {
+        XCTAssertEqual(BeatMath.FlashSafety.fieldFrame(channels: []).brightness, 0,
+                       "a room with no channels puts no light in the field")
+        let poisoned = [(x: Double.nan, y: 0.3, brightness: 0.5),
+                        (x: 0.3, y: 0.3, brightness: .nan),
+                        (x: .infinity, y: -.infinity, brightness: .infinity)]
+        let field = BeatMath.FlashSafety.fieldFrame(channels: poisoned)
+        XCTAssertTrue(field.x.isFinite && field.y.isFinite && field.brightness.isFinite,
+                      "one corrupt channel may not poison the field frame")
+        XCTAssertTrue(field.relativeLuminance.isFinite)
+    }
+
+    // ── The realized rate on the wire ──
+
+    func testPulseAtTwoFortyBpmRealizesAboveThreeHzUngated() {
+        // The defect, on the code this slice replaces. Without this the gated
+        // test below could pass on a look that never flashed in the first place.
+        let onsets = realizedOnsets(
+            compositionWire(envelope: EnvelopeConfig(shape: .pulse, bpm: 240, depth: 100,
+                                                     minBrightness: 0, maxBrightness: 100),
+                            gated: false).wire)
+        XCTAssertGreaterThan(onsets.count, 6, "a 4 Hz square wave must realize onsets to grade")
+        XCTAssertLessThan(minimumGap(onsets) ?? .infinity,
+                          BeatMath.FlashSafety.minOnsetLedgerPeriod,
+                          "the ungated composition loop must breach the ceiling, or the fix is untested")
+    }
+
+    func testPulseAtTwoFortyBpmIsGatedToThreeHz() {
+        let onsets = realizedOnsets(
+            compositionWire(envelope: EnvelopeConfig(shape: .pulse, bpm: 240, depth: 100,
+                                                     minBrightness: 0, maxBrightness: 100)).wire)
+        assertOnsetsRespectTheFloor(onsets, label: "composition .pulse @ 240 bpm", atLeast: 3)
+    }
+
+    func testFlickerIsGatedToThreeHz() {
+        // `.flicker`'s fastest component is independent of bpm, so the slowest
+        // authored tempo does not make it safe.
+        let onsets = realizedOnsets(
+            compositionWire(envelope: EnvelopeConfig(shape: .flicker, bpm: 20, depth: 100,
+                                                     minBrightness: 0, maxBrightness: 100),
+                            seconds: 10).wire)
+        assertOnsetsRespectTheFloor(onsets, label: "composition .flicker", atLeast: 1)
+    }
+
+    func testEveryAuthoredEnvelopeShapeAtEveryTempoRespectsTheFloor() {
+        for shape in EnvelopeConfig.Shape.allCases {
+            for bpm in [20.0, 60, 137, 180, 240] {
+                let onsets = realizedOnsets(
+                    compositionWire(envelope: EnvelopeConfig(shape: shape, bpm: bpm, depth: 100,
+                                                             minBrightness: 0, maxBrightness: 100),
+                                    seconds: 8).wire)
+                assertOnsetsRespectTheFloor(onsets, label: "\(shape) @ \(bpm) bpm", atLeast: 0)
+            }
+        }
+    }
+
+    func testAChasingPaletteAcrossManyChannelsRespectsTheFloor() {
+        // Per-channel motion is the case the uniform gate could not have
+        // expressed at all: eight lights chasing a spectrum at speed.
+        for count in [1, 2, 8, 20] {
+            let onsets = realizedOnsets(
+                compositionWire(envelope: EnvelopeConfig(shape: .pulse, bpm: 240, depth: 100,
+                                                         minBrightness: 0, maxBrightness: 100),
+                                palette: PaletteConfig(mode: .spectrum),
+                                motion: MotionConfig(pattern: .chase, speed: 100),
+                                channels: count, seconds: 8).wire)
+            assertOnsetsRespectTheFloor(onsets, label: "chase over \(count) channel(s)", atLeast: 0)
+        }
+    }
+
+    func testADroppedSendDoesNotAdvanceTheCompositionOnset() {
+        // A frame the transport refused changed no light, so it must not hold
+        // the ledger's onset — the same wire-truth rule the uniform loops keep.
+        let onsets = realizedOnsets(
+            compositionWire(envelope: EnvelopeConfig(shape: .pulse, bpm: 240, depth: 100,
+                                                     minBrightness: 0, maxBrightness: 100),
+                            seconds: 8, dropWindow: 30..<45).wire)
+        assertOnsetsRespectTheFloor(onsets, label: "composition across a dropped window", atLeast: 1)
+    }
+
+    func testARestartCannotFlashAcrossTheRunBoundary() {
+        // Cross-run is the path with no frame plan behind it: stop, restart, and
+        // the very first frame of the new run wants to be bright. One shared
+        // model = one bridge whose ledger both runs reserve against.
+        let shared = WireModel()
+        _ = compositionWire(envelope: EnvelopeConfig(shape: .pulse, bpm: 240, depth: 100,
+                                                     minBrightness: 0, maxBrightness: 100),
+                            seconds: 3, model: shared)
+        _ = compositionWire(envelope: EnvelopeConfig(shape: .pulse, bpm: 240, depth: 100,
+                                                     minBrightness: 0, maxBrightness: 100),
+                            seconds: 3, model: shared)
+        assertOnsetsRespectTheFloor(realizedOnsets(shared.wire),
+                                    label: "composition stop → restart", atLeast: 2)
+    }
+
+    func testACompositionAndAUniformLoopShareOneBridgeLedger() {
+        // A composition failing over, or a Strobe starting on the same bridge,
+        // must not get a fresh 0.34 s budget: one wire, one record of it.
+        let shared = WireModel()
+        shared.fd = 0.04
+        let box = CompositionParamBox(
+            palette: PaletteConfig(), motion: MotionConfig(pattern: .static),
+            envelope: EnvelopeConfig(shape: .pulse, bpm: 240, depth: 100,
+                                     minBrightness: 0, maxBrightness: 100),
+            reaction: ReactionConfig())
+        for i in 0..<75 {
+            shared.emitComposition(
+                compositionChannels(box: box, time: Double(i) * 0.04, channels: 4))
+            // A uniform loop interleaving on the same bridge, asking to flash
+            // white at full on every one of its own frames.
+            shared.emitComposition([(x: 0.3127, y: 0.3290, brightness: 1.0)])
+        }
+        assertOnsetsRespectTheFloor(realizedOnsets(shared.wire),
+                                    label: "composition + uniform on one bridge", atLeast: 2)
     }
 }
