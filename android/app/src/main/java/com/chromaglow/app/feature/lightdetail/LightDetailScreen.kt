@@ -40,6 +40,8 @@ import com.chromaglow.app.ui.components.ColorMath
 import com.chromaglow.app.ui.components.ColorPad
 import com.chromaglow.app.ui.components.ConnectionStrip
 import com.chromaglow.app.ui.components.EmptyState
+import com.chromaglow.app.ui.components.FeedbackHost
+import com.chromaglow.app.ui.components.MutationFeedbackUi
 import com.chromaglow.app.ui.components.GradientSwatchStrip
 import com.chromaglow.app.ui.components.LocalReduceMotion
 import com.chromaglow.app.ui.components.ModeSegment
@@ -99,6 +101,7 @@ fun LightDetailRoute(
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsState()
+    val feedback by viewModel.feedback.collectAsState()
     CompositionLocalProvider(LocalReduceMotion provides rememberReduceMotion()) {
         LightDetailScreen(
             state = state,
@@ -123,6 +126,8 @@ fun LightDetailRoute(
                 onGradientApply = viewModel::applyGradient,
                 onAcknowledgeNotice = viewModel::acknowledgeNotice,
             ),
+            feedback = feedback,
+            onFeedbackShown = viewModel::dismissFeedback,
             modifier = modifier,
         )
     }
@@ -139,11 +144,14 @@ fun LightDetailScreen(
     state: LightDetailUiState,
     actions: LightDetailActions,
     modifier: Modifier = Modifier,
+    feedback: MutationFeedbackUi? = null,
+    onFeedbackShown: (MutationFeedbackUi) -> Unit = {},
 ) {
     val enabled = state.controlsEnabled
     val footnote = if (state.hardwareUnverified) UNVERIFIED_FOOTNOTE else null
+    FeedbackHost(feedback = feedback, onShown = onFeedbackShown, modifier = modifier) {
     Column(
-        modifier = modifier
+        modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
             .verticalScroll(rememberScrollState())
@@ -390,6 +398,7 @@ fun LightDetailScreen(
             SectionUi.Checking -> CheckingPlaceholder(id = "gradient", title = "Gradient")
             SectionUi.Hidden -> Unit
         }
+    }
     }
 }
 

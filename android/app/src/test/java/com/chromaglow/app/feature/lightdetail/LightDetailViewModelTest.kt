@@ -6,6 +6,11 @@ import com.chromaglow.app.core.identity.TargetRef
 import com.chromaglow.app.core.session.ConnectionState
 import com.chromaglow.app.core.session.EffectParameters
 import com.chromaglow.app.core.session.LightState
+import com.chromaglow.app.core.session.LiveMutation
+import com.chromaglow.app.core.session.MutationEvent
+import com.chromaglow.app.core.session.RefusalReason
+import kotlinx.coroutines.test.runCurrent
+import org.junit.Assert.assertNull
 import com.chromaglow.app.core.session.TimedEffect
 import com.chromaglow.app.core.session.safety.EffectSafetyRegister
 import com.chromaglow.app.feature.testing.Caps
@@ -44,10 +49,11 @@ class LightDetailViewModelTest {
         register: EffectSafetyRegister? = null,
     ): LightDetailViewModel {
         val home = FakeLiveHome(homeOf(snapshot(lights = listOf(l)) to connection))
+        val store = InMemoryNoticeAcknowledgementStore(initial = true)
         return if (register != null) {
-            LightDetailViewModel(home, commands, l.key, register = register, noticeAcknowledged = true, clock = { 0L })
+            LightDetailViewModel(home, commands, l.key, register = register, noticeStore = store, clock = { 0L })
         } else {
-            LightDetailViewModel(home, commands, l.key, noticeAcknowledged = true, clock = { 0L })
+            LightDetailViewModel(home, commands, l.key, noticeStore = store, clock = { 0L })
         }
     }
 
@@ -214,10 +220,38 @@ class LightDetailViewModelTest {
     @Test
     fun acknowledgeNotice_hidesIt() = runTest(dispatcher) {
         val home = FakeLiveHome(homeOf(snapshot(lights = listOf(colour)) to ConnectionState.Connected))
-        val vm = LightDetailViewModel(home, commands, colour.key, noticeAcknowledged = false, clock = { 0L })
+        val store = InMemoryNoticeAcknowledgementStore()
+        val vm = LightDetailViewModel(home, commands, colour.key, noticeStore = store, clock = { 0L })
         assertTrue(vm.uiState.value.showPhotosensitivityNotice)
         vm.acknowledgeNotice()
         val after = vm.uiState.first { !it.showPhotosensitivityNotice }
         assertTrue(!after.showPhotosensitivityNotice)
+        assertTrue(store.isAcknowledged())
+    }
+
+    @Test
+    fun noticeAcknowledgedOnOneViewModel_isNotShownByAnotherOnTheSameStore() {
+        val home = FakeLiveHome(homeOf(snapshot(lights = listOf(colour)) to ConnectionState.Connected))
+        val store = InMemoryNoticeAcknowledgementStore()
+        val first = LightDetailViewModel(home, commands, colour.key, noticeStore = store, clock = { 0L })
+        assertTrue(first.uiState.value.showPhotosensitivityNotice)
+        first.acknowledgeNotice()
+        val second = LightDetailViewModel(home, commands, colour.key, noticeStore = store, clock = { 0L })
+        assertTrue(!second.uiState.value.showPhotosensitivityNotice)
+        val unrelated = LightDetailViewModel(home, commands, colour.key, noticeStore = InMemoryNoticeAcknowledgementStore(), clock = { 0L })
+        assertTrue(unrelated.uiState.value.showPhotosensitivityNotice)
+    }
+
+    @Test
+    fun feedback_onlyForThisLight_namesIt() = runTest(dispatcher) {
+        val home = FakeLiveHome(homeOf(snapshot(lights = listOf(colour, light("o", "Other"))) to ConnectionState.Connected))
+        val vm = LightDetailViewModel(home, commands, colour.key, noticeStore = InMemoryNoticeAcknowledgementStore(true), clock = { 0L })
+        runCurrent()
+        home.emitEvent(MutationEvent.Refused(LiveMutation.SetPower(com.chromaglow.app.feature.testing.lightKey("o"), true), RefusalReason.OFFLINE))
+        runCurrent()
+        assertNull(vm.feedback.value)
+        home.emitEvent(MutationEvent.Refused(LiveMutation.SelectEffect(colour.key, "candle"), RefusalReason.EFFECT_DENIED_BY_SAFETY_REGISTER))
+        runCurrent()
+        assertEquals("Lamp effect isn't available on this app.", vm.feedback.value!!.message)
     }
 }

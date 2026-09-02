@@ -37,6 +37,9 @@ import com.chromaglow.app.testing.homeOf
 import com.chromaglow.app.testing.snapshot
 import com.chromaglow.app.ui.components.CONNECTION_STRIP_TAG
 import com.chromaglow.app.ui.components.EMPTY_STATE_TAG
+import com.chromaglow.app.ui.components.FEEDBACK_HOST_TAG
+import com.chromaglow.app.ui.components.FeedbackKind
+import com.chromaglow.app.ui.components.MutationFeedbackUi
 import com.chromaglow.app.ui.components.LocalReduceMotion
 import com.chromaglow.app.ui.components.PULSE_CARD_TAG
 import com.chromaglow.app.ui.components.groupFaderTag
@@ -210,5 +213,26 @@ class HomeScreenTest {
         bed.assertIsOff()
         bed.assertIsEnabled()
     }
-}
 
+    @Test
+    fun feedback_isShownAsSnackbar_inALiveRegion_andReportedShown() {
+        var shown: MutationFeedbackUi? = null
+        val f = MutationFeedbackUi(1, FeedbackKind.FAILED_REVERTED, "Living Room brightness couldn't be changed. Reverted.", Fixtures.livingGrouped)
+        rule.setContent {
+            ChromaGlowTheme {
+                HomeScreen(
+                    state = HomeUiMapper.map(Fixtures.home(), 0L),
+                    onOpenGroup = { _, _ -> }, onOpenScenes = {}, onOpenSettings = {}, onRefresh = {},
+                    onGroupPower = { _, _ -> }, onGroupBrightness = { _, _ -> },
+                    feedback = f,
+                    onFeedbackShown = { shown = it },
+                )
+            }
+        }
+        rule.onNodeWithTag(FEEDBACK_HOST_TAG).assert(SemanticsMatcher.keyIsDefined(SemanticsProperties.LiveRegion))
+        rule.onNodeWithText(f.message).assertIsDisplayed()
+        rule.mainClock.advanceTimeBy(6_000)
+        rule.waitForIdle()
+        assertEquals(f, shown)
+    }
+}

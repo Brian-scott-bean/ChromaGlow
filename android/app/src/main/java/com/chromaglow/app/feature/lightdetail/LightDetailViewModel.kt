@@ -11,6 +11,8 @@ import com.chromaglow.app.core.session.TimedEffect
 import com.chromaglow.app.core.session.safety.DefaultEffectSafetyRegister
 import com.chromaglow.app.core.session.safety.EffectSafetyRegister
 import com.chromaglow.app.ui.components.ColorMath
+import com.chromaglow.app.ui.components.MutationFeedbackController
+import com.chromaglow.app.ui.components.MutationFeedbackUi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -29,19 +31,31 @@ class LightDetailViewModel(
     private val commands: HomeCommands,
     val lightKey: ResourceKey,
     private val register: EffectSafetyRegister = DefaultEffectSafetyRegister,
-    noticeAcknowledged: Boolean = PhotosensitivityNotice.acknowledged,
+    /** Durable store injected by the shell; the in-memory default keeps un-wired callers honest. */
+    private val noticeStore: NoticeAcknowledgementStore = InMemoryNoticeAcknowledgementStore(),
     private val clock: () -> Long = { System.currentTimeMillis() },
 ) : ViewModel() {
 
-    private val edits = MutableStateFlow(LightEdits(noticeAcknowledged = noticeAcknowledged))
+    private val edits = MutableStateFlow(LightEdits(noticeAcknowledged = noticeStore.isAcknowledged()))
 
-    val uiState: StateFlow<LightDetailUiState> = combine(liveHome.home, edits) { home, e ->
-        LightDetailUiMapper.map(home, lightKey, e, register, clock())
+    val uiState: StateFlow<LightDetailUiState> = combine(liveHome.home, edits, liveHome.bridgeNames) { home, e, names ->
+        LightDetailUiMapper.map(home, lightKey, e, register, clock(), names)
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
-        initialValue = LightDetailUiMapper.map(liveHome.home.value, lightKey, edits.value, register, clock()),
+        initialValue = LightDetailUiMapper.map(liveHome.home.value, lightKey, edits.value, register, clock(), liveHome.bridgeNames.value),
     )
+
+    private val feedbackController = MutationFeedbackController(
+        scope = viewModelScope,
+        events = liveHome.mutationEvents,
+        isRelevant = { it.target == lightKey },
+        nameOf = { key -> liveHome.home.value.bridges[key.bridgeId]?.lights?.get(key)?.name },
+    )
+
+    val feedback: StateFlow<MutationFeedbackUi?> = feedbackController.feedback
+
+    fun dismissFeedback(shown: MutationFeedbackUi) = feedbackController.dismiss(shown)
 
     /**
      * The state as of RIGHT NOW, computed from the sources rather than read from [uiState]:
@@ -49,7 +63,7 @@ class LightDetailViewModel(
      * straight after an edit could act on a stale mapping.
      */
     private fun current(): LightDetailUiState =
-        LightDetailUiMapper.map(liveHome.home.value, lightKey, edits.value, register, clock())
+        LightDetailUiMapper.map(liveHome.home.value, lightKey, edits.value, register, clock(), liveHome.bridgeNames.value)
 
     private inline fun whenLive(block: (LightDetailUiState, com.chromaglow.app.core.identity.TargetRef.Live) -> Unit) {
         val s = current()
@@ -170,7 +184,7 @@ class LightDetailViewModel(
     }
 
     fun acknowledgeNotice() {
-        PhotosensitivityNotice.acknowledged = true
+        noticeStore.acknowledge()
         edits.update { it.copy(noticeAcknowledged = true) }
     }
 }

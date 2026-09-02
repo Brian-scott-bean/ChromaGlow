@@ -1,5 +1,6 @@
 package com.chromaglow.app.feature.scenes
 
+import com.chromaglow.app.core.identity.BridgeId
 import com.chromaglow.app.core.identity.ResourceKey
 import com.chromaglow.app.core.session.ConnectionState
 import com.chromaglow.app.core.session.HomeSnapshot
@@ -18,11 +19,12 @@ object LiveScenesUiMapper {
         pending: Set<ResourceKey>,
         failed: Set<ResourceKey>,
         nowMillis: Long,
+        names: Map<BridgeId, String> = emptyMap(),
     ): LiveScenesUiState {
         if (home.bridges.isEmpty()) return LiveScenesUiState(ScenesPhase.NO_BRIDGES, emptyList(), emptyList())
         val multi = home.bridges.size > 1
         val strip = home.bridges.keys.sortedBy { it.value }.map { id ->
-            HomeUiMapper.connectionRow(id, home.connections[id] ?: ConnectionState.Connecting, nowMillis, multi)
+            HomeUiMapper.connectionRow(id, home.connections[id] ?: ConnectionState.Connecting, nowMillis, multi, names[id])
         }
         var anyData = false
         var anyConnecting = false
@@ -58,7 +60,7 @@ object LiveScenesUiMapper {
                     )
                 }
                 .sortedBy { it.groupName.lowercase() }
-            BridgeScenesUi(bridgeId = id, bridgeLabel = HomeUiMapper.bridgeLabel(id, multi), groups = groups)
+            BridgeScenesUi(bridgeId = id, bridgeLabel = HomeUiMapper.bridgeLabel(id, multi, names[id]), groups = groups)
         }
         val phase = when {
             sections.isNotEmpty() -> ScenesPhase.CONTENT

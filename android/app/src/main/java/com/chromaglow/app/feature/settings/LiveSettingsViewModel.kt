@@ -25,12 +25,12 @@ class LiveSettingsViewModel(
 
     private val confirming = MutableStateFlow<BridgeId?>(null)
 
-    val uiState: StateFlow<LiveSettingsUiState> = combine(liveHome.home, confirming) { home, c ->
-        LiveSettingsUiMapper.map(home, appVersion, c, clock())
+    val uiState: StateFlow<LiveSettingsUiState> = combine(liveHome.home, confirming, liveHome.bridgeNames) { home, c, names ->
+        LiveSettingsUiMapper.map(home, appVersion, c, clock(), names)
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
-        initialValue = LiveSettingsUiMapper.map(liveHome.home.value, appVersion, null, clock()),
+        initialValue = LiveSettingsUiMapper.map(liveHome.home.value, appVersion, null, clock(), liveHome.bridgeNames.value),
     )
 
     fun requestForget(bridgeId: BridgeId) {

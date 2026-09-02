@@ -13,7 +13,28 @@ data class GroupDetailUiState(
     val lights: List<LightCardUi>,
     val coverage: List<String>,
     val strip: List<ConnectionRowUi>,
+    /** Group colour instrument; null (hidden) when no member has colour KNOWN. */
+    val groupColor: GroupInstrumentUi? = null,
+    /** Group warmth instrument; null (hidden) when no member has CT KNOWN. */
+    val groupWarmth: GroupInstrumentUi? = null,
 )
+
+/**
+ * A group-level colour or warmth control. The coordinator fans the write out to the KNOWN
+ * members only, so the caption states the reach honestly. The group range is the protocol clamp
+ * (153–500 mirek) or a neutral display gamut; neither is presented as a lamp's KNOWN schema.
+ */
+data class GroupInstrumentUi(
+    val capableCount: Int,
+    val total: Int,
+) {
+    val caption: String
+        get() = if (capableCount == total) {
+            if (total == 1) "Applies to the 1 light" else "Applies to all $total lights"
+        } else {
+            "Applies to $capableCount of $total lights"
+        }
+}
 
 /** One member light as the compact card renders it. Colour is carried as truth (xy/mirek), not paint. */
 data class LightCardUi(

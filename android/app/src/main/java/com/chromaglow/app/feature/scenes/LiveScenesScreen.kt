@@ -34,6 +34,8 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import com.chromaglow.app.ui.components.ConnectionStrip
+import com.chromaglow.app.ui.components.FeedbackHost
+import com.chromaglow.app.ui.components.MutationFeedbackUi
 import com.chromaglow.app.ui.components.EmptyState
 import com.chromaglow.app.ui.components.LocalReduceMotion
 import com.chromaglow.app.ui.components.PulseCard
@@ -52,8 +54,17 @@ fun LiveScenesRoute(
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsState()
+    val feedback by viewModel.feedback.collectAsState()
     CompositionLocalProvider(LocalReduceMotion provides rememberReduceMotion()) {
-        LiveScenesScreen(state = state, onBack = onBack, onActivate = viewModel::activate, onRefresh = viewModel::refresh, modifier = modifier)
+        LiveScenesScreen(
+            state = state,
+            onBack = onBack,
+            onActivate = viewModel::activate,
+            onRefresh = viewModel::refresh,
+            modifier = modifier,
+            feedback = feedback,
+            onFeedbackShown = viewModel::dismissFeedback,
+        )
     }
 }
 
@@ -69,9 +80,12 @@ fun LiveScenesScreen(
     onActivate: (SceneRowUi) -> Unit,
     onRefresh: () -> Unit,
     modifier: Modifier = Modifier,
+    feedback: MutationFeedbackUi? = null,
+    onFeedbackShown: (MutationFeedbackUi) -> Unit = {},
 ) {
+    FeedbackHost(feedback = feedback, onShown = onFeedbackShown, modifier = modifier) {
     LazyColumn(
-        modifier = modifier
+        modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
             .testTag(LIVE_SCENES_LIST_TAG),
@@ -135,6 +149,7 @@ fun LiveScenesScreen(
                 }
             }
         }
+    }
     }
 }
 
