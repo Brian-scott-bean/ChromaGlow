@@ -309,7 +309,9 @@ class AndroidNsdBridgeDiscoveryService(
         // BridgeEndpoint guard is the backstop.
         if (host.contains('%') || host.any { it.isWhitespace() }) return null
         if (port !in 1..65535) return null
-        val name = serviceName?.takeIf { it.isNotBlank() } ?: host
+        // The advertised name is attacker-controlled: strip bidi/control/format characters and
+        // bound its length before it is rendered or persisted (audit L-40).
+        val name = BridgeDisplayName.sanitize(serviceName, fallback = host)
         return try {
             BridgeEndpoint(name = name, host = host, port = port)
         } catch (_: IllegalArgumentException) {
