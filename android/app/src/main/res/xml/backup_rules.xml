@@ -1,13 +1,15 @@
-<?xml version="1.0" encoding="utf-8"?><!--
-   Sample backup rules file; uncomment and customize as necessary.
-   See https://developer.android.com/guide/topics/data/autobackup
-   for details.
-   Note: This file is ignored for devices older than API 31
-   See https://developer.android.com/about/versions/12/backup-restore
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+   Belt-and-suspenders backup exclusions (audit I-13). allowBackup is already "false" in the
+   manifest; these rules additionally exclude every app-data domain so that a future file,
+   preference, or database placed outside noBackupFilesDir can never become backup-eligible by
+   accident. Bridge credentials and routing metadata live under noBackupFilesDir and are never
+   eligible regardless of these rules.
+   Note: this file is ignored for devices older than API 31; see data_extraction_rules.xml.
 -->
 <full-backup-content>
-    <!--
-   <include domain="sharedpref" path="."/>
-   <exclude domain="sharedpref" path="device.xml"/>
--->
+    <exclude domain="file" path="." />
+    <exclude domain="sharedpref" path="." />
+    <exclude domain="database" path="." />
+    <exclude domain="external" path="." />
 </full-backup-content>
