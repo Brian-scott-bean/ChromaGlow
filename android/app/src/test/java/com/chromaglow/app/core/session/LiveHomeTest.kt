@@ -14,11 +14,15 @@ import com.chromaglow.app.testing.FakeSnapshotCache
 import com.chromaglow.app.testing.ManualClock
 import com.chromaglow.app.testing.RecordingCoordinator
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.runCurrent
+import kotlin.reflect.full.memberProperties
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -116,7 +120,7 @@ class LiveHomeTest {
         h.registry.records += h.record(bridgeB, host = "192.168.1.11")
         h.credentials.tokens[bridgeA.value] = "tok-a-0000000000"
         h.credentials.tokens[bridgeB.value] = "tok-b-0000000000"
-        h.transports.getOrPut(bridgeB) { FakeHueClipTransport(bridgeB) }.fail(ResourceType.LIGHT, ClipError.Transport)
+        h.transports.getOrPut(bridgeB) { FakeHueClipTransport(bridgeB) }.fail(ResourceType.LIGHT, ClipError.Transport())
 
         h.home.start()
         advanceUntilIdle()
@@ -166,6 +170,94 @@ class LiveHomeTest {
         advanceUntilIdle()
         assertTrue(h.home.home.value.bridges.isEmpty())
         assertEquals(MutationOutcome.Refused(RefusalReason.SESSION_CLOSED), h.home.submit(LiveMutation.SetPower(ResourceKey(bridgeB, ResourceType.LIGHT, ResourceId("la")), true)))
+    }
+
+    @Test
+    fun b07_remove_clearsThatBridgesCache_andOnlyThat() = runTest {
+        val h = Harness(this)
+        h.registry.records += h.record(bridgeA)
+        h.registry.records += h.record(bridgeB, host = "192.168.1.11")
+        h.credentials.tokens[bridgeA.value] = "tok-a-0000000000"
+        h.credentials.tokens[bridgeB.value] = "tok-b-0000000000"
+        h.home.start()
+        advanceUntilIdle()
+        h.home.remove(bridgeA)
+        advanceUntilIdle()
+        assertEquals(1, h.caches.getValue(bridgeA).clearCount)
+        assertEquals(0, h.caches.getValue(bridgeB).clearCount)
+    }
+
+    @Test
+    fun b11_removeDuringStart_neverResurrectsTheBridge() = runTest {
+        val h = Harness(this)
+        h.registry.records += h.record(bridgeA)
+        h.credentials.tokens[bridgeA.value] = "tok-a-0000000000"
+        val slow = object : com.chromaglow.app.core.bridge.BridgeRegistry by h.registry {
+            val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+            override suspend fun bridges(): BridgeRegistryResult<List<PairedBridgeRecord>> { gate.await(); return h.registry.bridges() }
+        }
+        val home = DefaultLiveHome(slow, h.credentials, LiveHomeFactories(
+            transport = { _, id, _ -> h.transports.getOrPut(id) { FakeHueClipTransport(id) } },
+            cache = { id -> h.caches.getOrPut(id) { FakeSnapshotCache(id) } },
+            coordinator = { RecordingCoordinator() }, probeBridgeIdentity = false,
+        ), ManualClock(), CoroutineScope(h.dispatcher), h.dispatcher, h.dispatcher)
+        home.start()
+        advanceUntilIdle()
+        home.remove(bridgeA)               // Forget while the registry read is still pending
+        slow.gate.complete(Unit)
+        advanceUntilIdle()
+        assertNull("a forgotten bridge must not come back as a ghost session", home.session(bridgeA))
+        assertTrue(home.home.value.bridges.isEmpty())
+    }
+
+    @Test
+    fun c1_mutationEvents_mergeSessionEvents_andEmitRefusedForEveryRefusedSubmit() = runTest {
+        val h = Harness(this)
+        h.registry.records += h.record(bridgeA)
+        h.credentials.tokens[bridgeA.value] = "tok-a-0000000000"
+        h.home.start()
+        advanceUntilIdle()
+        val events = mutableListOf<MutationEvent>()
+        val job = backgroundScope.launch(h.dispatcher) { h.home.mutationEvents.collect { events += it } }
+        runCurrent()
+        val unknown = ResourceKey(bridgeB, ResourceType.LIGHT, ResourceId("la"))
+        h.home.submit(LiveMutation.SetPower(unknown, true))
+        h.coordinators.getValue(bridgeA).refuse = MutationOutcome.Refused(RefusalReason.OFFLINE)
+        h.home.submit(LiveMutation.SetPower(ResourceKey(bridgeA, ResourceType.LIGHT, ResourceId("la")), true))
+        // A session-level event flows up through the merge.
+        (h.home.session(bridgeA) as DefaultBridgeSession).environment.mutationEvents.tryEmit(MutationEvent.Applied(LiveMutation.SetPower(unknown, false)))
+        runCurrent()
+        assertEquals(RefusalReason.TARGET_UNKNOWN, (events[0] as MutationEvent.Refused).reason)
+        assertEquals(RefusalReason.OFFLINE, (events[1] as MutationEvent.Refused).reason)
+        assertTrue(events[2] is MutationEvent.Applied)
+        job.cancel()
+    }
+
+    @Test
+    fun c1_mutationEventTypes_carryNoKeyMaterial() {
+        val forbidden = listOf("token", "username", "secret", "password", "apikey", "api_key", "clientkey", "credential", "key")
+        for (cls in MutationEvent::class.sealedSubclasses) {
+            for (prop in cls.memberProperties) {
+                val name = prop.name.lowercase()
+                assertFalse("${cls.simpleName}.${prop.name}", forbidden.any { name == it || name.endsWith(it) })
+                assertFalse("${cls.simpleName}.${prop.name} must not be a raw String", prop.returnType.classifier == String::class)
+            }
+        }
+        assertTrue(MutationFailure.entries.isNotEmpty())
+    }
+
+    @Test
+    fun c3_bridgeNames_comeFromTheRecordName_sanitized_neverFromModelData() = runTest {
+        val h = Harness(this)
+        h.registry.records += PairedBridgeRecord(bridgeA.value, "  Living  Room Bridge  ", "192.168.1.10", 443, true)
+        h.registry.records += PairedBridgeRecord(bridgeB.value, "x", "192.168.1.11", 443, false)
+        h.credentials.tokens[bridgeA.value] = "tok-a-0000000000"
+        h.home.start()
+        advanceUntilIdle()
+        assertEquals("Living Room Bridge", h.home.bridgeNames.value[bridgeA])
+        assertEquals("x", h.home.bridgeNames.value[bridgeB])
+        h.home.remove(bridgeB)
+        assertNull(h.home.bridgeNames.value[bridgeB])
     }
 
     @Test

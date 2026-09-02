@@ -67,4 +67,10 @@ class SessionCredentials(
     }
 
     override fun applicationKey(): ApplicationKey? = key?.takeIf { !it.isCleared }
+
+    /** Mask this session's own key wherever it appears in [line] (diagnostics hygiene, D-08). */
+    fun redact(line: String): String {
+        val k = key?.takeIf { !it.isCleared } ?: return line
+        return k.withHeaderValue { value -> if (value.length >= 4 && line.contains(value)) line.replace(value, com.chromaglow.app.core.hue.rest.Redactor.MASK) else line }
+    }
 }

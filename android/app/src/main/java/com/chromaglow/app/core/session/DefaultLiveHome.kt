@@ -4,6 +4,7 @@ import com.chromaglow.app.core.bridge.BridgeRegistry
 import com.chromaglow.app.core.bridge.BridgeRegistryResult
 import com.chromaglow.app.core.bridge.PairedBridgeRecord
 import com.chromaglow.app.core.credentials.BridgeCredentialStore
+import com.chromaglow.app.core.hue.discovery.BridgeDisplayName
 import com.chromaglow.app.core.hue.rest.ApplicationKeyProvider
 import com.chromaglow.app.core.hue.rest.HueClipClient
 import com.chromaglow.app.core.identity.BridgeId
@@ -13,7 +14,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.launchIn
@@ -55,6 +58,16 @@ class DefaultLiveHome(
     private val sessions = LinkedHashMap<BridgeId, DefaultBridgeSession>()
     private val homeState = MutableStateFlow(HomeSnapshot(emptyMap(), emptyMap()))
     private var mergeJob: Job? = null
+    private val eventJobs = HashMap<BridgeId, Job>()
+    private val caches = HashMap<BridgeId, BridgeSnapshotCache>()
+
+    /** Bridges removed since start(); a late registry read must not resurrect them (B-11). */
+    private val removed = HashSet<BridgeId>()
+    private val events: MutableSharedFlow<MutationEvent> = MutationEvents.sink()
+    private val names = MutableStateFlow<Map<BridgeId, String>>(emptyMap())
+
+    override val mutationEvents: SharedFlow<MutationEvent> get() = events
+    override val bridgeNames: StateFlow<Map<BridgeId, String>> get() = names
 
     /** Registry problems are surfaced here (UNAVAILABLE = corrupt/unreadable metadata), never repaired. */
     sealed interface RegistryStatus {
@@ -89,20 +102,24 @@ class DefaultLiveHome(
 
     private fun openSession(record: PairedBridgeRecord) {
         val bridgeId = BridgeId.parseOrNull(record.bridgeId) ?: return
-        if (closed || sessions.containsKey(bridgeId)) return
+        if (closed || sessions.containsKey(bridgeId) || bridgeId in removed) return
         val credentials = SessionCredentials(bridgeId, credentialStore, ioDispatcher)
+        val cache = factories.cache(bridgeId)
+        caches[bridgeId] = cache
         val session = DefaultBridgeSession(
             bridgeId = bridgeId,
             parentScope = scope,
             transport = factories.transport(record, bridgeId, credentials),
             credentials = credentials,
-            cache = factories.cache(bridgeId),
+            cache = cache,
             clock = clock,
             coordinatorFactory = factories.coordinator,
             attachmentFactories = factories.attachments.map { f -> { env: SessionEnvironment -> f(env, record, credentials) } },
             probeBridgeIdentity = factories.probeBridgeIdentity,
         )
         sessions[bridgeId] = session
+        names.value = names.value + (bridgeId to BridgeDisplayName.sanitize(record.name, fallback = DEFAULT_BRIDGE_NAME))
+        eventJobs[bridgeId] = session.mutationEvents.onEach { events.tryEmit(it) }.launchIn(scope)
         session.start()
     }
 
@@ -135,9 +152,12 @@ class DefaultLiveHome(
     }
 
     override suspend fun submit(mutation: LiveMutation): MutationOutcome {
-        if (closed) return MutationOutcome.Refused(RefusalReason.SESSION_CLOSED)
-        val session = sessions[mutation.target.bridgeId] ?: return MutationOutcome.Refused(RefusalReason.TARGET_UNKNOWN)
-        return session.submit(mutation)
+        val outcome = when {
+            closed -> MutationOutcome.Refused(RefusalReason.SESSION_CLOSED)
+            else -> sessions[mutation.target.bridgeId]?.submit(mutation) ?: MutationOutcome.Refused(RefusalReason.TARGET_UNKNOWN)
+        }
+        if (outcome is MutationOutcome.Refused) events.tryEmit(MutationEvent.Refused(mutation, outcome.reason))
+        return outcome
     }
 
     override fun onForeground() {
@@ -149,9 +169,15 @@ class DefaultLiveHome(
     }
 
     override fun remove(bridgeId: BridgeId) {
-        val session = sessions.remove(bridgeId) ?: return
-        session.close()
-        rebuildMerge()
+        removed += bridgeId
+        val cache = caches.remove(bridgeId)
+        val session = sessions.remove(bridgeId)
+        eventJobs.remove(bridgeId)?.cancel()
+        names.value = names.value - bridgeId
+        session?.close()
+        // Forget is local-only and complete: the cached snapshot of that bridge goes too (B-07).
+        if (cache != null) scope.launch { cache.clear() }
+        if (session != null) rebuildMerge()
     }
 
     override fun close() {
@@ -159,8 +185,15 @@ class DefaultLiveHome(
         closed = true
         sessions.values.forEach { it.close() }
         sessions.clear()
+        eventJobs.values.forEach { it.cancel() }
+        eventJobs.clear()
+        names.value = emptyMap()
         mergeJob?.cancel()
         homeState.value = HomeSnapshot(emptyMap(), emptyMap())
         supervisor.cancel()
+    }
+
+    private companion object {
+        const val DEFAULT_BRIDGE_NAME = "Bridge"
     }
 }

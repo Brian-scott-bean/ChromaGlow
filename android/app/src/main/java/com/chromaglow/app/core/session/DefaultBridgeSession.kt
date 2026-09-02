@@ -32,6 +32,10 @@ class SessionEnvironment internal constructor(
     val reportUnauthorized: (status: Int) -> Unit,
     /** Field-aware optimistic authority shared by this bridge's coordinator and its stream reducer. */
     val authority: PendingAuthority = PendingAuthority(),
+    /** Post-admission mutation feedback emitted by the coordinator (C-1). */
+    val mutationEvents: kotlinx.coroutines.flow.MutableSharedFlow<MutationEvent> = MutationEvents.sink(),
+    /** The stream runner reports every reduced event so a load in flight can be reconciled afterwards (B-06). */
+    val onStreamEvent: () -> Unit = {},
 )
 
 /** A per-session collaborator with a lifecycle bound to foreground/background. */
@@ -84,7 +88,21 @@ class DefaultBridgeSession(
     @Volatile
     private var started = false
 
-    val environment: SessionEnvironment = SessionEnvironment(
+    /** Lifecycle truth: attachments (the stream) run only while foregrounded (B-05). */
+    @Volatile
+    private var foregrounded = true
+
+    @Volatile
+    private var attachmentsRunning = false
+
+    /** A load is between mint and accept; events reduced meanwhile must be reconciled afterwards (B-06). */
+    @Volatile
+    private var loadInFlight = false
+
+    @Volatile
+    private var eventsDuringLoad = false
+
+    internal val environment: SessionEnvironment = SessionEnvironment(
         bridgeId = bridgeId,
         scope = scope,
         transport = transport,
@@ -93,6 +111,7 @@ class DefaultBridgeSession(
         clock = clock,
         requestRefresh = ::requestRefresh,
         reportUnauthorized = ::onUnauthorized,
+        onStreamEvent = { if (loadInFlight) eventsDuringLoad = true },
     )
 
     private val coordinator: MutationCoordinator = coordinatorFactory(environment)
@@ -100,6 +119,7 @@ class DefaultBridgeSession(
 
     override val snapshot: StateFlow<BridgeSnapshot> get() = store.flow
     override val connection: StateFlow<ConnectionState> get() = connectionState
+    override val mutationEvents: kotlinx.coroutines.flow.SharedFlow<MutationEvent> get() = environment.mutationEvents
 
     /** Idempotent. Launches the refresh worker and the initial load sequence. */
     fun start() {
@@ -134,19 +154,49 @@ class DefaultBridgeSession(
                 }
             }
         }
+        if (revoked) return // a 401/403 on the probe: no refresh, no stream (B-04)
         requestRefresh(RefreshReason.SESSION_START)
+        if (foregrounded) startAttachments()
+    }
+
+    private fun startAttachments() {
+        if (closed || revoked || attachmentsRunning || credentials.state != CredentialState.Loaded) return
+        attachmentsRunning = true
         attachments.forEach { it.onForeground() }
+    }
+
+    private fun stopAttachments() {
+        if (!attachmentsRunning) return
+        attachmentsRunning = false
+        attachments.forEach { it.onBackground() }
     }
 
     private suspend fun refreshWorker() {
         for (reason in refreshRequests) {
             if (closed || revoked) continue
             if (credentials.state != CredentialState.Loaded) continue
-            when (val outcome = loader.load()) {
+            loadInFlight = true
+            eventsDuringLoad = false
+            val outcome = try {
+                loader.load()
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: RuntimeException) {
+                LoadOutcome.Failed(ClipError.Transport(afterTransmission = false)) // A-01: never an uncaught crash
+            } finally {
+                loadInFlight = false
+            }
+            when (outcome) {
                 is LoadOutcome.Loaded -> {
-                    store.update { outcome.snapshot }
+                    // Unexpired optimistic overlays survive the authoritative load (B-01).
+                    store.update { current -> environment.authority.overlayPending(outcome.snapshot, current, clock.nowMillis()) }
                     connectionState.value = ConnectionState.Connected
                     cache.write(outcome.snapshot)
+                    if (eventsDuringLoad) {
+                        // Newer stream truth arrived while the older GET was in flight: reconcile once (B-06).
+                        eventsDuringLoad = false
+                        requestRefresh(RefreshReason.STREAM_RECONNECTED)
+                    }
                 }
                 is LoadOutcome.Unauthorized -> onUnauthorized(outcome.status)
                 is LoadOutcome.Failed -> onLoadFailed(outcome.error)
@@ -180,7 +230,7 @@ class DefaultBridgeSession(
         revoked = true
         note("unauthorized $status → revoked (record kept)")
         credentials.drop()
-        attachments.forEach { it.onBackground() }
+        stopAttachments()
         connectionState.value = ConnectionState.Revoked
     }
 
@@ -195,29 +245,36 @@ class DefaultBridgeSession(
         return coordinator.submit(mutation)
     }
 
+    /** Contract order: authoritative refresh FIRST, then the stream reconnects (B-05). */
     fun onForeground() {
+        foregrounded = true
         if (closed || revoked) return
-        attachments.forEach { it.onForeground() }
         requestRefresh(RefreshReason.FOREGROUND)
+        startAttachments()
     }
 
     fun onBackground() {
+        foregrounded = false
         if (closed) return
-        attachments.forEach { it.onBackground() }
+        stopAttachments()
     }
 
     override fun close() {
         if (closed) return
         closed = true
         attachments.forEach { runCatching { it.close() } }
+        (coordinator as? SessionAttachment)?.let { runCatching { it.close() } } // B-10
         refreshRequests.close()
         supervisor.cancel()
         scope.cancel()
+        credentials.drop() // A-04: the wipeable key never outlives its session
     }
 
+    /** Every diagnostic line is redacted (header shapes and this session's own key) before it is kept (D-08). */
     private fun note(line: String) {
+        val safe = credentials.redact(com.chromaglow.app.core.hue.rest.Redactor.redact(line))
         synchronized(diagnosticsLog) {
-            diagnosticsLog.addLast(line)
+            diagnosticsLog.addLast(safe)
             while (diagnosticsLog.size > MAX_DIAGNOSTICS) diagnosticsLog.removeFirst()
         }
     }
