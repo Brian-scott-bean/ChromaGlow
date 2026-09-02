@@ -62,6 +62,22 @@ struct CustomizationValueSet<ColorValue: Hashable & Sendable>: Hashable, Sendabl
         merged.colors.merge(colors) { _, mine in mine }
         return merged
     }
+
+    /// `self` with every key `other` names removed — whatever value it holds
+    /// for them.
+    ///
+    /// The SAME-CARD audition needs this (fifth review round). Preview Live's
+    /// restore layers the snapshot over the card's defaults as they are now,
+    /// so a key the AUDITION wrote into those defaults and the snapshot is
+    /// silent about would survive the restore and seed the restart. Subtracting
+    /// the audition instance's own keys first is what makes "put it back" mean
+    /// the previous look's values and nothing else.
+    func removing(keysOf other: CustomizationValueSet<ColorValue>) -> CustomizationValueSet<ColorValue> {
+        var trimmed = self
+        for key in other.numbers.keys { trimmed.numbers[key] = nil }
+        for key in other.colors.keys { trimmed.colors[key] = nil }
+        return trimmed
+    }
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -189,6 +205,19 @@ final class CustomizationValueScopes<ColorValue: Hashable & Sendable> {
         let base = frozenBases[identity.targetKey] ?? defaults(forCard: identity.cardID)
         guard let own = runningValues[identity.targetKey] else { return base }
         return own.layered(over: base)
+    }
+
+    /// What this exact running instance OWNS — its sparse own-values, without
+    /// the frozen base underneath.
+    ///
+    /// `live(for:)` answers "what is this instance using", which is the right
+    /// question almost everywhere. This one answers "what did this instance
+    /// itself write", which is the question the Preview Live restore has to
+    /// ask about the AUDITION before it layers a snapshot over defaults the
+    /// audition may have moved (fifth review round). An identity that is not
+    /// running owns nothing.
+    func ownValues(for identity: RunningLookIdentity) -> CustomizationValueSet<ColorValue> {
+        runningValues[identity.targetKey] ?? CustomizationValueSet()
     }
 
     /// Is this identity the current run of its target?

@@ -1145,4 +1145,171 @@ final class StudioBoardAvailabilityTests: XCTestCase {
             }
         }
     }
+
+    // ──────────────────────────────────────────────────────────
+    // MARK: - 18. The editor badges the FUNNEL's reach (fifth round)
+    // ──────────────────────────────────────────────────────────
+
+    /// The defect: `note(for:isColor:)` drops the "n OF m LIGHTS RESPOND"
+    /// caption because the inline editor badges the count itself — but the
+    /// editor badges `ColorCapabilityContext.coverage`, which is the target's
+    /// UN-NARROWED colour coverage, while the funnel narrows `base_color` on
+    /// an `effects_v2` transport to the lights that list THIS effect.
+    ///
+    /// Cosmos in a three-colour-light room where one light lists the effect:
+    /// colour coverage is 3/3 (full → `isPartial` false → no badge), the
+    /// funnel says `.partial(1, 3)`, and the caption is suppressed for
+    /// colour — a fully live Tint editor with nothing on screen at all while
+    /// two of the three lights never receive the write.
+    func testEditorCoverageUsesTheNarrowedReachWhenColourCoverageLooksFull() {
+        let card = effectCard("opal")
+        let snapshot = target(card: card, lights: 3,
+                              effectsV2: CapabilityCoverage(supported: 1, total: 3,
+                                                            evidence: .known),
+                              effectV2ColorLights: 1,
+                              transport: .bridgeEffectV2)
+        let resolution = StudioBoardAvailability.resolve(
+            card: card, param: param(card, "base_color"), snapshot: snapshot)
+
+        XCTAssertEqual(resolution?.availability,
+                       .partial(supported: 1, total: 3, reason: .partialHardwareCoverage))
+        // The state the badge was reading: full, so it drew nothing.
+        XCTAssertEqual(snapshot.color.isPartial, false)
+        XCTAssertNil(StudioBoardAvailability.note(for: resolution!, isColor: true),
+                     "colour still suppresses the coverage caption — the badge must carry it")
+
+        let coverage = StudioBoardAvailability.editorCoverage(resolution: resolution,
+                                                              snapshotColor: snapshot.color)
+        XCTAssertEqual(coverage, CapabilityCoverage(supported: 1, total: 3, evidence: .known))
+        XCTAssertTrue(coverage?.isPartial == true,
+                      "the editor must now badge 1 OF 3 LIGHTS instead of nothing")
+    }
+
+    /// The second flavour: the badge OVERSTATES. Four lights, three render
+    /// colour, only one of those is inside the effect's `effects_v2` reach.
+    /// The un-narrowed colour coverage badged "3 OF 4 LIGHTS"; the write lands
+    /// on one.
+    func testEditorCoverageReplacesAnOverstatingColourBadge() {
+        let card = effectCard("opal")
+        let snapshot = target(card: card, lights: 4,
+                              color: CapabilityCoverage(supported: 3, total: 4,
+                                                        evidence: .known),
+                              effectsV2: CapabilityCoverage(supported: 2, total: 4,
+                                                            evidence: .known),
+                              effectV2ColorLights: 1,
+                              transport: .bridgeEffectV2)
+        let resolution = StudioBoardAvailability.resolve(
+            card: card, param: param(card, "base_color"), snapshot: snapshot)
+
+        XCTAssertEqual(resolution?.availability,
+                       .partial(supported: 1, total: 4, reason: .partialHardwareCoverage))
+        XCTAssertEqual(snapshot.color.supported, 3, "the number the badge used to draw")
+
+        XCTAssertEqual(StudioBoardAvailability.editorCoverage(resolution: resolution,
+                                                              snapshotColor: snapshot.color),
+                       CapabilityCoverage(supported: 1, total: 4, evidence: .known))
+    }
+
+    /// The override only ever states the RESOLUTION's number, and when nothing
+    /// narrowed, that number is the snapshot's own: two colour lights of three,
+    /// every light inside the effect's reach.
+    func testEditorCoverageKeepsAnUnnarrowedColourPartial() {
+        let card = effectCard("opal")
+        let snapshot = target(card: card, lights: 3,
+                              color: CapabilityCoverage(supported: 2, total: 3,
+                                                        evidence: .known),
+                              transport: .bridgeEffectV2)
+        let resolution = StudioBoardAvailability.resolve(
+            card: card, param: param(card, "base_color"), snapshot: snapshot)
+
+        XCTAssertEqual(resolution?.availability,
+                       .partial(supported: 2, total: 3, reason: .partialHardwareCoverage))
+        XCTAssertEqual(StudioBoardAvailability.editorCoverage(resolution: resolution,
+                                                              snapshotColor: snapshot.color),
+                       CapabilityCoverage(supported: 2, total: 3, evidence: .known))
+    }
+
+    /// A fully live control hands the snapshot's coverage straight through, so
+    /// nothing new appears on screen: full coverage is not partial, so the
+    /// editor draws no badge, and a nil context coverage stays nil.
+    func testEditorCoveragePassesThroughWhenTheControlIsFullyLive() {
+        let card = effectCard("opal")
+        let snapshot = target(card: card, transport: .bridgeEffectV2)
+        let resolution = StudioBoardAvailability.resolve(
+            card: card, param: param(card, "base_color"), snapshot: snapshot)
+
+        XCTAssertEqual(resolution?.availability, .active)
+        let coverage = StudioBoardAvailability.editorCoverage(resolution: resolution,
+                                                              snapshotColor: snapshot.color)
+        XCTAssertEqual(coverage, snapshot.color)
+        XCTAssertEqual(coverage?.isPartial, false, "no badge on a fully live editor")
+
+        XCTAssertNil(StudioBoardAvailability.editorCoverage(resolution: resolution,
+                                                            snapshotColor: nil))
+        // Unresolved controls are pass-through too — the funnel has no reach
+        // to state, so the context keeps whatever it was built with.
+        XCTAssertEqual(StudioBoardAvailability.editorCoverage(resolution: nil,
+                                                              snapshotColor: snapshot.color),
+                       snapshot.color)
+        // An unread target must keep its evidence rather than be restated as
+        // `.known` — pass-through is what preserves that.
+        let unreadable = CustomizationSnapshotBuilder.unreadable(
+            identity: identity(for: card), totalLights: 3,
+            transport: .roomREST, running: true)
+        XCTAssertEqual(StudioBoardAvailability.editorCoverage(resolution: nil,
+                                                              snapshotColor: unreadable.color)?
+                        .evidence,
+                       unreadable.color.evidence)
+    }
+
+    /// Structural pin: the helper is only worth anything if the renderer
+    /// actually hands its answer to the editor. A unit-tested pure function
+    /// wired to nothing is exactly the shape of the defect it closes.
+    func testColorSectionFeedsTheEditorTheFunnelsCoverage() throws {
+        let source = try productionCode("HueHome/UI/Studio/StudioBoardView.swift")
+        let body = try XCTUnwrap(functionBody(source, startingWith: "private func colorSection("),
+                                 "colorSection is gone from StudioBoardView")
+        let joined = body.joined(separator: "\n")
+
+        XCTAssertTrue(joined.contains("StudioBoardAvailability.editorCoverage("), """
+            colorSection no longer narrows the colour context through the funnel — \
+            the editor's badge would go back to the un-narrowed colour coverage \
+            while the caption stays suppressed for colour
+            """)
+        XCTAssertTrue(joined.contains("context: editorContext"), """
+            colorSection builds a narrowed context but hands StageColorEditor \
+            something else — the override would never reach the badge
+            """)
+    }
+
+    /// Production source with comment-only lines stripped — a doc comment that
+    /// names a symbol is documentation, not a call site.
+    private func productionCode(_ relativePath: String) throws -> String {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()   // HueHomeTests/
+            .deletingLastPathComponent()   // repo root
+        return try String(contentsOf: repoRoot.appendingPathComponent(relativePath), encoding: .utf8)
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            .joined(separator: "\n")
+    }
+
+    /// The body of a func in a Swift source, by brace depth.
+    private func functionBody(_ source: String, startingWith signature: String) -> [String]? {
+        let lines = source.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        guard let start = lines.firstIndex(where: { $0.contains(signature) }) else { return nil }
+        var depth = 0
+        var started = false
+        var body: [String] = []
+        for line in lines[start...] {
+            body.append(line)
+            for ch in line {
+                if ch == "{" { depth += 1; started = true }
+                if ch == "}" { depth -= 1 }
+            }
+            if started && depth == 0 { return body }
+        }
+        return started ? body : nil
+    }
+
 }

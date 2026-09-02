@@ -476,6 +476,18 @@ enum BeatMath {
             fileprivate let stampedAt: Double?
             /// The lastOnset value before this admit — the rollback target.
             fileprivate let priorLastOnset: Double?
+            /// The wire state before this admit — the OTHER rollback target
+            /// (fifth review round). A send the transport refused never reached
+            /// the bridge, so the bridge is still showing whatever it was
+            /// showing: the gate's model of the wire has to go back to exactly
+            /// that, not to "unknown". See `commit`.
+            fileprivate let priorLastEmitted: WireFrame?
+            /// The luminance trough before this admit, restored with it. Losing
+            /// the true pre-drop trough is a defect of its own: the cold path
+            /// re-bases the trough UPWARD to the frame it records, so a ramp
+            /// that had fallen to 0.02 and climbed back to 0.30 is measured as a
+            /// rise from 0.30 and the climb that follows is under-measured.
+            fileprivate let priorTrough: Double
             /// Serial number of this admit, so a rollback can tell whether any
             /// other frame has touched the gate since.
             fileprivate let sequence: UInt64
@@ -489,8 +501,10 @@ enum BeatMath {
 
             /// The last frame this gate put on the wire. `nil` before the very
             /// first frame of a bridge's life **and** whenever the wire state has
-            /// become unknown — a send the transport refused, which is what a
-            /// reconnect looks like from here.
+            /// become unknown — which, since the fifth review round, means the
+            /// wire has been SILENT for a whole period (`lastDeliveredAt`), not
+            /// merely that one send was refused. A refused send changed nothing
+            /// on the wire, so it leaves this exactly as it was.
             private(set) var lastEmitted: WireFrame?
 
             /// The LOWEST **relative luminance** EMITTED since the last admitted
@@ -501,12 +515,46 @@ enum BeatMath {
             /// where it was 20 ms ago.
             private(set) var luminanceTroughSinceOnset: Double
 
+            /// When a frame — ANY frame, admitted or held — last reached the
+            /// transport. Not the onset stamp: `lastOnset` answers "when did the
+            /// light last flash", this answers "when did this ledger last put
+            /// anything on the wire at all", which is the only thing that can
+            /// tell a two-frame stutter from a reconnect (fifth review round).
+            ///
+            /// A wire nothing has reached for a whole `minPeriod` is not a wire
+            /// this ledger can still claim to know: a DTLS reconnect spends
+            /// ≥ 300 ms in backoff and the bridge reverts to its own light state
+            /// meanwhile, and a card switch or a `stopSession()` tears the
+            /// stream down entirely. `admit` forgets the wire on that silence,
+            /// which is also the production caller `forgetWire()` never had.
+            private(set) var lastDeliveredAt: Double?
+
+            /// The last frame that actually reached the wire. Survives
+            /// `forgetWire()` on purpose, and is NOT `lastEmitted`: once the
+            /// wire is unknown the bridge may have reverted to its own light
+            /// state, so this is a best guess and never a fact. Two things need
+            /// a guess rather than nothing:
+            ///
+            ///  • a cold refusal holds black at **this** chromaticity. Holding
+            ///    black at the REQUESTED one is what made a refusal to flash
+            ///    saturated red a WCAG red flash of its own; and
+            ///  • the cold path evaluates the red-flash rule against it. Cold
+            ///    candidacy used to be "luminance ≥ 0.10" alone, which is blind
+            ///    to exactly the flash WCAG treats as hazardous BELOW that
+            ///    level: a white strike at dimming 0.20 (L 0.030) between two
+            ///    red-ambient frames is emitted unconditionally, and the red
+            ///    frame after it is then stamped as a first onset — two red
+            ///    flashes one frame apart (the in-catalog Thunderstorm
+            ///    reproduction, fifth review round).
+            private(set) var lastKnownFrame: WireFrame?
+
             private var sequence: UInt64 = 0
 
             init(lastOnset: Double? = nil, lastEmitted: WireFrame? = nil) {
                 self.lastOnset = lastOnset
                 self.lastEmitted = lastEmitted
                 self.luminanceTroughSinceOnset = lastEmitted?.relativeLuminance ?? 0
+                self.lastKnownFrame = lastEmitted
             }
 
             /// `t` is a monotonic host time (CACurrentMediaTime). A NaN/infinite
@@ -583,6 +631,39 @@ enum BeatMath {
                     >= FlashSafety.redFlashLuminanceDelta - tol
             }
 
+            /// Is this frame a candidate against an UNKNOWN wire?
+            ///
+            /// The conservative reading of "unknown" is black, so rule 1 becomes
+            /// "is this frame itself at or above the threshold" — a 0.76 first
+            /// frame is a 0.76 rise from black.
+            ///
+            /// That reading is blind in exactly one place, and it is the place
+            /// WCAG is strictest (fifth review round): a **red flash is
+            /// hazardous well below the general threshold**, so a dim frame that
+            /// steps to or from saturated red is a candidate even though nothing
+            /// about it is a 10 % rise. Black is no help there — a step measured
+            /// against black is not a chroma step at all — so the rule is
+            /// evaluated against `lastKnownFrame`, the last frame this ledger
+            /// actually drove. That is a guess about the bridge and never a
+            /// fact, which is why it may only ever ADD candidacy: the worst a
+            /// wrong guess can cost is one 0.34 s delay, and the in-catalog
+            /// Thunderstorm run it closes (red ambient 0.01, white strike 0.20,
+            /// flash_length 1) otherwise realizes two red flashes ONE frame
+            /// apart after a single dropped ambient frame — the strike is under
+            /// the general threshold, so the cold path emitted it unstamped, and
+            /// the red frame behind it was then stamped as a first onset.
+            func isColdOnsetCandidate(_ frame: WireFrame) -> Bool {
+                let tol = FlashSafety.onsetComparisonTolerance
+                let luminance = frame.relativeLuminance
+                if luminance >= FlashSafety.onsetRiseThreshold - tol { return true }
+                guard let known = lastKnownFrame,
+                      frame.chromaDistance(to: known) > FlashSafety.onsetColorDelta,
+                      frame.isSaturatedRed || known.isSaturatedRed
+                else { return false }
+                return abs(luminance - known.relativeLuminance)
+                    >= FlashSafety.redFlashLuminanceDelta - tol
+            }
+
             /// The frame-level gate, **reserve half**: what should go on the wire
             /// for `frame`, and what `commit` will have to do about it?
             ///
@@ -601,8 +682,10 @@ enum BeatMath {
             ///  • **No prior stamp (a cold ledger).** The frame is emitted
             ///    unconditionally: refusing it would mean streaming nothing, and a
             ///    paused DTLS stream lets the bridge fall back to its own light
-            ///    state mid-effect. It is STAMPED if its luminance is at or above
-            ///    the threshold — the prior wire state is unknown and the
+            ///    state mid-effect. It is STAMPED if it is a cold CANDIDATE
+            ///    (`isColdOnsetCandidate`: its own luminance is at or above the
+            ///    threshold, or it is a red flash against the last frame this
+            ///    ledger drove) — the prior wire state is unknown and the
             ///    conservative reading of "unknown" is black, which makes a 0.76
             ///    first frame a 0.76 rise. That costs at most one 0.34 s delay at
             ///    the very first frame of a bridge's life, and closes the hole the
@@ -618,35 +701,108 @@ enum BeatMath {
             ///    went away mid-hold at 0.05 and comes back wanting 0.90, which on
             ///    the wire is a full-scale rise however the ledger got here. When
             ///    the gate refuses, the hold frame cannot be "the last emitted
-            ///    frame" — there isn't one — so it is **black at the requested
-            ///    chromaticity**. A fall is always safe, and streaming it keeps
-            ///    the DTLS stream alive, which is the one thing a refusal may
-            ///    never trade away.
+            ///    frame" — there isn't one — so it is **black at the LAST KNOWN
+            ///    chromaticity** (fifth review round; the requested one only when
+            ///    this ledger has never delivered a frame at all). A fall is
+            ///    always safe, and streaming it keeps the DTLS stream alive,
+            ///    which is the one thing a refusal may never trade away — but
+            ///    black at the REQUESTED chromaticity is not necessarily a fall
+            ///    on the wire: against the frame the bridge is still showing it
+            ///    is a chroma STEP, and if the requested colour is saturated red
+            ///    (Party palette entry 0, or a red tint drag) that step satisfies
+            ///    the gate's own red-flash rule. The refusal to flash was itself
+            ///    an unstamped flash. Black at the colour already on the wire is
+            ///    a pure fall against a known wire and is black against an
+            ///    unknown one, so it is safe under both readings.
+            ///
+            /// **When the wire stops being knowable at all.** `forgetWire()` had
+            /// no production caller: nothing in the orchestrator ever told the
+            /// ledger "the bridge is showing something you did not put there",
+            /// so a `stopSession()` on a card switch left the stale wire model
+            /// in place. The trigger is derivable here and needs no caller:
+            /// **if a whole `minPeriod` has passed since anything last reached
+            /// the transport, the wire is unknown.** A DTLS reconnect spends
+            /// ≥ 300 ms in backoff, and 17 frames of silence is not something a
+            /// 50 fps loop does while it is still driving the light. This is the
+            /// hole that a blanket "restore the pre-drop state" would reopen: it
+            /// would hand the reconnect a BRIGHT `lastEmitted` and its trough,
+            /// so the first frame back is not a candidate and a fall-then-rise
+            /// two frames later is measured from a fresh trough and admitted
+            /// against the OLD stamp — two realized onsets 40 ms apart.
             mutating func admit(frame: WireFrame, at t: Double,
                                 minPeriod: Double = FlashSafety.minOnsetLedgerPeriod) -> Reservation {
                 sequence &+= 1
-                let prior = lastOnset
                 let tol = FlashSafety.onsetComparisonTolerance
+                let period = (minPeriod.isFinite && minPeriod > 0) ? minPeriod
+                                                                   : FlashSafety.minOnsetLedgerPeriod
+                // A silent wire is an unknown wire. Checked BEFORE the priors are
+                // captured, so a dropped send cannot roll the forget back: the
+                // forget is a fact about the transport, not about this frame.
+                if lastEmitted != nil, t.isFinite, let delivered = lastDeliveredAt,
+                   t - delivered >= period - tol {
+                    forgetWire()
+                }
+                let prior = (onset: lastOnset, emitted: lastEmitted,
+                             trough: luminanceTroughSinceOnset)
 
                 guard let last = lastEmitted else {
-                    let bright = frame.relativeLuminance
+                    // Has this ledger ever driven the wire at all? A TRUE cold
+                    // start has no history for the trough to continue from, so
+                    // the trough begins at the frame being emitted — the same
+                    // place a viewer's does, because that frame is the first
+                    // light there is. A ledger that is cold because it FORGOT
+                    // has a history: the wire held the last frame delivered
+                    // through the outage, so the trough goes on being a running
+                    // minimum and the gate stays in step with what a viewer
+                    // integrates. (Getting this backwards is a real hole, not a
+                    // nicety: an unstamped re-base ABOVE the viewer's floor lets
+                    // a later climb read as nothing to the gate and as a flash
+                    // to the eye. A seeded ramp × outage sweep found it at 13
+                    // frames.)
+                    let coldStart = lastKnownFrame == nil
+                    let troughRise = frame.relativeLuminance - luminanceTroughSinceOnset
                         >= FlashSafety.onsetRiseThreshold - tol
-                    guard bright else {
-                        record(frame, resettingTrough: true)
+                    guard isColdOnsetCandidate(frame) else {
+                        // NOT `resettingTrough: true` (fifth review round). Only
+                        // an admitted ONSET may re-base the trough upward; an
+                        // unstamped frame that re-bases it discards the floor
+                        // every later rise is measured from, and the ledger then
+                        // reads a climb a viewer sees as a flash as a climb of
+                        // nothing. Here the floor keeps running as the minimum
+                        // it already was (`forgetWire()` leaves the trough
+                        // alone): the fixture held the last frame it was given
+                        // through the outage, and "the bridge may have reverted
+                        // to black" is answered by `isColdOnsetCandidate`'s
+                        // absolute rule, not by lowering the floor.
+                        //
+                        // A seeded ramp × drop sweep found the optimistic
+                        // version directly: a 17-frame outage, then a dim frame
+                        // on the cold path re-basing the trough to ITS level,
+                        // and the climb behind it realizing two onsets 13 frames
+                        // apart on the wire.
+                        record(frame, resettingTrough: coldStart)
                         return reservation(.emit(frame), stampedAt: nil, prior: prior)
                     }
-                    if prior == nil {
+                    // An admission re-bases the trough ONLY when the admission
+                    // is one a viewer would also have seen — a rise from the
+                    // trough. Cold candidacy is deliberately wider than that
+                    // (absolute luminance for a bridge that may have reverted,
+                    // the red rule below the general threshold), and re-basing
+                    // on those would lift the floor above the eye's.
+                    let rebase = coldStart || troughRise
+                    if prior.onset == nil {
                         let stamped = tryOnset(at: t, minPeriod: minPeriod)
-                        record(frame, resettingTrough: true)
+                        record(frame, resettingTrough: rebase)
                         return reservation(.emit(frame),
                                            stampedAt: stamped ? lastOnset : nil, prior: prior)
                     }
                     guard tryOnset(at: t, minPeriod: minPeriod) else {
-                        let black = WireFrame(x: frame.x, y: frame.y, brightness: 0)
-                        record(black, resettingTrough: true)
+                        let guess = lastKnownFrame ?? frame
+                        let black = WireFrame(x: guess.x, y: guess.y, brightness: 0)
+                        record(black, resettingTrough: false)
                         return reservation(.hold(black), stampedAt: nil, prior: prior)
                     }
-                    record(frame, resettingTrough: true)
+                    record(frame, resettingTrough: rebase)
                     return reservation(.emit(frame), stampedAt: lastOnset, prior: prior)
                 }
 
@@ -679,45 +835,103 @@ enum BeatMath {
             /// right direction: `t − lastOnset ≥ period` implies
             /// `deliveredAt − lastOnset ≥ period`, never the reverse.
             ///
-            /// **A refused send un-does the reservation and forgets the wire.**
+            /// **A refused send un-does the reservation — ALL of it.**
             /// `send(channels:)` is fire-and-forget and silently drops every frame
             /// while the DTLS connection is re-establishing. The ledger used to
             /// run ahead of the wire there: it recorded 0.90 as emitted, and when
             /// the stream came back the first delivered frame was a full-scale
             /// rise that the ledger's model said was not a candidate at all
-            /// (blocker B-1). A dropped frame changed no light, so the stamp is
-            /// rolled back (only if nothing else has touched the gate since — the
-            /// reference point may never move backwards past another loop's real
-            /// onset), and the wire state is dropped to `nil`: whatever the bridge
-            /// is showing after a reconnect is not knowable from here, so the next
-            /// delivered frame is measured as a first frame.
+            /// (blocker B-1). The stamp is rolled back (only if nothing else has
+            /// touched the gate since — the reference point may never move
+            /// backwards past another loop's real onset), and so, now, is the
+            /// wire state (fifth review round).
+            ///
+            /// The third round forgot the wire here instead, on the reading
+            /// "after a reconnect the bridge's state is not knowable". That reads
+            /// the drop as the OUTAGE when it is only one frame of one: a frame
+            /// the transport never took **changed nothing**, so the bridge is
+            /// still showing the last frame that WAS delivered, and the gate
+            /// already knows exactly what that was. Forgetting it cost two ways:
+            ///
+            ///  • the next bright frame took the cold path, and a cold refusal
+            ///    held black at the REQUESTED chromaticity — against the frame
+            ///    actually on the wire a chroma step, and against a saturated-red
+            ///    request a WCAG red flash that nothing stamped, after which the
+            ///    trough sat at 0 and the very next red frame was admitted as a
+            ///    full-scale rise **one frame later**; and
+            ///  • the cold non-bright branch re-based the trough UPWARD to the
+            ///    frame it recorded, discarding the true pre-drop trough, so
+            ///    every rise measured after it was short (a blue → cyan ramp with
+            ///    ONE dropped frame realized onsets three frames apart).
+            ///
+            /// A 31,752-scenario ramp × drop-window sweep found 1,184 violating
+            /// pairs this way, worst case one frame. Restoring is only safe
+            /// BECAUSE `admit` forgets a wire that has been silent for a whole
+            /// period: a real outage is caught there, by the clock, instead of
+            /// being inferred from a single refused send.
             mutating func commit(_ reservation: Reservation, delivered: Bool,
                                  at deliveredAt: Double) {
                 guard delivered else {
-                    if sequence == reservation.sequence,
-                       let stamped = reservation.stampedAt, lastOnset == stamped {
+                    // An interleaved admit (the un-awaited cancel window) means
+                    // this reservation is no longer the gate's latest word about
+                    // the wire, and restoring a state two frames stale would be
+                    // a guess. Forget instead: unknown is always the safe answer.
+                    guard sequence == reservation.sequence else {
+                        forgetWire()
+                        return
+                    }
+                    if let stamped = reservation.stampedAt, lastOnset == stamped {
                         lastOnset = reservation.priorLastOnset
                     }
-                    forgetWire()
+                    lastEmitted = reservation.priorLastEmitted
+                    luminanceTroughSinceOnset = reservation.priorTrough
                     return
                 }
+                // EVERY delivered frame moves the silence clock, not only the
+                // stamped ones: what `admit` needs to know is when this ledger
+                // last drove the wire at all. `max` because two loop instances
+                // sample their clocks outside this lock and can commit out of
+                // order, and the silence test may only ever be conservative.
+                if deliveredAt.isFinite {
+                    lastDeliveredAt = max(lastDeliveredAt ?? deliveredAt, deliveredAt)
+                }
+                if sequence == reservation.sequence { lastKnownFrame = reservation.frame }
                 guard let stamped = reservation.stampedAt, lastOnset == stamped,
                       deliveredAt.isFinite, deliveredAt > stamped else { return }
                 lastOnset = deliveredAt
             }
 
-            /// The wire state is unknown from here on. Not a reset: `lastOnset`
-            /// (what was realized, and when) survives — it is the only thing that
-            /// still applies after a reconnect.
+            /// The wire state is unknown from here on. Not a reset: what
+            /// survives is everything that is a fact about what this ledger
+            /// DROVE, as opposed to a claim about what the bridge is SHOWING.
+            ///
+            ///  • `lastOnset` — what was realized, and when. The only thing that
+            ///    still applies after a reconnect.
+            ///  • `lastDeliveredAt` — the silence clock has to keep running.
+            ///  • `lastKnownFrame` — the best guess a cold refusal can hold
+            ///    black at, and what the cold red-flash rule is measured against.
+            ///  • `luminanceTroughSinceOnset` — the eye integrates the whole
+            ///    outage, during which the fixture held the last frame it was
+            ///    given, so the floor a rise is measured from does NOT restart
+            ///    here (fifth review round). Zeroing it and then letting the
+            ///    first frame back re-base it upward is how the ledger's floor
+            ///    ends up ABOVE the eye's, which is the one arrangement that
+            ///    lets a real flash through. The case this reset was protecting
+            ///    against — a bridge that reverted to its own light state during
+            ///    the outage — is covered where it belongs, in
+            ///    `isColdOnsetCandidate`, which reads "unknown" as black.
             mutating func forgetWire() {
                 lastEmitted = nil
-                luminanceTroughSinceOnset = 0
             }
 
             private func reservation(_ verdict: FrameVerdict, stampedAt: Double?,
-                                     prior: Double?) -> Reservation {
+                                     prior: (onset: Double?, emitted: WireFrame?,
+                                             trough: Double)) -> Reservation {
                 Reservation(verdict: verdict, stampedAt: stampedAt,
-                            priorLastOnset: prior, sequence: sequence)
+                            priorLastOnset: prior.onset,
+                            priorLastEmitted: prior.emitted,
+                            priorTrough: prior.trough,
+                            sequence: sequence)
             }
 
             /// Records what was handed to the transport. An admission re-bases the
@@ -761,6 +975,20 @@ enum BeatMath {
                 return gate.luminanceTroughSinceOnset
             }
 
+            /// When anything this ledger sent last reached the transport — the
+            /// silence clock `admit` forgets the wire on.
+            var lastDeliveredAt: Double? {
+                lock.lock(); defer { lock.unlock() }
+                return gate.lastDeliveredAt
+            }
+
+            /// The last frame that reached the wire — a guess about the bridge
+            /// once the wire has been forgotten, never a fact.
+            var lastKnownFrame: WireFrame? {
+                lock.lock(); defer { lock.unlock() }
+                return gate.lastKnownFrame
+            }
+
             func tryOnset(at t: Double,
                           minPeriod: Double = FlashSafety.minOnsetLedgerPeriod) -> Bool {
                 lock.lock(); defer { lock.unlock() }
@@ -789,7 +1017,10 @@ enum BeatMath {
 
             /// Drop the wire state without touching the realized-onset clock —
             /// what a caller does when it learns the bridge is showing something
-            /// this ledger did not put there.
+            /// this ledger did not put there. `admit` also does this for itself
+            /// whenever the wire has been silent for a whole period, which is the
+            /// case no caller was ever wired up to report (a `stopSession()` on a
+            /// card switch used to leave the stale wire model in place).
             func forgetWire() {
                 lock.lock(); defer { lock.unlock() }
                 gate.forgetWire()

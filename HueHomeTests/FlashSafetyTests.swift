@@ -38,6 +38,142 @@ struct SeededGenerator: RandomNumberGenerator {
     }
 }
 
+// MARK: - The gate a wire model drives
+
+/// One reserve/commit pair, with the reservation held inside the gate so a
+/// model can drive the production gate and a replica of the PREVIOUS one
+/// through the same code path and compare what a viewer saw.
+///
+/// (Declared at file scope because Swift has no nested protocols; nothing but
+/// `WireModel` and the two conformances below use it.)
+protocol ModelledOnsetGate {
+    mutating func reserve(_ frame: BeatMath.FlashSafety.WireFrame, at t: Double)
+        -> (onWire: BeatMath.FlashSafety.WireFrame, admitted: Bool)
+    mutating func settle(delivered: Bool, at t: Double)
+}
+
+/// The shipped gate, driven exactly as `emitGatedFrame` drives it.
+struct ProductionOnsetGate: ModelledOnsetGate {
+    var gate = BeatMath.FlashSafety.OnsetGate()
+    private var pending: BeatMath.FlashSafety.Reservation?
+
+    mutating func reserve(_ frame: BeatMath.FlashSafety.WireFrame, at t: Double)
+        -> (onWire: BeatMath.FlashSafety.WireFrame, admitted: Bool) {
+        let reservation = gate.admit(frame: frame, at: t,
+                                     minPeriod: BeatMath.FlashSafety.minOnsetLedgerPeriod)
+        pending = reservation
+        return (reservation.frame, reservation.wasAdmitted)
+    }
+
+    mutating func settle(delivered: Bool, at t: Double) {
+        guard let reservation = pending else { return }
+        gate.commit(reservation, delivered: delivered, at: t)
+        pending = nil
+    }
+}
+
+/// **The gate as it stood before the fifth review round**, kept here for the
+/// same reason the legacy loop models below are kept: a fix whose regression
+/// test cannot fail on the code it replaced is a fix nobody can check.
+///
+/// Two things differ from the shipped gate, and only two — both consequences of
+/// reading a refused send as an OUTAGE rather than as a frame that changed
+/// nothing:
+///
+///  • `settle(delivered: false)` drops the wire state (`lastEmitted = nil`,
+///    trough 0) instead of restoring what the send never displaced; and
+///  • a cold refusal holds black at the **requested** chromaticity, so a
+///    refusal to flash saturated red is itself a WCAG red flash against the
+///    frame the bridge is still showing.
+///
+/// There is no silence clock, so nothing here ever forgets the wire on time.
+struct LegacyForgetOnDropGate: ModelledOnsetGate {
+    typealias Frame = BeatMath.FlashSafety.WireFrame
+    private typealias FS = BeatMath.FlashSafety
+
+    private var lastOnset: Double?
+    private var lastEmitted: Frame?
+    private var trough: Double = 0
+    private var pendingStamp: Double?
+    private var pendingPriorOnset: Double?
+
+    private static let tol = BeatMath.FlashSafety.onsetComparisonTolerance
+
+    private mutating func tryOnset(at t: Double) -> Bool {
+        guard t.isFinite else { return false }
+        if let last = lastOnset {
+            guard t >= last else { return false }
+            if t - last < FS.minOnsetLedgerPeriod - Self.tol { return false }
+        }
+        lastOnset = t
+        return true
+    }
+
+    private func isCandidate(_ frame: Frame) -> Bool {
+        guard let last = lastEmitted else { return false }
+        let luminance = frame.relativeLuminance
+        if luminance - trough >= FS.onsetRiseThreshold - Self.tol { return true }
+        guard frame.chromaDistance(to: last) > FS.onsetColorDelta,
+              frame.isSaturatedRed || last.isSaturatedRed else { return false }
+        return abs(luminance - last.relativeLuminance) >= FS.redFlashLuminanceDelta - Self.tol
+    }
+
+    private mutating func record(_ frame: Frame, resettingTrough: Bool) {
+        lastEmitted = frame
+        let luminance = frame.relativeLuminance
+        trough = resettingTrough ? luminance : min(trough, luminance)
+    }
+
+    mutating func reserve(_ frame: Frame, at t: Double) -> (onWire: Frame, admitted: Bool) {
+        let prior = lastOnset
+        pendingPriorOnset = prior
+        pendingStamp = nil
+
+        guard let last = lastEmitted else {
+            guard frame.relativeLuminance >= FS.onsetRiseThreshold - Self.tol else {
+                record(frame, resettingTrough: true)
+                return (frame, true)
+            }
+            if prior == nil {
+                if tryOnset(at: t) { pendingStamp = lastOnset }
+                record(frame, resettingTrough: true)
+                return (frame, true)
+            }
+            guard tryOnset(at: t) else {
+                // The defect: black at the REQUESTED chromaticity.
+                let black = Frame(x: frame.x, y: frame.y, brightness: 0)
+                record(black, resettingTrough: true)
+                return (black, false)
+            }
+            pendingStamp = lastOnset
+            record(frame, resettingTrough: true)
+            return (frame, true)
+        }
+
+        guard isCandidate(frame) else {
+            record(frame, resettingTrough: false)
+            return (frame, true)
+        }
+        guard tryOnset(at: t) else { return (last, false) }
+        pendingStamp = lastOnset
+        record(frame, resettingTrough: true)
+        return (frame, true)
+    }
+
+    mutating func settle(delivered: Bool, at t: Double) {
+        guard delivered else {
+            if let stamped = pendingStamp, lastOnset == stamped { lastOnset = pendingPriorOnset }
+            // The defect: a frame nobody saw makes the wire unknowable.
+            lastEmitted = nil
+            trough = 0
+            return
+        }
+        guard let stamped = pendingStamp, lastOnset == stamped,
+              t.isFinite, t > stamped else { return }
+        lastOnset = t
+    }
+}
+
 final class FlashSafetyTests: XCTestCase {
 
     private typealias FS = BeatMath.FlashSafety
@@ -1470,8 +1606,20 @@ final class FlashSafetyTests: XCTestCase {
         // party and the storm take turns on the SAME ledger while every param
         // the second pass named is churned — including the inverted brightness
         // ≤ min_brightness case and the H1 afterglow/ambient pair.
+        //
+        // Fifth review round: the transport churns too. A dozen seeded outages
+        // are scattered across the run, so every switch between effects, every
+        // run boundary and every hold has a chance of landing next to a frame
+        // the transport refused — the case where the gate's model of the wire
+        // and the wire itself can come apart.
         var rng = SeededGenerator(seed: 0x5EC0_4DEA)
         let model = WireModel()
+        var outageStart = Int.random(in: 5...40, using: &rng)
+        for _ in 0..<12 {
+            let length = Int.random(in: 1...9, using: &rng)
+            model.dropWindows.append(outageStart..<(outageStart + length))
+            outageStart += length + Int.random(in: 40...160, using: &rng)
+        }
         for _ in 0..<30 {
             switch Int.random(in: 0...2, using: &rng) {
             case 0:
@@ -1513,17 +1661,24 @@ final class FlashSafetyTests: XCTestCase {
     // `admit` therefore only RESERVES; `commit` is what makes the reservation
     // true — or rolls it back and forgets the wire.
 
-    func testADroppedSendRollsBackTheStampAndForgetsTheWire() {
+    func testADroppedSendRollsBackTheStampAndRestoresTheWire() {
+        // Fifth review round. A send the transport refused never reached the
+        // bridge, so the bridge is STILL SHOWING THE LAST DELIVERED FRAME: the
+        // gate rolls the whole reservation back — the stamp AND the wire state —
+        // rather than declaring the wire unknown on the strength of one frame.
         var gate = FS.OnsetGate()
         let dark = FS.WireFrame(x: 0.3127, y: 0.3290, brightness: 0.0)
         let bright = FS.WireFrame(x: 0.3127, y: 0.3290, brightness: 0.90)
 
-        // A realized onset at t = 0, delivered.
+        // A realized onset at t = 0, delivered; then a fall, delivered.
         let first = gate.admit(frame: bright, at: 0)
         gate.commit(first, delivered: true, at: 0)
         XCTAssertEqual(gate.lastOnset, 0)
         let fall = gate.admit(frame: dark, at: 0.02)
         gate.commit(fall, delivered: true, at: 0.02)
+        XCTAssertEqual(gate.lastEmitted, dark)
+        XCTAssertEqual(gate.luminanceTroughSinceOnset, 0, accuracy: 1e-12)
+        XCTAssertEqual(gate.lastDeliveredAt, 0.02)
 
         // The next onset is admitted at 0.34 — and DROPPED.
         let dropped = gate.admit(frame: bright, at: 0.34)
@@ -1531,56 +1686,124 @@ final class FlashSafetyTests: XCTestCase {
         XCTAssertEqual(gate.lastOnset, 0.34, "the reservation stamps provisionally")
         gate.commit(dropped, delivered: false, at: 0.34)
         XCTAssertEqual(gate.lastOnset, 0, "a frame nobody saw is not a realized onset")
-        XCTAssertNil(gate.lastEmitted, "after a refused send the wire state is unknowable")
-        XCTAssertEqual(gate.luminanceTroughSinceOnset, 0)
+        XCTAssertEqual(gate.lastEmitted, dark,
+                       "a frame nobody saw did not change the wire either — the bridge is still showing the last DELIVERED frame")
+        XCTAssertEqual(gate.luminanceTroughSinceOnset, 0, accuracy: 1e-12,
+                       "and the true trough survives, or every rise measured after it is short")
+        XCTAssertEqual(gate.lastDeliveredAt, 0.02, "the silence clock did not move: nothing was delivered")
+
+        // A silence of a whole period IS an outage, and that is what makes the
+        // wire unknown. The next admit forgets it before deciding anything.
+        let afterSilence = gate.admit(frame: dark, at: 0.02 + FS.minOnsetLedgerPeriod)
+        XCTAssertEqual(gate.lastEmitted, dark, "the frame this admit itself recorded")
+        gate.commit(afterSilence, delivered: false, at: 0.02 + FS.minOnsetLedgerPeriod)
+        XCTAssertNil(gate.lastEmitted,
+                     "the forget happened at the TOP of that admit, so rolling the admit back restores 'unknown' — a rollback may not un-do a fact about the transport")
+        XCTAssertEqual(gate.lastOnset, 0, "and the realized-onset clock never moved")
+
+        // An INTERLEAVED admit (the un-awaited cancel window) means this
+        // reservation is no longer the gate's latest word about the wire, so
+        // restoring it would be a guess: forget instead.
+        var shared = FS.OnsetGate()
+        let mine = shared.admit(frame: bright, at: 10.0)
+        let theirs = shared.admit(frame: dark, at: 10.0)
+        shared.commit(mine, delivered: false, at: 10.0)
+        XCTAssertNil(shared.lastEmitted,
+                     "a rollback that cannot be the latest word forgets the wire (conservative)")
+        shared.commit(theirs, delivered: true, at: 10.0)
     }
 
-    func testAFirstFrameAfterADropIsGatedAgainstTheLastREALIZEDOnset() {
-        // The B-1 mechanism in miniature. Without the rollback the ledger's
-        // model of the wire says "already bright, not a candidate" while the
-        // wire says "black → 0.90"; and without the first-frame gate the
-        // restored frame would be emitted unconditionally.
+    func testASilentWireIsForgottenAfterAWholePeriodAndTheReconnectRiseIsTheStamp() {
+        // The hole a blanket "restore the pre-drop state" would reopen. A DTLS
+        // reconnect spends >= 300 ms in backoff and the bridge reverts to its own
+        // light state meanwhile; handing the returning stream a BRIGHT lastEmitted
+        // and its trough would make the first frame back a non-candidate, and a
+        // fall-then-rise two frames later would be measured from a fresh trough
+        // and admitted against the OLD stamp — two realized onsets 40 ms apart.
         var gate = FS.OnsetGate()
-        let bright = FS.WireFrame(x: 0.3127, y: 0.3290, brightness: 0.90)
-        let dark = FS.WireFrame(x: 0.3127, y: 0.3290, brightness: 0.05)
+        let white = FS.WireFrame(x: 0.3127, y: 0.3290, brightness: 0.90)
+        let black = FS.WireFrame(x: 0.3127, y: 0.3290, brightness: 0.0)
 
-        let onset = gate.admit(frame: bright, at: 10.0)
-        gate.commit(onset, delivered: true, at: 10.0)
-        let fall = gate.admit(frame: dark, at: 10.02)
-        gate.commit(fall, delivered: true, at: 10.02)
+        let first = gate.admit(frame: white, at: 0)
+        gate.commit(first, delivered: true, at: 0)
+        XCTAssertEqual(gate.lastOnset, 0)
+        XCTAssertEqual(gate.lastDeliveredAt, 0)
 
-        // The wire goes away mid-hold: four dropped frames.
-        for n in 2...5 {
-            let t = 10.0 + Double(n) * fd
-            let r = gate.admit(frame: dark, at: t)
-            gate.commit(r, delivered: false, at: t)
-        }
+        // Nothing reaches the transport for a whole period. The next frame is
+        // therefore a FIRST frame: gated against the last realized onset, and
+        // stamped, because the wire it is measured against is unknown.
+        let back = 0.02 + FS.minOnsetLedgerPeriod
+        let returning = gate.admit(frame: white, at: back)
+        XCTAssertTrue(returning.wasAdmitted)
+        XCTAssertEqual(gate.lastOnset ?? 0, back, accuracy: 1e-12,
+                       "the reconnect rise is itself the onset, and it carries the stamp")
+        gate.commit(returning, delivered: true, at: back)
+
+        // ...so the fall-and-rise behind it is refused, and the hold is the
+        // black frame already on the wire.
+        let fall = gate.admit(frame: black, at: back + fd)
+        XCTAssertTrue(fall.wasAdmitted)
+        gate.commit(fall, delivered: true, at: back + fd)
+        let second = gate.admit(frame: white, at: back + 2 * fd)
+        XCTAssertFalse(second.wasAdmitted,
+                       "a rise 40 ms after the reconnect rise is REFUSED, not realized")
+        XCTAssertEqual(second.verdict, .hold(black))
+        gate.commit(second, delivered: true, at: back + 2 * fd)
+    }
+
+    func testAColdRefusalHoldsBlackAtTheLastKNOWNChromaticityNotTheRequestedOne() {
+        // Black at the REQUESTED chromaticity is not a fall on the wire: against
+        // the frame the bridge is still showing it is a chroma STEP, and a step
+        // to saturated red with a luminance change is a WCAG red flash — the
+        // refusal to flash would be a flash. Black at the colour already there
+        // is a pure fall against a known wire and black against an unknown one.
+        var gate = FS.OnsetGate()
+        let green = FS.WireFrame(x: 0.1700, y: 0.7000, brightness: 1.0)
+        let red = FS.WireFrame(x: 0.6400, y: 0.3300, brightness: 1.0)
+
+        let lit = gate.admit(frame: green, at: 0)
+        gate.commit(lit, delivered: true, at: 0)
+        XCTAssertEqual(gate.lastKnownFrame, green)
+
+        // The wire becomes unknown (a card switch tearing the session down).
+        gate.forgetWire()
         XCTAssertNil(gate.lastEmitted)
-        XCTAssertEqual(gate.lastOnset, 10.0, "the only REALIZED onset is still the one at 10.0")
+        XCTAssertEqual(gate.lastKnownFrame, green, "what was DRIVEN survives; what is SHOWN does not")
 
-        // It comes back wanting a full-scale rise, 0.12 s after the last
-        // realized onset. That is a first frame with a prior stamp: a candidate,
-        // subject to the time gate — and the hold is BLACK, because there is no
-        // last emitted frame to repeat and a fall is always safe.
-        let restored = gate.admit(frame: bright, at: 10.12)
-        XCTAssertEqual(restored.verdict, .hold(FS.WireFrame(x: 0.3127, y: 0.3290, brightness: 0)))
-        XCTAssertFalse(restored.wasAdmitted)
-        gate.commit(restored, delivered: true, at: 10.12)
-        XCTAssertEqual(gate.lastEmitted?.brightness, 0,
-                       "the black hold is now the wire state — the DTLS stream never paused")
+        let refused = gate.admit(frame: red, at: 0.10)
+        XCTAssertFalse(refused.wasAdmitted)
+        XCTAssertEqual(refused.verdict,
+                       .hold(FS.WireFrame(x: 0.1700, y: 0.7000, brightness: 0)),
+                       "the hold is black at GREEN — holding black at the requested red would be the red flash the refusal exists to prevent")
+    }
 
-        // ...and at 17 frames it lands.
-        var landed = false
-        var t = 10.12
-        while !landed, t < 11.0 {
-            t += fd
-            let r = gate.admit(frame: bright, at: t)
-            gate.commit(r, delivered: true, at: t)
-            landed = r.wasAdmitted
-        }
-        XCTAssertTrue(landed)
-        XCTAssertGreaterThanOrEqual(t - 10.0, FS.minOnsetLedgerPeriod - 1e-9,
-                                    "the realized spacing is measured from the last DELIVERED onset")
+    func testTheColdPathAppliesTheRedFlashRuleAgainstTheLastKnownFrame() {
+        // The in-catalog Thunderstorm mechanism at gate level: a white strike at
+        // dimming 0.20 carries 0.030 of maximum luminance, which is under the
+        // general threshold, so cold candidacy on absolute luminance alone
+        // emitted it unstamped — and the red ambient frame behind it was then
+        // stamped as a first onset. Two red flashes, one frame apart.
+        var gate = FS.OnsetGate()
+        let redAmbient = FS.WireFrame(x: 0.6400, y: 0.3300, brightness: 0.01)
+        let whiteStrike = FS.WireFrame(x: 0.3127, y: 0.3290, brightness: 0.20)
+        XCTAssertLessThan(whiteStrike.relativeLuminance, FS.onsetRiseThreshold,
+                          "the strike is under the GENERAL threshold — that is the whole point")
+
+        let ambient = gate.admit(frame: redAmbient, at: 0)
+        gate.commit(ambient, delivered: true, at: 0)
+        XCTAssertNil(gate.lastOnset, "a 0.0007 ambient frame is no flash — nothing is stamped")
+
+        gate.forgetWire()
+        let strike = gate.admit(frame: whiteStrike, at: 0.02)
+        XCTAssertTrue(strike.wasAdmitted)
+        XCTAssertEqual(gate.lastOnset ?? -1, 0.02, accuracy: 1e-12,
+                       "a red flash below the general threshold is still a flash, and the cold path must stamp it")
+        gate.commit(strike, delivered: true, at: 0.02)
+
+        // And the step back to red one frame later is refused.
+        let back = gate.admit(frame: redAmbient, at: 0.04)
+        XCTAssertFalse(back.wasAdmitted)
+        XCTAssertEqual(back.verdict, .hold(whiteStrike))
     }
 
     func testAColdLedgerStillEmitsItsFirstFrameUnconditionally() {
@@ -1699,6 +1922,14 @@ final class FlashSafetyTests: XCTestCase {
         // The window above is one position. Sweep every start frame across two
         // whole cycles and every length up to a whole cycle, on all three loops.
         // The reserve/commit ledger has to hold for all of them.
+        //
+        // Fifth review round: the non-vacuity bar is 3 onsets, not 1. "One onset"
+        // satisfies every spacing rule there is by having no pair to measure, so
+        // a sweep that only demanded one was a sweep that could not fail on a
+        // gate that had stopped admitting anything. The storm arm also varies its
+        // ambient and flash chromaticities, because a saturated-red endpoint on
+        // either side of the outage is the case the red-flash rule governs and
+        // the shipped palette (blue ambient, white flash) never exercises.
         for start in 0..<40 {
             for length in 1...17 {
                 let window = start..<(start + length)
@@ -1708,23 +1939,261 @@ final class FlashSafetyTests: XCTestCase {
                 modelStrobeFreeRun(strobe, cycles: 6, speed: 100, duty: 0.5,
                                    peak: 1.0, minBri: 0.0)
                 assertOnsetsRespectTheFloor(realizedOnsets(strobe.wire),
-                                            label: "strobe drop \(window)", atLeast: 1)
+                                            label: "strobe drop \(window)", atLeast: 3)
 
                 let party = WireModel()
                 party.dropWindow = window
                 modelPartyFreeRun(party, cycles: 6, speed: 100, smoothness: 0.20,
                                   peak: 0.90, minBri: 0.05, startIndex: 0)
                 assertOnsetsRespectTheFloor(realizedOnsets(party.wire),
-                                            label: "party drop \(window)", atLeast: 1)
+                                            label: "party drop \(window)", atLeast: 3)
 
+                let palette = Self.stormPalettes[(start + length) % Self.stormPalettes.count]
                 let storm = WireModel()
                 storm.dropWindow = window
                 modelStorm(storm, strikes: 6, frequency: 1.0, flashIntensity: 0.90,
-                           minBri: 0.05, flashFrames: 3, afterglowFrames: 1)
+                           minBri: 0.05, flashFrames: 3, afterglowFrames: 1,
+                           ambient: palette.ambient, flash: palette.flash)
                 assertOnsetsRespectTheFloor(realizedOnsets(storm.wire),
-                                            label: "storm drop \(window)", atLeast: 1)
+                                            label: "storm \(palette.name) drop \(window)",
+                                            atLeast: 3)
             }
         }
+    }
+
+    func testSeededRampsSurviveEveryDropWindowPosition() {
+        // The drop-window sweep above steps a plan's own edges past an outage.
+        // A RAMP is the other shape, and it is the one the trough exists for: a
+        // chromaticity-and-level drag climbs by less per frame than any rule can
+        // see and is a flash only cumulatively, so a gate that loses the true
+        // trough across a dropped frame under-measures every rise after it and
+        // never finds out. Seeded ramps × every drop position, graded by the
+        // independent viewer, with the pre-fix gate run on the same scenarios so
+        // the pin cannot be vacuous.
+        var rng = SeededGenerator(seed: 0x9A5F_1D07)
+        var scenarios = 0
+        var legacyViolations = 0
+        var legacyWorstFrames = Double.infinity
+        var fixedWorstFrames = Double.infinity
+
+        var ramps = 0
+        var draws = 0
+        while ramps < 12, draws < 200 {
+            draws += 1
+            let from = Self.partyPalette[Int.random(in: 0..<Self.partyPalette.count, using: &rng)]
+            let to = Self.partyPalette[Int.random(in: 0..<Self.partyPalette.count, using: &rng)]
+            let briFrom = Double.random(in: 0.30...1.0, using: &rng)
+            let briTo = Double.random(in: 0.30...1.0, using: &rng)
+            let span = Int.random(in: 20...45, using: &rng)
+
+            let baseline = WireModel()
+            modelRamp(baseline, from: from, to: to, briFrom: briFrom, briTo: briTo,
+                      frames: span, cycles: 6)
+            let baselineOnsets = realizedOnsets(baseline.wire).count
+            // A drawn ramp that does not flash at all (two palette entries a
+            // long way apart in hue but not in luminance, at a low drive) is not
+            // a scenario — it is an absence of one. Draw again rather than sweep
+            // a run whose spacing assertion has nothing to measure.
+            guard baselineOnsets >= 5 else { continue }
+            ramps += 1
+
+            for start in stride(from: 0, to: 6 * span, by: 7) {
+                for length in [1, 3, 7, 17] {
+                    scenarios += 1
+                    let window = start..<(start + length)
+
+                    let fixed = WireModel()
+                    fixed.dropWindow = window
+                    modelRamp(fixed, from: from, to: to, briFrom: briFrom, briTo: briTo,
+                              frames: span, cycles: 6)
+                    let onsets = realizedOnsets(fixed.wire)
+                    // An outage FREEZES the light, so it genuinely removes
+                    // onsets from the wire: a window of `length` frames can hide
+                    // at most one onset per 17 frames of it, plus the one it
+                    // straddles. The bar is what is left after that — never a
+                    // number that lets "the gate stopped admitting anything"
+                    // pass as a spacing success.
+                    let hidden = length / FS.minCycleFrames() + 1
+                    assertOnsetsRespectTheFloor(
+                        onsets,
+                        label: "ramp \(from)→\(to) bri \(briFrom)→\(briTo) span \(span) drop \(window)",
+                        atLeast: max(1, min(3, baselineOnsets - hidden)))
+                    if let gap = minimumGap(onsets) {
+                        fixedWorstFrames = min(fixedWorstFrames, gap / fd)
+                    }
+
+                    let legacy = WireModel()
+                    legacy.gate = LegacyForgetOnDropGate()
+                    legacy.dropWindow = window
+                    modelRamp(legacy, from: from, to: to, briFrom: briFrom, briTo: briTo,
+                              frames: span, cycles: 6)
+                    if let gap = minimumGap(realizedOnsets(legacy.wire)),
+                       gap < FS.minOnsetLedgerPeriod - FS.onsetComparisonTolerance {
+                        legacyViolations += 1
+                        legacyWorstFrames = min(legacyWorstFrames, gap / fd)
+                    }
+                }
+            }
+        }
+
+        XCTAssertEqual(ramps, 12, "the seeded draw must find 12 ramps that actually flash")
+        // Measured (fifth review round): 1380 scenarios; forget-on-drop
+        // violated 115 of them, worst realized spacing 1 frame; restore-on-drop
+        // worst 17 frames — the floor exactly, on every scenario.
+        XCTAssertEqual(scenarios, 1380, "the sweep's size is part of what it proves")
+        XCTAssertGreaterThanOrEqual(legacyViolations, 115,
+                                    "the forget-on-drop gate must FAIL this sweep, or it pins nothing")
+        XCTAssertLessThanOrEqual(legacyWorstFrames, 1.5,
+                                 "and it must fail HARD — a one-frame realized pair")
+        XCTAssertGreaterThanOrEqual(fixedWorstFrames,
+                                    Double(FS.minCycleFrames()) - 1e-6,
+                                    "\(scenarios) scenarios, worst realized spacing \(fixedWorstFrames) frames")
+    }
+
+    func testAPartyTintDragAcrossADroppedSendNeverRealizesAFastRedFlash() {
+        // BLOCKER B1, measured. Party beat-locked at brightness 100 while a tint
+        // drag walks the colour green → red. Under forget-on-drop, a refused send
+        // made the wire "unknown" and the next refusal held BLACK AT THE
+        // REQUESTED CHROMATICITY: against the red frame the bridge was still
+        // showing, that black is a WCAG red flash nothing stamped, and it zeroed
+        // the viewer's trough, so the very next admitted red frame was a
+        // full-scale rise ONE frame later.
+        var scenarios = 0
+        var legacyViolations = 0
+        var legacyWorstFrames = Double.infinity
+        var fixedWorstFrames = Double.infinity
+
+        for start in 0..<100 {
+            let window = start..<(start + 5)
+            scenarios += 1
+
+            let fixed = WireModel()
+            fixed.dropWindow = window
+            modelPartyTintDrag(fixed, cycles: 7, peak: 1.0, minBri: 0.05)
+            let onsets = realizedOnsets(fixed.wire)
+            assertOnsetsRespectTheFloor(onsets, label: "party tint drag, drop \(window)",
+                                        atLeast: 3)
+            if let gap = minimumGap(onsets) { fixedWorstFrames = min(fixedWorstFrames, gap / fd) }
+
+            let legacy = WireModel()
+            legacy.gate = LegacyForgetOnDropGate()
+            legacy.dropWindow = window
+            modelPartyTintDrag(legacy, cycles: 7, peak: 1.0, minBri: 0.05)
+            if let gap = minimumGap(realizedOnsets(legacy.wire)),
+               gap < FS.minOnsetLedgerPeriod - FS.onsetComparisonTolerance {
+                legacyViolations += 1
+                legacyWorstFrames = min(legacyWorstFrames, gap / fd)
+            }
+        }
+
+        // Measured: 100 scenarios; forget-on-drop violated 11, worst realized
+        // spacing ONE frame (the black-at-requested-red hold, then the red frame
+        // behind it); restore-on-drop worst 17 frames.
+        XCTAssertGreaterThanOrEqual(legacyViolations, 11,
+                                    "B1 must be SHOWN on the forget-on-drop gate")
+        XCTAssertLessThanOrEqual(legacyWorstFrames, 1.5,
+                                 "B1's worst case is a ONE-frame realized pair")
+        XCTAssertGreaterThanOrEqual(fixedWorstFrames, Double(FS.minCycleFrames()) - 1e-6,
+                                    "\(scenarios) scenarios, worst realized spacing \(fixedWorstFrames) frames")
+    }
+
+    func testABlueToCyanRampWithOneDroppedFrameKeepsItsTrueTrough() {
+        // BLOCKER B2, measured, at the exact shape the reviewer's sweep found:
+        // blue (0.15, 0.06) → cyan (0.16, 0.23) at brightness 100, one dropped
+        // frame. Forget-on-drop re-based the trough UPWARD to the frame it
+        // recorded on the cold path, discarding the pre-drop floor, so the climb
+        // that followed was measured from too high and the viewer saw onsets
+        // three frames apart.
+        let blue = (x: 0.1500, y: 0.0600)
+        let cyan = (x: 0.1600, y: 0.2300)
+        var legacyViolations = 0
+        var legacyWorstFrames = Double.infinity
+        var fixedWorstFrames = Double.infinity
+
+        for drop in 20..<140 {
+            let window = drop..<(drop + 1)
+
+            let fixed = WireModel()
+            fixed.dropWindow = window
+            modelRamp(fixed, from: blue, to: cyan, briFrom: 1.0, briTo: 1.0,
+                      frames: 40, cycles: 6)
+            let onsets = realizedOnsets(fixed.wire)
+            assertOnsetsRespectTheFloor(onsets, label: "blue→cyan ramp, drop at \(drop)",
+                                        atLeast: 3)
+            if let gap = minimumGap(onsets) { fixedWorstFrames = min(fixedWorstFrames, gap / fd) }
+
+            let legacy = WireModel()
+            legacy.gate = LegacyForgetOnDropGate()
+            legacy.dropWindow = window
+            modelRamp(legacy, from: blue, to: cyan, briFrom: 1.0, briTo: 1.0,
+                      frames: 40, cycles: 6)
+            if let gap = minimumGap(realizedOnsets(legacy.wire)),
+               gap < FS.minOnsetLedgerPeriod - FS.onsetComparisonTolerance {
+                legacyViolations += 1
+                legacyWorstFrames = min(legacyWorstFrames, gap / fd)
+            }
+        }
+
+        // Measured: 120 single-frame drops; forget-on-drop violated 13 of them,
+        // worst realized spacing 10 frames; restore-on-drop worst 17 frames.
+        XCTAssertGreaterThanOrEqual(legacyViolations, 13,
+                                    "B2 must be SHOWN on the forget-on-drop gate")
+        XCTAssertLessThan(legacyWorstFrames, Double(FS.minCycleFrames()),
+                          "ONE dropped frame is enough to realize a short pair without the fix")
+        XCTAssertGreaterThanOrEqual(fixedWorstFrames, Double(FS.minCycleFrames()) - 1e-6,
+                                    "worst realized spacing \(fixedWorstFrames) frames")
+    }
+
+    func testInCatalogThunderstormWithARedAmbientSurvivesASingleDroppedFrame() {
+        // The reviewer's in-catalog reproduction: flash_intensity 20,
+        // min_brightness 1, frequency 100, flash_length 1, afterglow 0, ambient
+        // colour saturated red, flash colour white. The strike carries 0.030 of
+        // maximum luminance — UNDER the general threshold — so under
+        // forget-on-drop the cold path emitted it unconditionally and unstamped,
+        // and the red ambient frame behind it was then stamped as a FIRST onset:
+        // two red flashes one frame apart, from one dropped ambient frame.
+        let red = (x: 0.6400, y: 0.3300)
+        let white = (x: 0.3127, y: 0.3290)
+        var legacyViolations = 0
+        var legacyWorstFrames = Double.infinity
+        var fixedWorstFrames = Double.infinity
+        var scenarios = 0
+
+        for drop in 0..<60 {
+            scenarios += 1
+            let window = drop..<(drop + 1)
+
+            let fixed = WireModel()
+            fixed.dropWindow = window
+            modelStorm(fixed, strikes: 8, frequency: 1.0, flashIntensity: 0.20,
+                       minBri: 0.01, flashFrames: 1, afterglowFrames: 0,
+                       ambient: red, flash: white)
+            let onsets = realizedOnsets(fixed.wire)
+            assertOnsetsRespectTheFloor(onsets, label: "red-ambient storm, drop at \(drop)",
+                                        atLeast: 3)
+            if let gap = minimumGap(onsets) { fixedWorstFrames = min(fixedWorstFrames, gap / fd) }
+
+            let legacy = WireModel()
+            legacy.gate = LegacyForgetOnDropGate()
+            legacy.dropWindow = window
+            modelStorm(legacy, strikes: 8, frequency: 1.0, flashIntensity: 0.20,
+                       minBri: 0.01, flashFrames: 1, afterglowFrames: 0,
+                       ambient: red, flash: white)
+            if let gap = minimumGap(realizedOnsets(legacy.wire)),
+               gap < FS.minOnsetLedgerPeriod - FS.onsetComparisonTolerance {
+                legacyViolations += 1
+                legacyWorstFrames = min(legacyWorstFrames, gap / fd)
+            }
+        }
+
+        // Measured: 60 single-frame drop positions; forget-on-drop violated 36
+        // of them, worst realized spacing ONE frame; restore-on-drop worst 17.
+        XCTAssertGreaterThanOrEqual(legacyViolations, 36,
+                                    "the in-catalog storm reproduction must FAIL on the forget-on-drop gate")
+        XCTAssertLessThanOrEqual(legacyWorstFrames, 1.5,
+                                 "a single dropped ambient frame realized two red flashes ONE frame apart")
+        XCTAssertGreaterThanOrEqual(fixedWorstFrames, Double(FS.minCycleFrames()) - 1e-6,
+                                    "\(scenarios) scenarios, worst realized spacing \(fixedWorstFrames) frames")
     }
 
     func testTheStormSkipAndBeatWaitBranchesStreamRealFramesAndStaySafe() {
@@ -1808,7 +2277,9 @@ final class FlashSafetyTests: XCTestCase {
     /// viewer sees. `dropWindow` is that reconnect: frames whose index falls in
     /// it are refused by the transport and never appear in `wire`.
     final class WireModel {
-        private var gate = BeatMath.FlashSafety.OnsetGate()
+        /// The production gate by default; the reconnect tests swap in
+        /// `LegacyForgetOnDropGate` to show what the fix replaced.
+        var gate: any ModelledOnsetGate = ProductionOnsetGate()
         private let fd = BeatMath.FlashSafety.entertainmentFrameDuration
         private(set) var frame = 0
         private(set) var wire: [Emission] = []
@@ -1816,6 +2287,10 @@ final class FlashSafetyTests: XCTestCase {
 
         /// Frame indices the transport refuses (a reconnect).
         var dropWindow: Range<Int>?
+
+        /// Several outages in one run — what a seeded churn needs, because a
+        /// single window over a few thousand frames tests one position.
+        var dropWindows: [Range<Int>] = []
 
         /// The PRE-FIX ledger: it commits every reservation as delivered, so it
         /// runs ahead of the wire across a drop exactly as the shipped one did
@@ -1825,26 +2300,29 @@ final class FlashSafetyTests: XCTestCase {
 
         var time: Double { Double(frame) * fd }
         private var transportAccepts: Bool {
-            guard let window = dropWindow else { return true }
-            return !window.contains(frame)
+            if let window = dropWindow, window.contains(frame) { return false }
+            return !dropWindows.contains { $0.contains(frame) }
         }
 
         /// `emitGatedFrame`. Returns true only if the REQUESTED frame actually
         /// reached the wire — `landedOnWire`, not `wasAdmitted`.
         @discardableResult
         func emit(_ brightness: Double, x: Double = 0.3127, y: Double = 0.3290) -> Bool {
-            let reservation = gate.admit(
-                frame: BeatMath.FlashSafety.WireFrame(x: x, y: y, brightness: brightness),
-                at: time, minPeriod: BeatMath.FlashSafety.minOnsetLedgerPeriod)
+            let decided = gate.reserve(
+                BeatMath.FlashSafety.WireFrame(x: x, y: y, brightness: brightness), at: time)
             let delivered = transportAccepts
+            // A dropped frame never reaches the bridge, so it never appears on
+            // the wire AND the bridge goes on showing the last frame that did:
+            // the viewer below reads `wire` as a held level across the gap,
+            // which is exactly what a fixture does during a DTLS reconnect.
             if delivered {
-                wire.append(Emission(time: time, frame: reservation.frame))
+                wire.append(Emission(time: time, frame: decided.onWire))
             } else {
                 dropped += 1
             }
-            gate.commit(reservation, delivered: ledgerIgnoresDrops || delivered, at: time)
+            gate.settle(delivered: ledgerIgnoresDrops || delivered, at: time)
             frame += 1
-            return reservation.wasAdmitted && (ledgerIgnoresDrops || delivered)
+            return decided.admitted && (ledgerIgnoresDrops || delivered)
         }
 
         /// `emitOnsetFrame`: hold until the requested frame itself lands. The
@@ -1861,8 +2339,11 @@ final class FlashSafetyTests: XCTestCase {
 
     // ── The viewer's measurement, written from the DEFINITION ──
     //
-    // Nothing below calls `WireFrame.relativeLuminance`, `OnsetGate`, or any
-    // `FlashSafety` constant. It transcribes the model the rules are stated in —
+    // Nothing below calls `WireFrame.relativeLuminance`, `WireFrame.chromaDistance`,
+    // `OnsetGate`, or any `FlashSafety` constant — the CIE xy distance is
+    // re-derived here too (fifth review round), so the measurement shares no
+    // line of code with the thing it measures. It transcribes the model the
+    // rules are stated in —
     // CIE xy → linear sRGB at full drive, the sRGB luminance coefficients, and
     // CIE L* → Y for the dimming level — and the thresholds as bare literals. If
     // the production luminance model and this one ever disagree, or if any
@@ -1915,7 +2396,9 @@ final class FlashSafetyTests: XCTestCase {
         for e in wire.dropFirst() {
             let luminance = viewerLuminance(e.frame)
             let rise = luminance - trough >= 0.10 - epsilon
-            let redFlash = e.frame.chromaDistance(to: last) > 0.02
+            let dx = e.frame.x - last.x, dy = e.frame.y - last.y
+            let chromaStep = (dx * dx + dy * dy).squareRoot()
+            let redFlash = chromaStep > 0.02
                 && (viewerRedFraction(e.frame) >= 0.8 - epsilon
                     || viewerRedFraction(last) >= 0.8 - epsilon)
                 && abs(luminance - viewerLuminance(last)) >= 0.02 - epsilon
@@ -1981,16 +2464,18 @@ final class FlashSafetyTests: XCTestCase {
     private func modelStorm(_ w: WireModel, strikes: Int, frequency: Double,
                             flashIntensity: Double, minBri: Double,
                             flashFrames: Int, afterglowFrames: Int,
-                            beatWaitFrames: Int = 0, skipEvery: Int? = nil) -> Int {
+                            beatWaitFrames: Int = 0, skipEvery: Int? = nil,
+                            ambient: (x: Double, y: Double) = FlashSafetyTests.stormAmbient,
+                            flash: (x: Double, y: Double) = FlashSafetyTests.stormFlash) -> Int {
         var budget = FS.ThunderstormPlan.Budget()
         var rendered = 0
         for opportunity in 0..<strikes {
             for _ in 0..<budget.gapFrames(frequency: frequency) {
-                w.emit(minBri, x: Self.stormAmbient.x, y: Self.stormAmbient.y)
+                w.emit(minBri, x: ambient.x, y: ambient.y)
                 budget.noteAmbient()
             }
             for _ in 0..<max(beatWaitFrames, 0) {
-                w.emit(minBri, x: Self.stormAmbient.x, y: Self.stormAmbient.y)
+                w.emit(minBri, x: ambient.x, y: ambient.y)
                 budget.noteAmbient()
             }
             if let skipEvery, skipEvery > 0, opportunity % skipEvery == skipEvery - 1 {
@@ -1999,16 +2484,16 @@ final class FlashSafetyTests: XCTestCase {
             var landed = false
             var guardCount = 0
             while !landed {
-                landed = w.emit(flashIntensity, x: Self.stormFlash.x, y: Self.stormFlash.y)
+                landed = w.emit(flashIntensity, x: flash.x, y: flash.y)
                 if !landed { budget.noteAmbient() }
                 guardCount += 1
                 if guardCount > 512 { XCTFail("the strike never landed"); return rendered }
             }
             for _ in 1..<max(flashFrames, 1) {
-                w.emit(flashIntensity, x: Self.stormFlash.x, y: Self.stormFlash.y)
+                w.emit(flashIntensity, x: flash.x, y: flash.y)
             }
             for _ in 0..<afterglowFrames {
-                w.emit(max(flashIntensity * 0.4, minBri), x: Self.stormFlash.x, y: Self.stormFlash.y)
+                w.emit(max(flashIntensity * 0.4, minBri), x: flash.x, y: flash.y)
             }
             budget.noteStrike(flashFrames: flashFrames, afterglowFrames: afterglowFrames)
             rendered += 1
@@ -2022,6 +2507,65 @@ final class FlashSafetyTests: XCTestCase {
     ]
     static let stormAmbient = (x: 0.1548, y: 0.1220)
     static let stormFlash = (x: 0.3127, y: 0.3290)
+
+    /// Ambient/flash chromaticity pairs the storm is swept over. The shipped
+    /// pair never puts saturated red on either side of an outage, which is the
+    /// only case the WCAG red-flash rule governs — and the case where a flash
+    /// UNDER the general threshold is still a flash.
+    static let stormPalettes: [(name: String, ambient: (x: Double, y: Double),
+                                flash: (x: Double, y: Double))] = [
+        ("blue/white", stormAmbient, stormFlash),
+        ("red/white", (x: 0.6400, y: 0.3300), stormFlash),
+        ("blue/red", stormAmbient, (x: 0.6400, y: 0.3300)),
+    ]
+
+    /// A live drag: chromaticity AND level ramp together, one step per frame,
+    /// reversing each cycle. Nothing here waits for the gate — a finger on a
+    /// slider does not — so every refusal is a held frame the viewer still sees.
+    private func modelRamp(_ w: WireModel, from: (x: Double, y: Double),
+                           to: (x: Double, y: Double),
+                           briFrom: Double, briTo: Double, frames: Int, cycles: Int) {
+        let span = max(frames, 2)
+        for c in 0..<max(cycles, 1) {
+            for i in 0..<span {
+                let t = Double(i) / Double(span - 1)
+                let u = c % 2 == 0 ? t : 1 - t
+                w.emit(briFrom + (briTo - briFrom) * u,
+                       x: from.x + (to.x - from.x) * u,
+                       y: from.y + (to.y - from.y) * u)
+            }
+        }
+    }
+
+    /// Party beat-locked at the realizable ceiling while a tint drag walks the
+    /// colour green → red across the run. The colour is a function of the wire
+    /// frame, not of the cycle: a finger keeps moving while the gate holds.
+    private func modelPartyTintDrag(_ w: WireModel, cycles: Int,
+                                    peak: Double, minBri: Double) {
+        let green = (x: 0.1700, y: 0.7000)
+        let red = (x: 0.6400, y: 0.3300)
+        let cycleFrames = FS.minCycleFrames()
+        let total = max(cycles * cycleFrames - 1, 1)
+        func tint() -> (x: Double, y: Double) {
+            let u = min(1.0, Double(w.frame) / Double(total))
+            return (x: green.x + (red.x - green.x) * u, y: green.y + (red.y - green.y) * u)
+        }
+        for _ in 0..<cycles {
+            var c = tint()
+            w.emitOnset(peak, x: c.x, y: c.y)
+            let hold = max(cycleFrames / 2, 1)
+            for _ in 1..<hold {
+                c = tint()
+                w.emit(peak, x: c.x, y: c.y)
+            }
+            let fade = max(cycleFrames - hold, 1)
+            for i in 0..<fade {
+                c = tint()
+                let t = Double(i) / Double(fade)
+                w.emit(peak + (minBri - peak) * t, x: c.x, y: c.y)
+            }
+        }
+    }
 
     // ── Pre-fix models: what the SHIPPED loops streamed ──
     //

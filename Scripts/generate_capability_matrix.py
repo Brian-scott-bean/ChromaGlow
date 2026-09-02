@@ -180,6 +180,45 @@ EFFECT_PROFILES = {
 PENDING_HARDWARE_PARAMS = {"brightness", "base_color", "warmth", "speed"}
 
 
+# The payload member each parameter must actually REACH inside
+# `performBridgeSend`. Reading a key out of the send window proves the branch
+# LOOKS at the parameter; it does not prove the value goes anywhere. Delete the
+# `speed` branch and leave `let staleSpeed = window.numbers["speed"]` behind and
+# the key is still read, the row still prints "code-proven SEND PATH", and the
+# bridge never hears about speed again. So the row must also assign the value
+# into the member the request body is built from — any ONE of the alternatives
+# below, since colour and warmth each travel by a per-light v2 member OR its
+# grouped fallback depending on the room.
+#
+# `= nil` does not count: `groupedXY = nil` and friends are the no-room-control
+# teardown, which is exactly what is left standing when a branch is removed.
+SEND_PAYLOAD_SYMBOLS = {
+    "speed": ("v2Speed",),
+    "base_color": ("v2ColorXY", "groupedXY"),
+    "warmth": ("v2Mirek", "groupedMirek"),
+    "brightness": ("groupedBrightness",),
+    "transition": ("transitionMs",),
+}
+
+
+def _assigns_nonnil(body, symbol):
+    """True when `body` assigns something other than `nil` to `symbol`.
+
+    `body` is the comment-stripped code of the send function. The pattern
+    accepts an optional `var`/`let` and an optional type annotation, and
+    rejects `==`, `!=`, `>=`, `<=` and the compound assignments, so a
+    `v2Speed != nil` guard is not mistaken for a write to it.
+    """
+    pattern = re.compile(
+        r"(?:\b(?:var|let)\s+)?\b%s\b\s*(?::[^=]*?)?\s*(?<![=!<>+\-*/%%&|^])=(?!=)\s*(\S.*)"
+        % re.escape(symbol))
+    for line in body:
+        m = pattern.search(line)
+        if m and m.group(1).strip().rstrip(";").strip() != "nil":
+            return True
+    return False
+
+
 # ── Citation verification ────────────────────────────────────────────
 # A `//`-prefixed line is NOT evidence. Both the verifier and the discoverer
 # strip them, so commenting a consuming read out can never keep its citation
@@ -431,7 +470,21 @@ def _code_only(line):
                 j = i + 1
                 while j < n and line[j] in " \t":
                     j += 1
-                if k >= 0 and bare[k] == "[" and j < n and line[j] == "]":
+                # … and a SUBSCRIPTABLE BASE before that `[`. `["speed"]` on
+                # its own is a one-element ARRAY LITERAL, not a read: it is
+                # what `debugLog(["speed"])`, `for p in ["speed"]` and a
+                # plain `_ = ["speed"]` all leave behind, and each of them
+                # satisfied the bracket pair exactly as well as
+                # `window.numbers["speed"]` did. A subscript's base is an
+                # identifier, a call's `)` or another subscript's `]`.
+                base = k - 1
+                while base >= 0 and bare[base] in " \t":
+                    base -= 1
+                subscriptable = (base >= 0
+                                 and (bare[base].isalnum()
+                                      or bare[base] in "_)]"))
+                if (k >= 0 and bare[k] == "[" and subscriptable
+                        and j < n and line[j] == "]"):
                     keys.append("".join(lit))
                 lit = None
                 i += 1
@@ -522,7 +575,7 @@ def verify_send_path():
                 "`func %s(` — the cited send path was renamed or deleted and "
                 "every bridge-native row would still print \"code-proven\""
                 % (SEND_FUNC, len(EFFECT_PROFILES), SEND_SOURCE, SEND_FUNC)]
-    _, _, _, keys = span
+    _, _, body, keys = span
     for param in sorted(EFFECT_PROFILES):
         consumer, _, _, _, evidence = EFFECT_PROFILES[param]
         # Anything that CLAIMS the send path, plus every code-proven row: a
@@ -536,6 +589,24 @@ def verify_send_path():
                 "of the send window — the branch is gone and the row would "
                 "print a code-proven send path for a parameter the send path "
                 "ignores" % (param, consumer, SEND_FUNC, param))
+            continue
+        # READING IS NOT SENDING. The key proves the branch looked at the
+        # parameter; the assignment below proves the value reached the
+        # member the request body is built from.
+        targets = SEND_PAYLOAD_SYMBOLS.get(param)
+        if not targets:
+            errors.append(
+                "EFFECT_PROFILES row %r has no SEND_PAYLOAD_SYMBOLS entry — a "
+                "row whose payload member is unnamed cannot be proven to send "
+                "anything" % param)
+        elif not any(_assigns_nonnil(body, sym) for sym in targets):
+            errors.append(
+                'EFFECT_PROFILES row %r says %r and %s() does read "%s", but it '
+                "never assigns a non-nil value to %s — the value is read and "
+                "dropped, and the row would print a code-proven send path for a "
+                "parameter that reaches no payload"
+                % (param, consumer, SEND_FUNC, param,
+                   " / ".join(targets)))
     return errors
 
 

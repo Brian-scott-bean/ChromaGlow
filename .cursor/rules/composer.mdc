@@ -12,7 +12,7 @@ globs:
 ## What's Already Built (DO NOT RECREATE)
 - `CompositionModels.swift` — PaletteConfig, MotionConfig, EnvelopeConfig, ReactionConfig, CodableColor, CompositionPreset
 - `CompositionEngine.swift` — `CompositionEngine.render()` + `CompositionParamBox`
-- `CompositionStore.swift` — JSON persistence + 20 built-in presets
+- `CompositionStore.swift` — JSON persistence + 66 built-in presets
 - `StudioViewModel.swift` — `.composition(presetID:)` strategy + `composerStudioCards`
 - `UnifiedOrchestrator.swift` — `startCompositionMode()` with DTLS 25fps / REST 5fps
 
@@ -37,4 +37,4 @@ only bridge + group id resolve through the fail-closed unique-match helper.
 - `.myCreations` — User-saved compositions
 
 ## Built-in Preset IDs
-Built-in presets use deterministic UUIDs (`00000001-...` through `00000003-...`). Never generate random UUIDs for built-ins.
+Built-in presets use deterministic UUIDs (`00000001-...` through `00000009-...`). Never generate random UUIDs for built-ins.

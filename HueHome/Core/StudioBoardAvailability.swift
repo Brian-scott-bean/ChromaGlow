@@ -426,6 +426,44 @@ enum StudioBoardAvailability {
         return opacity(resolution.availability)
     }
 
+    // ── Editor coverage ─────────────────────────────────────────
+
+    /// The coverage the inline colour editor badges beside its own chip.
+    ///
+    /// FIFTH REVIEW ROUND. `note(for:strategy:isColor:)` suppresses the
+    /// "n OF m LIGHTS RESPOND" caption for colour because the editor already
+    /// badges the count itself — but the editor's badge reads
+    /// `ColorCapabilityContext.coverage`, which is built from the target
+    /// snapshot's UN-NARROWED `color` coverage, while the funnel's answer for
+    /// `base_color` on an `effects_v2` transport is narrowed to the lights
+    /// that actually list THIS effect (`narrowedToEffectsV2Coverage`). The two
+    /// numbers are different numbers, and the badge had the wrong one:
+    ///
+    ///   * 3 colour lights, 1 of them running the effect → resolution
+    ///     `.partial(1, 3)`, snapshot colour 3/3 full → `isPartial` false, so
+    ///     NO badge and NO caption: a fully live Tint editor while two of the
+    ///     three lights never receive the write.
+    ///   * 4 lights, 3 of them colour-capable, only 1 inside the effect's
+    ///     reach → the badge said "3 OF 4 LIGHTS" when the true reach is 1.
+    ///
+    /// So the number on screen comes from the same place every other verdict
+    /// on the board comes from: the resolution. When the funnel says
+    /// `.partial`, that IS the reach, and it is stated as `.known` — the
+    /// resolver only reaches `.partial` on read evidence. Otherwise the
+    /// snapshot's own colour coverage is handed through untouched, so an
+    /// unread or unsupported target keeps its evidence (and its silence).
+    ///
+    /// With this in place the `isColor` suppression in `note(for:)` is correct
+    /// by construction rather than by hope: exactly one number is on screen,
+    /// and it is the true one.
+    static func editorCoverage(resolution: StudioBoardResolution?,
+                               snapshotColor: CapabilityCoverage?) -> CapabilityCoverage? {
+        guard case .partial(let supported, let total, _)? = resolution?.availability else {
+            return snapshotColor
+        }
+        return CapabilityCoverage(supported: supported, total: total, evidence: .known)
+    }
+
     // ── Copy ────────────────────────────────────────────────────
 
     /// Human copy for a not-fully-live control — no API jargon, one note per

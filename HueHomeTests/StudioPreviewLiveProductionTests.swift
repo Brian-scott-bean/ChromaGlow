@@ -909,7 +909,7 @@ final class StudioPreviewLiveProductionTests: XCTestCase {
             """)
         XCTAssertNotEqual(vm.studioNotice?.message, PreviewLiveCopy.restoreDropped,
                           "nothing was dropped")
-        XCTAssertNil(vm.pendingRestoreRollback?.cardID, "the deferral is settled")
+        XCTAssertTrue(vm.pendingRestoreRollbacks.isEmpty, "the deferral is settled")
     }
 
     // ── The other two prompts defer and release the same way ────
@@ -1084,6 +1084,362 @@ final class StudioPreviewLiveProductionTests: XCTestCase {
             survives the restore instead of being erased by it
             """)
         XCTAssertNil(defaults.numbers["warmth"], "…while nothing is invented")
+    }
+
+    // ── The SAME-CARD audition (fifth review round) ─────────────
+
+    /// Preview Live on the look that is ALREADY running is a legal audition —
+    /// the browser offers the button there, and `notePreviewAuditionOutcome`
+    /// only asks for a CHANGED IDENTITY, not a changed card. So the audition
+    /// instance and the previous instance can share one card, and every live
+    /// commit on the audition also writes that card's persisted defaults.
+    ///
+    /// THE DEFECT. The restore layered the snapshot over `defaults(forCard:)`
+    /// as they are NOW, which by then held the AUDITION's warmth — a key the
+    /// previous instance never had, so the snapshot is silent about it and
+    /// layering keeps it. "Put It Back" restarted the previous look with a
+    /// mirek it had never sent (spec §16.5 asks for the wire restored
+    /// exactly), and the apply-time sentinel "a stored warmth default ⇒ the
+    /// user chose it" was armed for every later start of that card.
+    func testASameCardAuditionsOwnEditsAreNotKeptByThePutItBackRestore() async throws {
+        let target = room()
+        vm.selectedRoom = target
+        vm.valueScopes.clearDefaults(forCard: "candle")
+        let candle = try card("candle")
+        await vm.apply(candle, roomOverride: target, preferEntertainmentOverride: nil)
+        let previous = try XCTUnwrap(vm.runningEffect(for: target)?.identity)
+
+        // The previous instance holds exactly ONE thing the user set.
+        let speed = try XCTUnwrap(vm.beginParamEdit(cardID: "candle", paramID: "speed"))
+        vm.updateParamEdit(speed, value: 80)
+        vm.endParamEdit(speed)
+        XCTAssertNil(vm.valueScopes.defaults(forCard: "candle").numbers["warmth"],
+                     "warmth was never touched, so nothing stores one yet")
+
+        // Audition the SAME card on the SAME room — a new run of one look.
+        await vm.beginPreviewLive(card: candle)
+        let audition = try XCTUnwrap(vm.runningEffect(for: target)?.identity)
+        XCTAssertNotEqual(audition, previous,
+                          "the audition is a genuinely new run, not the old row renamed")
+        XCTAssertTrue(vm.isPreviewingLive)
+
+        // …and the user moves warmth ON THE AUDITION.
+        vm.commitParam(cardID: "candle", paramID: "warmth", value: 300)
+        XCTAssertEqual(vm.valueScopes.live(for: audition).numbers["warmth"], 300,
+                       "the edit landed on the audition instance")
+        XCTAssertEqual(vm.valueScopes.defaults(forCard: "candle").numbers["warmth"], 300,
+                       "…and tracked into the card's defaults, as every live edit does")
+
+        await vm.cancelPreviewLive()
+
+        let restored = try XCTUnwrap(vm.runningEffect(for: target))
+        XCTAssertEqual(restored.cardID, "candle", "the previous look is back")
+        XCTAssertNotEqual(restored.identity, audition, "…as a new run, not the audition's")
+        XCTAssertNil(vm.valueScopes.defaults(forCard: "candle").numbers["warmth"], """
+            the audition's own edit does not survive the undo of that audition — \
+            keeping it makes every later start of this card ship a mirek nobody chose
+            """)
+        XCTAssertNil(vm.valueScopes.live(for: restored.identity).numbers["warmth"], """
+            …so the restarted instance sends no warmth either, which is what \
+            "put it back exactly" means on the wire
+            """)
+        XCTAssertEqual(vm.valueScopes.live(for: restored.identity).numbers["speed"], 80,
+                       "…while the value the previous instance really held is exact")
+    }
+
+    /// The mirror, so the subtraction cannot become "throw the defaults away"
+    /// (H1 intent preserved). A default written AFTER the previous instance
+    /// started, which the audition never touched, still survives the restore.
+    func testASameCardAuditionStillKeepsDefaultsWrittenAfterTheInstanceStarted() async throws {
+        let target = room()
+        vm.selectedRoom = target
+        vm.valueScopes.clearDefaults(forCard: "candle")
+        let candle = try card("candle")
+        await vm.apply(candle, roomOverride: target, preferEntertainmentOverride: nil)
+
+        let speed = try XCTUnwrap(vm.beginParamEdit(cardID: "candle", paramID: "speed"))
+        vm.updateParamEdit(speed, value: 80)
+        vm.endParamEdit(speed)
+
+        // A setup slider moved in the look browser on an IDLE room: a
+        // defaults-only write, landing after the running instance froze its
+        // base, which the snapshot is therefore silent about.
+        let idle = room("room-idle")
+        vm.selectedRoom = idle
+        vm.commitParam(cardID: "candle", paramID: "brightness", value: 42)
+        vm.selectedRoom = target
+
+        await vm.beginPreviewLive(card: candle)
+        vm.commitParam(cardID: "candle", paramID: "warmth", value: 300)
+
+        await vm.cancelPreviewLive()
+
+        let defaults = vm.valueScopes.defaults(forCard: "candle")
+        XCTAssertEqual(defaults.numbers["speed"], 80,
+                       "the snapshot still wins for what the instance actually held")
+        XCTAssertEqual(defaults.numbers["brightness"], 42, """
+            …a default the restored instance never had an opinion about survives, \
+            because only the AUDITION's own keys are subtracted
+            """)
+        XCTAssertNil(defaults.numbers["warmth"], "…and the audition's own key is gone")
+    }
+
+    // ── "Did the restore land" is an IDENTITY question too ──────
+
+    /// The same H2 lesson `notePreviewAuditionOutcome` learned, on the other
+    /// side of the audition (fifth review round).
+    ///
+    /// The landed test was `runningEffect(for: room)?.cardID != previous.cardID`.
+    /// For a SAME-CARD audition the row already names `previous.cardID` before
+    /// the restore apply, so a restore that was flatly REFUSED read as
+    /// "landed": the defaults were left holding the snapshot's values, nothing
+    /// rolled them back, and no "we couldn't put it back" was said. Put It Back
+    /// silently did nothing, and the whole M2 deferred machinery was
+    /// unreachable for that entire class.
+    func testASameCardAuditionsRefusedPutItBackRollsTheDefaultsBackAndSaysSo() async throws {
+        let target = room()
+        vm.selectedRoom = target
+        vm.valueScopes.clearDefaults(forCard: "candle")
+        let candle = try card("candle")
+        await vm.apply(candle, roomOverride: target, preferEntertainmentOverride: nil)
+
+        let speed = try XCTUnwrap(vm.beginParamEdit(cardID: "candle", paramID: "speed"))
+        vm.updateParamEdit(speed, value: 44)
+        vm.endParamEdit(speed)
+        // Force scope 1 apart from scope 2, so "the defaults rolled back" is a
+        // claim only a rollback can satisfy.
+        let idle = room("room-idle")
+        vm.selectedRoom = idle
+        vm.commitParam(cardID: "candle", paramID: "speed", value: 91)
+        vm.selectedRoom = target
+        let previous = try XCTUnwrap(vm.runningEffect(for: target)?.identity)
+
+        // Audition the card that is ALREADY running there, and edit it.
+        await vm.beginPreviewLive(card: candle)
+        let audition = try XCTUnwrap(vm.runningEffect(for: target)?.identity)
+        XCTAssertNotEqual(audition, previous, "a genuinely new run of the same card")
+        vm.commitParam(cardID: "candle", paramID: "warmth", value: 300)
+
+        // The restore's apply now refuses outright: this room's bridge has no
+        // resolvable client, which returns from the top of `apply` without
+        // asking anything.
+        orchestrator.injectForTesting(clients: [:])
+        vm.studioNotice = nil
+        await vm.cancelPreviewLive()
+
+        XCTAssertNil(vm.entertainmentHandoffPrompt, "no question was asked")
+        XCTAssertEqual(vm.runningEffect(for: target)?.identity, audition, """
+            the refused restore left the AUDITION standing — which is exactly \
+            why a card-id test called it a success
+            """)
+        XCTAssertEqual(vm.studioNotice?.message, PreviewLiveCopy.restoreDropped,
+                       "a restore that did not land is SAID")
+        XCTAssertEqual(vm.valueScopes.defaults(forCard: "candle").numbers["speed"], 91, """
+            the pre-restore defaults come back: a look that was never put back \
+            must not leave the user's persisted values overwritten
+            """)
+        XCTAssertEqual(vm.valueScopes.defaults(forCard: "candle").numbers["warmth"], 300, """
+            …the world exactly as it was, audition writes included — the \
+            rollback baseline is deliberately the untrimmed `before`
+            """)
+        XCTAssertFalse(vm.isPreviewingLive)
+    }
+
+    /// …and the DEFERRED flavour, where the same card-id test made the M2
+    /// rollback unreachable: the restore waits behind a prompt, the
+    /// confirmation refuses, and the row still names the card because the
+    /// audition was that same card all along.
+    func testASameCardAuditionsDeferredRestoreThatNeverLandsRollsBackAndSaysSo() async throws {
+        let target = room()
+        try await startAmbient(on: target, speed: 44)
+        let idle = room("room-idle")
+        vm.selectedRoom = idle
+        vm.commitParam(cardID: "ambient", paramID: "speed", value: 91)
+        vm.selectedRoom = target
+
+        let ambient = try card("ambient")
+        await vm.beginPreviewLive(card: ambient)
+        XCTAssertEqual(vm.runningEffect(for: target)?.cardID, "ambient")
+        XCTAssertTrue(vm.isPreviewingLive, "the same card is a legal audition")
+
+        // A Composer session owns the bridge, so the restore's apply ASKS.
+        orchestrator.testStageEntertainmentOwner(roomID: "room-composer", bridgeID: "bridge-a")
+        vm.studioNotice = nil
+        await vm.cancelPreviewLive()
+        XCTAssertNotNil(vm.entertainmentHandoffPrompt, "the restore is deferred, not refused")
+        XCTAssertNotNil(vm.pendingRestoreRollbacks["ambient"], "…with its rollback held")
+        XCTAssertNil(vm.studioNotice, "a standing question is not a failure")
+
+        // The confirmation's replay then refuses: the bridge is unreadable.
+        orchestrator.injectForTesting(clients: [:])
+        await vm.confirmEntertainmentHandoff()
+
+        XCTAssertEqual(vm.valueScopes.defaults(forCard: "ambient").numbers["speed"], 91, """
+            the deferred rollback ran: the row still NAMES the card, because the \
+            audition was that same card — only its identity says nothing restarted
+            """)
+        XCTAssertEqual(vm.studioNotice?.message, PreviewLiveCopy.restoreDropped)
+        XCTAssertTrue(vm.pendingRestoreRollbacks.isEmpty, "settled either way")
+    }
+
+    /// TWO restores can be waiting at once, and both must be settled.
+    ///
+    /// `pendingRestoreRollback` was a single optional guarded by
+    /// `?.cardID != previous.cardID`, so a second deferred restore for a
+    /// DIFFERENT card simply dropped the first one: card X kept the previous
+    /// look's values persisted under a card that was never put back, and
+    /// nothing was ever said about it. The machine is consumed by each cancel,
+    /// so the user is free to audition again while a restore waits — this is a
+    /// sequence the UI positively invites.
+    func testTwoDeferredRestoresForDifferentCardsAreBothSettled() async throws {
+        let target = room()
+        try await startAmbient(on: target, speed: 44)
+        let idle = room("room-idle")
+        vm.selectedRoom = idle
+        vm.commitParam(cardID: "ambient", paramID: "speed", value: 91)
+        vm.selectedRoom = target
+
+        // Audition 1: candle over ambient, with a value of its own.
+        let candle = try card("candle")
+        await vm.beginPreviewLive(card: candle)
+        let candleSpeed = try XCTUnwrap(vm.beginParamEdit(cardID: "candle", paramID: "speed"))
+        vm.updateParamEdit(candleSpeed, value: 20)
+        vm.endParamEdit(candleSpeed)
+        vm.selectedRoom = idle
+        vm.commitParam(cardID: "candle", paramID: "speed", value: 77)
+        vm.selectedRoom = target
+
+        // Put It Back for AMBIENT — deferred behind a handoff prompt.
+        orchestrator.testStageEntertainmentOwner(roomID: "room-composer", bridgeID: "bridge-a")
+        vm.studioNotice = nil
+        await vm.cancelPreviewLive()
+        XCTAssertNotNil(vm.entertainmentHandoffPrompt)
+        XCTAssertNotNil(vm.pendingRestoreRollbacks["ambient"], "ambient's rollback is held")
+
+        // The machine is consumed, so a SECOND audition is offered and taken.
+        let fire = try card("fire")
+        await vm.beginPreviewLive(card: fire)
+        XCTAssertEqual(vm.runningEffect(for: target)?.cardID, "fire", "audition 2 is playing")
+
+        // Put It Back for CANDLE — its apply refuses outright, but a question is
+        // still standing, so this restore is deferred too.
+        orchestrator.injectForTesting(clients: [:])
+        vm.studioNotice = nil
+        await vm.cancelPreviewLive()
+
+        XCTAssertNotNil(vm.pendingRestoreRollbacks["candle"], "candle's rollback is held")
+        XCTAssertNotNil(vm.pendingRestoreRollbacks["ambient"], """
+            …and it did NOT evict ambient's: one slot meant the second card \
+            silently threw the first card's undo away
+            """)
+
+        // The question is dismissed: every waiting restore is settled now.
+        vm.cancelEntertainmentHandoff()
+
+        XCTAssertEqual(vm.valueScopes.defaults(forCard: "ambient").numbers["speed"], 91,
+                       "ambient's pre-restore defaults came back")
+        XCTAssertEqual(vm.valueScopes.defaults(forCard: "candle").numbers["speed"], 77,
+                       "…and so did candle's")
+        XCTAssertEqual(vm.studioNotice?.message, PreviewLiveCopy.restoreDropped,
+                       "one sentence covers the pass, however many restores it dropped")
+        XCTAssertTrue(vm.pendingRestoreRollbacks.isEmpty)
+    }
+
+    // ── The deferral is NAMED, not "any replay" (fifth review round) ──
+
+    /// HIJACK. An audition is playing; the user then DELIBERATELY applies a
+    /// different card to the same room, and that apply raises a prompt.
+    ///
+    /// The confirmation's replay used to run with `isAuditionInFlight` raised
+    /// merely because a preview was armed — so the replacement stop's
+    /// `notePreviewRowRemoved` was suppressed instead of consuming the machine,
+    /// and the unconditional `notePreviewAuditionOutcome` then armed the
+    /// DELIBERATE apply as the audition. "Put It Back" offered to undo a change
+    /// the user had made on purpose.
+    func testAConfirmedDeliberateApplyOnTheAuditionsRoomIsNotArmedAsTheAudition() async throws {
+        let target = room()
+        vm.selectedRoom = target
+        let candle = try card("candle")
+        await vm.apply(candle, roomOverride: target, preferEntertainmentOverride: nil)
+
+        let fire = try card("fire")
+        await vm.beginPreviewLive(card: fire)
+        XCTAssertEqual(vm.runningEffect(for: target)?.cardID, "fire", "the audition is playing")
+        XCTAssertTrue(vm.isPreviewingLive)
+
+        // Nothing to do with the audition: the user applies a third card to the
+        // same room, and it has to ask because a Composer session owns the
+        // bridge.
+        orchestrator.testStageEntertainmentOwner(roomID: "room-composer", bridgeID: "bridge-a")
+        let ambient = try card("ambient")
+        vm.studioNotice = nil
+        await vm.apply(ambient, roomOverride: target, preferEntertainmentOverride: nil)
+        XCTAssertNotNil(vm.entertainmentHandoffPrompt, "the deliberate apply is the one asking")
+
+        await vm.confirmEntertainmentHandoff()
+
+        XCTAssertEqual(vm.runningEffect(for: target)?.cardID, "ambient",
+                       "the user's own apply landed")
+        XCTAssertEqual(vm.studioNotice?.message, PreviewLiveCopy.restoreDropped, """
+            the audition's row was replaced by something that is NOT the \
+            audition's own replay, so the undo is dropped and SAID
+            """)
+        XCTAssertFalse(vm.previewLive.isPreviewing, "the machine is consumed")
+        XCTAssertNil(vm.previewAuditionCardID, """
+            …and the deliberate apply is emphatically not armed as an audition \
+            Put It Back could undo
+            """)
+        XCTAssertFalse(vm.isPreviewingLive)
+        XCTAssertNil(vm.previewLiveRoom)
+    }
+
+    /// STRANDING. An audition is playing on room A; the user applies to room B
+    /// on the same bridge; the prompt is confirmed and the replay's
+    /// one-engine-per-bridge teardown removes room A's row.
+    ///
+    /// With the flag wrongly raised, that removal was silent: the machine
+    /// stayed armed on a row that no longer exists, nothing said "we couldn't
+    /// put it back", and every other room's Preview Live was refused with
+    /// "finish the preview in Room A first" for the rest of the session.
+    func testAConfirmedApplyOnAnotherRoomThatTearsTheAuditionDownSaysSoAndFreesPreviewLive() async throws {
+        let target = room()
+        vm.selectedRoom = target
+        let candle = try card("candle")
+        await vm.apply(candle, roomOverride: target, preferEntertainmentOverride: nil)
+
+        // An APP-DRIVEN audition, so the engine-singleton rule can reach it.
+        let ambient = try card("ambient")
+        await vm.beginPreviewLive(card: ambient)
+        XCTAssertEqual(vm.runningEffect(for: target)?.cardID, "ambient", "the audition is playing")
+        XCTAssertTrue(vm.isPreviewingLive)
+
+        // A different room on the same bridge, and a Composer session owns it.
+        let other = room("room-b")
+        vm.selectedRoom = other
+        orchestrator.testStageEntertainmentOwner(roomID: "room-composer", bridgeID: "bridge-a")
+        vm.studioNotice = nil
+        await vm.apply(ambient, roomOverride: other, preferEntertainmentOverride: nil)
+        XCTAssertNotNil(vm.entertainmentHandoffPrompt)
+
+        await vm.confirmEntertainmentHandoff()
+
+        XCTAssertNil(vm.runningEffect(for: target), """
+            room A's row went with the one-Studio-engine-per-bridge rule — the \
+            audition's target no longer exists
+            """)
+        XCTAssertEqual(vm.studioNotice?.message, PreviewLiveCopy.restoreDropped,
+                       "…which is SAID, because the affordance vanished")
+        XCTAssertFalse(vm.previewLive.isPreviewing, "the machine is consumed, not stranded")
+        XCTAssertNil(vm.previewLiveRoom)
+        XCTAssertFalse(vm.isPreviewingLive)
+
+        // The proof that matters to the user: the app is not locked out.
+        vm.studioNotice = nil
+        vm.selectedRoom = other
+        await vm.beginPreviewLive(card: candle)
+        XCTAssertNotEqual(vm.studioNotice?.message,
+                          PreviewLiveCopy.finishPreviewFirst(in: target.name),
+                          "no phantom audition is blocking the rest of the app")
     }
 
     // ── M5: the restore reproduces the OBSERVED transport ───────

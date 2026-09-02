@@ -660,6 +660,27 @@ hc_takeover_body=$(awk '/func resolveForeignTakeover\(/,/^    }$/' "$HC_ORCH" 2>
 hc_activity_reads=$(echo "$hc_takeover_body" | grep -cE 'entertainmentActivity\(onBridge:' || echo 0)
 if [[ "$hc_activity_reads" -lt 2 ]]; then
     fail "composer-hardware-convergence" "resolveForeignTakeover reads bridge activity $hc_activity_reads time(s): it must read once BEFORE the stop and again AFTER it — sending a stop is not proof of release"
+else
+    # COUNTING IS NOT ORDERING. The failure text above promises "once BEFORE
+    # the stop and again AFTER it", and a count of two satisfies it however
+    # the reads are placed — cache the pre-stop read into a snapshot and take
+    # BOTH reads after the stop, and the count is still 2 while the "was it
+    # released?" question is answered by a value fetched before anything was
+    # asked to release. Pinned positionally, the same way 14's
+    # admit -> send -> commit chain is.
+    hc_stop_at=$(echo "$hc_takeover_body" | grep -nF '"action": "stop"' | head -1 | cut -d: -f1)
+    hc_read_first=$(echo "$hc_takeover_body" | grep -nE 'entertainmentActivity\(onBridge:' | head -1 | cut -d: -f1)
+    hc_read_last=$(echo "$hc_takeover_body" | grep -nE 'entertainmentActivity\(onBridge:' | tail -1 | cut -d: -f1)
+    if [[ -z "$hc_stop_at" ]]; then
+        fail "composer-hardware-convergence" "resolveForeignTakeover no longer sends the stop PUT (body: [\"action\": \"stop\"]) — the two activity reads would straddle nothing"
+    else
+        if [[ "$hc_read_first" -ge "$hc_stop_at" ]]; then
+            fail "composer-hardware-convergence" "resolveForeignTakeover's FIRST bridge-activity read is at body line $hc_read_first, at or after the stop at $hc_stop_at — nothing establishes who owned the area before the stop was sent"
+        fi
+        if [[ "$hc_read_last" -le "$hc_stop_at" ]]; then
+            fail "composer-hardware-convergence" "resolveForeignTakeover's LAST bridge-activity read is at body line $hc_read_last, at or before the stop at $hc_stop_at — a release verified from a snapshot taken BEFORE the stop is not a verification"
+        fi
+    fi
 fi
 
 # One answer may not spend another question's token.
@@ -1204,8 +1225,20 @@ for f in "${R36_SURFACES[@]}"; do
     # form threw away every line containing `://`, so a real presentation with
     # a URL in its trailing comment — `.sheet(isPresented: $x) // see
     # https://example.com` — was read as a comment and passed.
-    r36_present=$(grep -nE '\.sheet\(|\.fullScreenCover\(|StudioParamSheet\(|ComposerLayerSheet\(|StageMoreButton\(' "$f" 2>/dev/null \
+    # `.popover(` is the third detached presentation SwiftUI offers, and on
+    # iPhone it renders as a sheet — banning the first two and leaving it out
+    # made the rule a naming convention rather than a rule.
+    r36_present=$(grep -nE '\.sheet\(|\.fullScreenCover\(|\.popover\(|StudioParamSheet\(|ComposerLayerSheet\(|StageMoreButton\(' "$f" 2>/dev/null \
         | grep -vE '^[0-9]+:[[:space:]]*//' || true)
+    # ACCEPTED DEBT, anchored so it cannot widen. The Composer panel's harmony
+    # swatch editor has shipped as a `.popover(item: $editingSwatch)` since
+    # before this rule existed, and rewriting it in place is a Track-B change,
+    # not a guard change. Exactly that one binding is exempt, in exactly that
+    # one file: any OTHER popover — a different binding, an `isPresented:`
+    # form, the same call moved to another surface — still fails.
+    if [[ "$f" == "$R36_PANEL" ]]; then
+        r36_present=$(echo "$r36_present" | grep -vF '.popover(item: $editingSwatch)' || true)
+    fi
     if [[ -n "$r36_present" ]]; then
         fail "studio-one-surface" $'the customization host presents a detached surface for its controls again — advanced controls must expand in place:\n'"$f"$':\n'"$r36_present"
     fi
@@ -1413,6 +1446,28 @@ echo "$hc_emit_body" | grep -qE 'let delivered = await [A-Za-z]+\.sendUniform\('
     || fail "slice2-r1" "emitGatedFrame discards sendUniform's answer — a frame the transport refused mid-reconnect changed no light, and a ledger that cannot tell runs ahead of the wire (B-1)"
 echo "$hc_emit_body" | grep -q 'delivered: delivered' \
     || fail "slice2-r1" "emitGatedFrame does not pass the transport's answer to commit(delivered:)"
+
+# Fifth review round. Three shapes the reserve/commit pair cannot be edited out of.
+#
+# (i) NOTHING may return between the send and the commit. The comment above the
+#     commit says so; a `guard Task.isCancelled else { return }` slipped in there
+#     would still read as careful code and would leave the ledger holding a frame
+#     the wire never saw — the dropped-send defect by another route (M-2).
+hc_send_line=$(echo "$hc_emit_body" | grep -n 'sendUniform(' | head -1 | cut -d: -f1)
+hc_commit_line=$(echo "$hc_emit_body" | grep -n 'ledger.commit(' | head -1 | cut -d: -f1)
+hc_between=$(echo "$hc_emit_body" | sed -n "$((hc_send_line + 1)),$((hc_commit_line - 1))p" \
+    | grep -nE '(^|[^A-Za-z0-9_])return([^A-Za-z0-9_]|$)' || true)
+if [[ -n "$hc_between" ]]; then
+    fail "slice2-r1" $'emitGatedFrame can return between its sendUniform( and its ledger.commit(:\n'"$hc_between"
+fi
+
+# (ii) The commit is stamped with a clock sample taken AT the commit, not with a
+#      value hoisted before the send. Hoisting it silently restores H-3: the
+#      onset's reference point goes back to decision time, and the realized
+#      spacing can be shorter than the period the gate enforces.
+echo "$hc_emit_body" | grep -qE 'ledger\.commit\(reservation, delivered: delivered, at: CACurrentMediaTime\(\)\)' \
+    || fail "slice2-r1" "emitGatedFrame does not commit at: CACurrentMediaTime() — a hoisted sample stamps the onset at DECISION time and concedes the actor hop back (H-3)"
+
 # `sendUniform` has to HAVE an answer to pass.
 grep -qE '^[[:space:]]*func sendUniform\(.*\) -> Bool' "$HC_ENT" \
     || fail "slice2-r1" "HueEntertainmentClient.sendUniform no longer returns Bool — nothing downstream can tell a delivered frame from one the reconnect dropped (B-1)"
@@ -1488,9 +1543,14 @@ hc_storm_while=$(awk -v s="$hc_storm_start" 'NR > s && /while !Task\.isCancelled
 #     behind the ledger's back.
 for loop in runStrobeEntertainment runPartyEntertainment runThunderstormEntertainment; do
     body=$(hc_ent_loop "$loop")
-    hc_direct=$(echo "$body" | grep -c 'sendUniform(' || true)
+    # BOTH transport entry points. Counting only `sendUniform(` left the
+    # per-channel `send(channels:)` overload as an ungated back door: a loop
+    # could stream every frame through it with this guard green and the
+    # ledger measuring nothing. `$body` is already comment-stripped by
+    # hc_ent_loop, so a prose mention of either spelling is not a call.
+    hc_direct=$(echo "$body" | grep -cE 'sendUniform\(|\.send\(channels:' || true)
     [[ "$hc_direct" == "0" ]] \
-        || fail "slice2-r1" "$loop makes $hc_direct direct sendUniform( call(s) — every frame must go through emitGatedFrame(, or the ledger is measuring something other than the wire"
+        || fail "slice2-r1" "$loop makes $hc_direct direct transport call(s) (sendUniform( / .send(channels:) — every frame must go through emitGatedFrame(, or the ledger is measuring something other than the wire"
     hc_gated=$(echo "$body" | grep -c 'emitGatedFrame(' || true)
     [[ "$hc_gated" -ge 1 ]] \
         || fail "slice2-r1" "$loop makes no emitGatedFrame( call — a loop that streams nothing through the gate is not gated at all"
@@ -1537,6 +1597,32 @@ echo "$hc_candidacy" | grep -q 'FlashSafety.redFlashLuminanceDelta' \
 # signal that the rule is measuring the wrong quantity.
 echo "$hc_gate_body" | grep -q 'lastAdmittedBrightness' \
     && fail "slice2-r1" "OnsetGate is carrying a lastAdmittedBrightness exemption again — in luminance the storm's afterglow → ambient step is a FALL and needs no carve-out"
+
+# (iii) The gate's model of the wire is restored — not forgotten — when a send is
+#       refused, and it tracks when anything last reached the transport. These are
+#       declarations, not mentions: a future edit that quietly goes back to
+#       forget-on-drop would otherwise pass on the paragraphs that explain why it
+#       must not. A refused send changed nothing on the wire (the bridge is still
+#       showing the last DELIVERED frame); a wire nothing has reached for a whole
+#       period is the thing that is genuinely unknown.
+for decl in 'let priorLastEmitted' 'let priorTrough'; do
+    echo "$hc_beat_code" | grep -qE "^[[:space:]]*(fileprivate[[:space:]]+)?${decl}([^A-Za-z0-9_]|\$)" \
+        || fail "slice2-r1" "Reservation no longer carries '$decl' — without the pre-admit wire state a refused send cannot be rolled back, and forgetting the wire instead re-opens the black-at-the-requested-chromaticity red flash (B1) and the trough re-base (B2)"
+done
+echo "$hc_gate_body" | grep -qE '^[[:space:]]*private\(set\) var lastDeliveredAt' \
+    || fail "slice2-r1" "OnsetGate no longer declares lastDeliveredAt — the silence clock is what tells a one-frame drop from a reconnect, and without it the wire is either never forgotten or forgotten on every dropped frame"
+echo "$hc_gate_body" | grep -qE '^[[:space:]]*private\(set\) var lastKnownFrame' \
+    || fail "slice2-r1" "OnsetGate no longer declares lastKnownFrame — a cold refusal would hold black at the REQUESTED chromaticity (a WCAG red flash against the frame still on the wire) and the cold path would lose the red-flash rule"
+echo "$hc_gate_body" | grep -q 'lastEmitted = reservation.priorLastEmitted' \
+    || fail "slice2-r1" "OnsetGate.commit no longer RESTORES the wire state on a refused send — a frame the transport never took changed nothing, and forgetting it is defect B1/B2 (fifth review round)"
+echo "$hc_gate_body" | grep -q 'luminanceTroughSinceOnset = reservation.priorTrough' \
+    || fail "slice2-r1" "OnsetGate.commit no longer restores the luminance trough on a refused send — the cold path re-bases it upward, and every rise measured after that is short (B2)"
+hc_admit_body=$(echo "$hc_gate_body" | awk '/mutating func admit\(frame:/,/^            \}$/' || true)
+[[ -n "$hc_admit_body" ]] || fail "slice2-r1" "OnsetGate.admit is gone"
+echo "$hc_admit_body" | grep -q 'lastDeliveredAt' \
+    || fail "slice2-r1" "OnsetGate.admit no longer consults lastDeliveredAt — a wire that has been silent for a whole period is unknown, and that is the ONLY thing that may forget it (it is also the production trigger forgetWire() never had)"
+echo "$hc_admit_body" | grep -q 'forgetWire()' \
+    || fail "slice2-r1" "OnsetGate.admit no longer forgets a silent wire"
 
 # The luminance model itself: the two halves and their pairing.
 hc_lum_body=$(grep -vE '^[[:space:]]*//' "$HC_BEAT" | awk '/var relativeLuminance/,/^            \}$/' || true)
@@ -1753,6 +1839,18 @@ r2_binding_pin() {
     while IFS= read -r hit; do
         [[ -n "$hit" ]] || continue
         n=${hit%%:*}
+        # A LITERAL RHS IS THE BYPASS ITSELF. The window below is the binding
+        # line plus the two after it, so a decoy written immediately BEFORE
+        # the real (differently-named) funnel call sits in a window that
+        # CONTAINS the callee and passes — `let interactive = true` and
+        # `let opacity: Double = 1` are exactly that shape. A binding whose
+        # right-hand side is a bare literal can never be the funnel's answer,
+        # whatever happens to be on the next two lines.
+        rhs=${hit#*=}
+        if [[ "$rhs" =~ ^[[:space:]]*(true|false|-?[0-9]+(\.[0-9]+)?)[[:space:]]*$ ]]; then
+            fail "slice2-r2" $''"$where"$' binds `'"$name"$'` to a bare literal — a shadowing constant leaves every other guard green while the funnel\'s answer is thrown away:\n'"$hit"
+            continue
+        fi
         window=$(echo "$body" | sed -n "${n},$((n + 2))p")
         echo "$window" | grep -qF "$callee" \
             || fail "slice2-r2" $''"$where"$' binds `'"$name"$'` to something other than '"$callee"$' — a shadowing constant (`let interactive = true`, `let opacity: Double = 1`) leaves every other guard green while the funnel\'s answer is thrown away:\n'"$hit"

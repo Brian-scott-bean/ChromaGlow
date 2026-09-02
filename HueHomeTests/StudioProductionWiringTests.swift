@@ -1145,6 +1145,73 @@ final class StudioProductionWiringTests: XCTestCase {
                      "the closure clears the in-flight record when it actually runs")
     }
 
+    /// …and the closure that DOES run must clear only its OWN record.
+    ///
+    /// THE INTERLEAVING (fifth review round). The clear was unkeyed — the
+    /// closure's first statement nilled `inFlightParamSends[targetKey]`
+    /// whatever was sitting there. But the mailbox runs closures LATE: W1 can
+    /// still be pending behind a busy `RestSender` when W2 merges it, records
+    /// ITSELF as the in-flight window and suspends on its own enqueue. W1's
+    /// closure, dequeued in that suspension, erased W2's record — so W3 then
+    /// carried none of W2's fields forward while its enqueue replaced W2's
+    /// still-pending closure. W2's values were in the scopes, in the persisted
+    /// defaults and on the screen, and reached the bridge never.
+    ///
+    /// `RunningLookIdentity` cannot tell these apart: W1 and W2 are two windows
+    /// on ONE running instance and carry the same identity. The window's own
+    /// token can.
+    ///
+    /// Deterministic, not raced: the sender is held busy by a gate closure on
+    /// another scope, so W1 is provably still pending when W2's record is
+    /// installed, and the drain sentinel is FIFO-ordered behind W1.
+    func testALateWindowsClosureClearsOnlyItsOwnInFlightRecord() async throws {
+        let spy = WiringSpyClient(bridgeID: "bridge-a", bridgeName: "Bridge A",
+                                  ip: "192.0.2.1", token: "spy-token")
+        orchestrator.injectForTesting(clients: ["bridge-a": spy])
+        let a = room("room-a")
+        let candle = vm.effectCards.first { $0.id == "candle" }!
+        let identity = installV1OnlyCandle(candle, on: a)
+        vm.selectedRoom = a
+
+        // Occupy the sender on ANOTHER scope, so anything enqueued for
+        // room-a/.studio sits pending until this is released.
+        let gate = MailboxGate()
+        let sender = orchestrator.testRestSender(for: "bridge-a")
+        Task { await sender.enqueue(scope: RestScope(roomID: "gate-room", owner: .studio)) { _ in
+            await gate.hold()
+        } }
+        await gate.waitUntilHeld()
+
+        // W1 fires: it records itself in flight and its closure is enqueued —
+        // and stays pending, because the sender is held.
+        vm.commitParam(cardID: candle.id, paramID: "brightness", value: 55)
+        await vm.testFlushPendingParamSends(for: identity.targetKey)
+        let w1 = try XCTUnwrap(vm.inFlightParamSends[identity.targetKey])
+        XCTAssertTrue(spy.groupedEffectPuts.isEmpty, "W1 has not reached the bridge yet")
+
+        // W2 takes the in-flight slot, exactly as `performBridgeSend` does the
+        // instant before it suspends on its own enqueue. Installed directly for
+        // the same reason the drop-carry test installs one: what is under test
+        // is the CLEAR, not which closure the mailbox happened to schedule.
+        let session = try XCTUnwrap(vm.beginParamEdit(cardID: candle.id, paramID: "warmth"))
+        let w2 = PendingStudioSend(session: session, numbers: ["warmth": 300],
+                                   colors: [:], lastColourLikeCommit: .mirek)
+        vm.inFlightParamSends[identity.targetKey] = w2
+        XCTAssertNotEqual(w1.token, w2.token, "two windows, two tokens")
+        XCTAssertEqual(w1.session.identity, w2.session.identity,
+                       "…on ONE running instance, which is why identity cannot separate them")
+
+        await gate.release()
+        await drainStudioMailbox(bridgeID: "bridge-a", roomID: "room-a")
+
+        XCTAssertEqual(spy.groupedEffectPuts.compactMap(\.brightness), [55],
+                       "W1's closure really did run")
+        XCTAssertEqual(vm.inFlightParamSends[identity.targetKey]?.token, w2.token, """
+            …and left W2's record standing: erasing it is what made the NEXT \
+            window carry none of W2's fields while dropping its closure
+            """)
+    }
+
     /// A v1-only bridge-native row, so the grouped fallbacks are the path
     /// under test rather than the per-light `effects_v2` one.
     @discardableResult
@@ -1578,6 +1645,42 @@ final class StudioProductionWiringTests: XCTestCase {
                 ) { _ in box.resume() }
             }
         }
+    }
+}
+
+/// Holds a `RestSender` busy on demand, so "this closure is still pending"
+/// is a fact the test establishes rather than a race it has to win.
+///
+/// Two handshakes, no timing: `waitUntilHeld` returns once the gate closure is
+/// actually executing inside the sender's flush loop, and `release` lets it
+/// return so the loop moves on to whatever queued behind it.
+private actor MailboxGate {
+    private var heldWaiter: CheckedContinuation<Void, Never>?
+    private var isHeld = false
+    private var releaseWaiter: CheckedContinuation<Void, Never>?
+    private var isReleased = false
+
+    func hold() async {
+        isHeld = true
+        heldWaiter?.resume()
+        heldWaiter = nil
+        guard !isReleased else { return }
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            releaseWaiter = cont
+        }
+    }
+
+    func waitUntilHeld() async {
+        guard !isHeld else { return }
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            heldWaiter = cont
+        }
+    }
+
+    func release() {
+        isReleased = true
+        releaseWaiter?.resume()
+        releaseWaiter = nil
     }
 }
 

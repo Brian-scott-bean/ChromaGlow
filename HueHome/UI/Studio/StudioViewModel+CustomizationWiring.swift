@@ -58,6 +58,23 @@ struct StudioParamSession {
 /// re-captured on every tick from the same running instance, so "latest" and
 /// "first" are the same value; the fields are the union of what changed.
 struct PendingStudioSend {
+    /// This exact window's identity (fifth review round).
+    ///
+    /// `RunningLookIdentity` cannot do this job: successive windows on one
+    /// running instance all carry the SAME identity, and what has to be told
+    /// apart here is one window from its own successor. The in-flight record
+    /// is cleared by the mailbox closure that was enqueued for it, and the
+    /// mailbox runs closures late: W1 can sit pending behind a busy
+    /// `RestSender` while W2 merges it, records ITSELF as in flight and
+    /// suspends on its own enqueue — and W1's closure, dequeued in that
+    /// window, wiped W2's record. W3 then carried nothing forward and its
+    /// enqueue replaced W2's still-pending closure, so W2's fields never
+    /// reached the bridge at all. The closure clears the record only when the
+    /// record is still its own.
+    ///
+    /// Not part of the memberwise initializer (a `let` with a default never
+    /// is), so every window mints its own and no call site can spoof one.
+    let token = UUID()
     /// The most recent gesture session for this target — its `identity` is the
     /// fence the debounced task re-checks, and its api/room/light facts are
     /// what the send routes on.
@@ -338,7 +355,16 @@ extension StudioViewModel {
         // the confirmation path re-runs `notePreviewAuditionOutcome`, so the
         // audition arms Put It Back if and when it actually starts, and the
         // matching cancel consumes the snapshot instead.
-        if hasPendingLifecyclePrompt { return }
+        //
+        // NAME the deferral (fifth review round). The confirmation that
+        // resolves this prompt replays whatever apply raised it, and only THIS
+        // card on THIS room is the audition's own replay — see
+        // `withDeferredAuditionInFlight`, which used to exempt every replay
+        // that happened to run while a preview was armed.
+        if hasPendingLifecyclePrompt {
+            deferredAudition = (cardID: card.id, key: key)
+            return
+        }
 
         // The apply refused and nothing changed. When this call took the
         // snapshot, the machine now holds one with no audition — consume it, so
@@ -376,6 +402,9 @@ extension StudioViewModel {
               started.cardID == card.id,
               started.identity != previousIdentity else { return false }
         previewLive.previewStarted(started.identity)
+        // The deferral is spent: this audition is running now, so a LATER
+        // confirmation replay is somebody else's apply (fifth review round).
+        deferredAudition = nil
         // Only NOW is there an audition to put back. Setting this before the
         // apply meant a refusal (handoff prompt, Reduce Motion, an unsupported
         // room) left the browser showing "Keep It / Put It Back" for a look
@@ -418,6 +447,11 @@ extension StudioViewModel {
     /// question is still open, so the audition is still deferred, not refused.
     func releaseDeferredPreviewIfUnresolved() {
         guard !hasPendingLifecyclePrompt else { return }
+        // No question is standing, so nothing is deferred any more — whether
+        // the audition started or not (fifth review round). The guard above is
+        // what keeps a `.changedOwner` re-present deferred: it asks the same
+        // question again, so the marker must survive with the snapshot.
+        deferredAudition = nil
         discardArmedPreviewIfNotStarted()
         resolveDeferredRestoreRollback()
     }
@@ -438,16 +472,48 @@ extension StudioViewModel {
     /// Called only with no question standing: a prompt still open means the
     /// restore is still deferred, not resolved.
     func resolveDeferredRestoreRollback() {
-        guard !hasPendingLifecyclePrompt, let pending = pendingRestoreRollback else { return }
-        pendingRestoreRollback = nil
-        // The same test `cancelPreviewLiveCore` runs immediately after its own
-        // apply: the restore landed iff the deferred row is running that card.
-        guard runningEffects[pending.rowKey]?.cardID != pending.cardID else { return }
-        valueScopes.setDefaults(pending.before, forCard: pending.cardID)
+        guard !hasPendingLifecyclePrompt, !pendingRestoreRollbacks.isEmpty else { return }
+        // Consumed whole, then settled entry by entry: every card that was
+        // waiting is answered on this pass, and none is left behind for a
+        // later prompt to overwrite (fifth review round).
+        let pending = pendingRestoreRollbacks
+        pendingRestoreRollbacks.removeAll()
+        var anyDropped = false
+        for (cardID, entry) in pending {
+            // The same test `cancelPreviewLiveCore` runs immediately after its
+            // own apply — and for the same reason it is an IDENTITY test.
+            if restoreLanded(at: entry.rowKey, cardID: cardID,
+                             preApplyIdentity: entry.preApplyIdentity) { continue }
+            valueScopes.setDefaults(entry.before, forCard: cardID)
+            anyDropped = true
+        }
+        guard anyDropped else { return }
         persistDefaults(immediately: false)
         bumpLiveValuesTick()
+        // ONE sentence however many restores were dropped: the user pressed
+        // "Put It Back", and "we couldn't put it back" is the whole message.
         studioNotice = StudioNotice(message: PreviewLiveCopy.restoreDropped)
         statusMessage = "⚠ \(PreviewLiveCopy.restoreDropped)"
+    }
+
+    /// Did a "Put It Back" restore actually LAND on `rowKey`?
+    ///
+    /// CARD ID IS NOT THE TEST (fifth review round) — the same H2 lesson
+    /// `notePreviewAuditionOutcome` already learned, on the other side of the
+    /// audition. A SAME-CARD audition leaves the row already running
+    /// `previous.cardID` before the restore apply, so `cardID != previous`
+    /// answered "landed" for a restore that was flatly refused: no rollback of
+    /// the defaults, no "we couldn't put it back", and the whole deferred-M2
+    /// machinery unreachable for that class. Put It Back silently did nothing.
+    ///
+    /// Every real restart mints a new generation, so a row that names the card
+    /// AND is a different run from the one standing there before the apply is
+    /// the only honest evidence of a restore.
+    func restoreLanded(at rowKey: StudioSelectionKey,
+                       cardID: String,
+                       preApplyIdentity: RunningLookIdentity?) -> Bool {
+        guard let now = runningEffects[rowKey], now.cardID == cardID else { return false }
+        return now.identity != preApplyIdentity
     }
 
     /// Run a confirmation's replayed `applyCore` with the audition flag raised
@@ -465,9 +531,39 @@ extension StudioViewModel {
     ///
     /// The previous value is restored rather than forced to false, so this can
     /// never lower a flag some outer bracket raised.
-    func withDeferredAuditionInFlight(_ body: () async -> Void) async {
+    ///
+    /// WHY THE REPLAY HAS TO BE IDENTIFIED (fifth review round). The condition
+    /// was `previewLive.isPreviewing` alone — "a preview is armed" — which is
+    /// true for every confirmation that runs during an audition, and a
+    /// confirmation replays whatever apply raised its prompt. Two ways that
+    /// went wrong, both with the user's own deliberate action:
+    ///
+    ///   • HIJACK. An audition is playing on room A; the user deliberately
+    ///     applies another card to room A; that apply raises a prompt. On
+    ///     confirm the replay ran with the flag up, so the replacement stop's
+    ///     `notePreviewRowRemoved` was suppressed instead of consuming the
+    ///     machine — and the unconditional `notePreviewAuditionOutcome` then
+    ///     armed the DELIBERATE apply as the audition. "Put It Back" undid a
+    ///     change the user meant to make.
+    ///   • STRANDING. An audition is playing on room A; the user applies to
+    ///     room B on the same bridge; on confirm the replay's engine-singleton
+    ///     / one-DTLS-per-bridge / light-overlap teardown removes room A's row
+    ///     with the notice suppressed. The machine stayed armed on a row that
+    ///     no longer exists, nothing said "we couldn't put it back", and every
+    ///     other room's Preview Live was refused with "finish the preview in
+    ///     Room A first" for the rest of the session.
+    ///
+    /// So the exemption is granted to exactly one replay: the one whose card
+    /// and room match the deferral `beginPreviewLiveCore` recorded when its own
+    /// apply raised the prompt.
+    func withDeferredAuditionInFlight(card: StudioCard,
+                                      room: RoomDisplayItem,
+                                      _ body: () async -> Void) async {
         let previous = isAuditionInFlight
-        if previewLive.isPreviewing { setAuditionInFlight(true) }
+        let isTheDeferredAudition = previewLive.isPreviewing
+            && deferredAudition?.cardID == card.id
+            && deferredAudition?.key == StudioSelectionKey(room: room)
+        if isTheDeferredAudition { setAuditionInFlight(true) }
         await body()
         setAuditionInFlight(previous)
     }
@@ -527,7 +623,11 @@ extension StudioViewModel {
         previewLiveRoom = nil
         setPreviewingLive(false)
         let live = room.flatMap { runningEffects[StudioSelectionKey(room: $0)]?.identity }
-        let hadAudition = previewLive.previewIdentity != nil
+        // Captured BEFORE the verdict, which nils `previewIdentity`. The
+        // restore below needs to know WHICH instance was auditioning, not
+        // merely that one was (fifth review round — the same-card audition).
+        let auditionIdentity = previewLive.previewIdentity
+        let hadAudition = auditionIdentity != nil
 
         switch previewLive.cancelVerdict(live: live) {
         case .drop:
@@ -575,7 +675,36 @@ extension StudioViewModel {
             // instant (a setup slider moved in the look browser while this
             // room ran). Replacing the dictionary wholesale deleted those.
             let before = valueScopes.defaults(forCard: previous.cardID)
-            valueScopes.setDefaults(values.layered(over: before), forCard: previous.cardID)
+            // …but the base being layered over is not always `before` (fifth
+            // review round). THE SAME-CARD AUDITION. The browser offers
+            // Preview Live on the look that is ALREADY running, and
+            // `notePreviewAuditionOutcome` only asks for a changed identity —
+            // so the audition instance and the previous instance can share one
+            // card. Every live commit on the audition also writes that card's
+            // persisted defaults (`applyCommit` step 2), so `before` then
+            // contains keys the AUDITION authored and the previous instance
+            // never had — a warmth of 300 the user only ever set on the
+            // audition. Layering keeps them, and the restart seeds from them:
+            // "Put It Back" comes back with a mirek the previous look never
+            // sent (spec §16.5 wants the wire restored exactly), and the
+            // "a stored warmth default ⇒ the user chose it" sentinel is
+            // permanently armed.
+            //
+            // Subtract exactly what the audition instance OWNS — its sparse
+            // own-values, so a key the previous look really had still comes
+            // back out of the snapshot, which wins over this base anyway. Only
+            // for the SAME card: defaults are per card, so a different-card
+            // audition cannot have touched these keys.
+            //
+            // `before` itself is left alone — it is the rollback baseline, and
+            // a restore that never lands must put the world back as it was,
+            // audition writes included.
+            var restoreBase = before
+            if let auditionIdentity, auditionIdentity.cardID == previous.cardID {
+                restoreBase = before.removing(
+                    keysOf: valueScopes.ownValues(for: auditionIdentity))
+            }
+            valueScopes.setDefaults(values.layered(over: restoreBase), forCard: previous.cardID)
             persistDefaults(immediately: false)
             bumpLiveValuesTick()
             // M5: the observed transport, both ways. `true : nil` let a
@@ -583,9 +712,16 @@ extension StudioViewModel {
             // because nil re-derives the preference from the preset instead of
             // reproducing what was actually there. App-driven cards ignore the
             // override entirely, so passing `false` costs them nothing.
+            //
+            // Captured for the landed test below (fifth review round): the row
+            // as it stands immediately BEFORE the restore apply. See
+            // `restoreLanded(at:cardID:preApplyIdentity:)`.
+            let rowKey = StudioSelectionKey(room: room)
+            let preRestoreIdentity = runningEffects[rowKey]?.identity
             await applyCore(card, roomOverride: room,
                             preferEntertainmentOverride: snapshot.previousWasStreaming)
-            guard runningEffect(for: room)?.cardID != previous.cardID else { return }
+            if restoreLanded(at: rowKey, cardID: previous.cardID,
+                             preApplyIdentity: preRestoreIdentity) { return }
 
             // H3. A prompt is standing: the restore is DEFERRED, not refused.
             // Rolling the defaults back here would leave the confirmation's
@@ -605,13 +741,15 @@ extension StudioViewModel {
             // resolves the prompt: `releaseDeferredPreviewIfUnresolved` runs
             // it on every confirmation and every dismissal.
             if hasPendingLifecyclePrompt {
-                let rowKey = StudioSelectionKey(room: room)
                 // An existing entry for the SAME card holds the truer `before`
                 // — it was captured before any restore touched the defaults.
-                if pendingRestoreRollback?.cardID != previous.cardID {
-                    pendingRestoreRollback = (rowKey: rowKey,
-                                              cardID: previous.cardID,
-                                              before: before)
+                // Keyed per card (fifth review round): a single slot let a
+                // second deferred restore, for a DIFFERENT card, silently drop
+                // the first card's rollback.
+                if pendingRestoreRollbacks[previous.cardID] == nil {
+                    pendingRestoreRollbacks[previous.cardID] =
+                        (rowKey: rowKey, before: before,
+                         preApplyIdentity: preRestoreIdentity)
                 }
                 return
             }
@@ -1110,9 +1248,18 @@ extension StudioViewModel {
         // carry its fields if the mailbox drops this closure (M3), cleared by
         // the closure the moment it actually runs.
         inFlightParamSends[targetKey] = window
+        // Captured for the clear below — see `PendingStudioSend.token`.
+        let sendToken = window.token
 
         await orchestrator.enqueueStudioRestWrite(roomID: roomID, bridgeID: bridgeID) { [weak self] scopeIsCurrent in
-            self?.inFlightParamSends[targetKey] = nil
+            // ONLY IF THE RECORD IS STILL THIS WINDOW'S (fifth review round).
+            // An unkeyed clear here let a late-running W1 erase W2's record,
+            // and W3 then carried none of W2's fields while replacing W2's
+            // still-pending closure — the user's values were in the scopes, in
+            // the defaults and on the screen, and never on the wire.
+            if self?.inFlightParamSends[targetKey]?.token == sendToken {
+                self?.inFlightParamSends[targetKey] = nil
+            }
             // Cooperative cancellation before EVERY send, including the first
             // (packet 3) — Task.isCancelled is inert inside the mailbox's
             // unstructured flush task.

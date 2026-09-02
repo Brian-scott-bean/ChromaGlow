@@ -850,7 +850,7 @@ final class StudioViewModel {
         // M1 (Preview Live): a deferred audition's replay is still the
         // AUDITION's apply — its replacement teardown must not consume the
         // snapshot it is chaining onto. See `withDeferredAuditionInFlight`.
-        await withDeferredAuditionInFlight {
+        await withDeferredAuditionInFlight(card: request.card, room: request.room) {
             await applyCore(request.card,
                             roomOverride: request.room,
                             preferEntertainmentOverride: request.preferEntertainmentOverride,
@@ -1392,10 +1392,45 @@ final class StudioViewModel {
     /// Carried here until `releaseDeferredPreviewIfUnresolved` settles it —
     /// discarded when the restore actually lands, rolled back and SAID when it
     /// does not. Session state; never persisted.
+    ///
+    /// A MAP, keyed by card, not a single slot (fifth review round). The four
+    /// prompt slots are independent, so two restores really can be waiting at
+    /// once: card X's restore defers behind an area choice (which consumes the
+    /// machine, freeing the user to audition again), the user auditions in
+    /// another room and hits Put It Back, and that restore defers behind a
+    /// handoff prompt. The single optional was overwritten by the second, and
+    /// X was left with the previous look's values persisted under a card that
+    /// was never put back, with nothing said. Each card carries its own
+    /// baseline and its own landed test; the FIRST `before` recorded for a card
+    /// wins, because it was captured before any restore touched those defaults.
+    ///
+    /// `preApplyIdentity` is the row as it stood immediately before the restore
+    /// apply — the H2 idiom. Card id alone cannot answer "did the restore
+    /// land" when the audition and the previous look share a card.
     @ObservationIgnored
-    var pendingRestoreRollback: (rowKey: StudioSelectionKey,
-                                cardID: String,
-                                before: CustomizationValueSet<Color>)?
+    var pendingRestoreRollbacks: [String: (rowKey: StudioSelectionKey,
+                                           before: CustomizationValueSet<Color>,
+                                           preApplyIdentity: RunningLookIdentity?)] = [:]
+
+    /// The audition whose own apply raised a lifecycle prompt and is WAITING
+    /// for the confirmation to replay it (fifth review round).
+    ///
+    /// `withDeferredAuditionInFlight` used to raise `isAuditionInFlight` for
+    /// ANY confirmation replay that happened while a preview was armed — but a
+    /// confirmation replays whatever apply raised the question, and that is
+    /// usually not the audition. A deliberate apply of another card onto the
+    /// audition's room then ran with the flag up, so the replacement stop's
+    /// `notePreviewRowRemoved` was suppressed and Put It Back survived to undo
+    /// a change the user had deliberately made; a confirmed apply on ANOTHER
+    /// room tore the audition's row down just as silently and left the machine
+    /// armed on a row that no longer exists, refusing every other room's
+    /// Preview Live for the rest of the session.
+    ///
+    /// Naming the deferral makes the exemption exact: the flag rises only for
+    /// the replay of THIS card on THIS room. Cleared when the audition finally
+    /// arms, and by the single exit rule when the prompt resolves without it.
+    @ObservationIgnored
+    var deferredAudition: (cardID: String, key: StudioSelectionKey)?
 
     // ── Engine reference (set in configure()) ─────────────────
     // Getter internal so the customization-wiring extension (separate file)
@@ -3450,7 +3485,7 @@ final class StudioViewModel {
         // starts.
         let previewPrevious = runningEffect(for: prompt.room)?.identity
         // M1: the replay carries the audition's flag — see the area-choice arm.
-        await withDeferredAuditionInFlight {
+        await withDeferredAuditionInFlight(card: prompt.card, room: prompt.room) {
             await applyCore(prompt.card,
                             roomOverride: prompt.room,
                             preferEntertainmentOverride: prompt.preferEntertainmentOverride,
@@ -3564,7 +3599,7 @@ final class StudioViewModel {
         // starts.
         let previewPrevious = runningEffect(for: request.room)?.identity
         // M1: the replay carries the audition's flag — see the area-choice arm.
-        await withDeferredAuditionInFlight {
+        await withDeferredAuditionInFlight(card: request.card, room: request.room) {
             await applyCore(request.card,
                             roomOverride: request.room,
                             preferEntertainmentOverride: request.preferEntertainmentOverride,
@@ -3722,7 +3757,7 @@ final class StudioViewModel {
             // spends the token when it accepts it.
             let previewPrevious = runningEffect(for: request.room)?.identity
             // M1: the replay carries the audition's flag — see the area-choice arm.
-            await withDeferredAuditionInFlight {
+            await withDeferredAuditionInFlight(card: request.card, room: request.room) {
                 await applyCore(request.card,
                                 roomOverride: request.room,
                                 preferEntertainmentOverride: request.preferEntertainmentOverride,
@@ -3821,6 +3856,7 @@ final class StudioViewModel {
         // sentence on a user who just asked for everything to stop.
         previewLive.commit()
         previewLiveRoom = nil
+        deferredAudition = nil
         setPreviewingLive(false)
         let rowKeys = Array(runningEffects.keys)
         for rowKey in rowKeys {

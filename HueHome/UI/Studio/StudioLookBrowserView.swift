@@ -295,10 +295,14 @@ struct LookDetailsPanel: View {
                 // The opacity belongs to the CONTROL, not to the pair.
                 .opacity(opacity)
                 if let note {
+                    // Same three-line budget as the board's captions (fifth
+                    // review round): this is the SAME joined
+                    // coverage-plus-caveat string, and at two lines its tail
+                    // was the half that got clipped.
                     Text(note)
                         .font(HueFont.stageTag)
                         .tracking(0.8)
-                        .lineLimit(2)
+                        .lineLimit(3)
                         .minimumScaleFactor(0.85)
                         .foregroundStyle(HuePalette.amber.opacity(0.65))
                         .accessibilityLabel("\(param.label): \(note)")

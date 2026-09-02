@@ -211,7 +211,11 @@ struct StudioBoardView: View {
     /// nothing; Strobe's streaming-only flash colour renders staged.
     ///
     /// The partial-coverage note is suppressed here on purpose — the editor
-    /// already badges "n OF m LIGHTS" beside its own chip (spec §13).
+    /// already badges "n OF m LIGHTS" beside its own chip (spec §13) — and
+    /// that badge is fed from the FUNNEL's coverage
+    /// (`StudioBoardAvailability.editorCoverage`), not from the snapshot's
+    /// un-narrowed colour coverage, so the one number on screen is the one
+    /// the write actually reaches.
     @ViewBuilder
     private func colorSection(_ section: BoardSection) -> some View {
         // ONE snapshot, built once and handed to both readers. Asking the view
@@ -233,11 +237,26 @@ struct StudioBoardView: View {
                     let opacity = StudioBoardAvailability.opacity(resolution: resolution,
                                                                   strategy: card.strategy)
                     let controlID = CustomizationControlID(cardID: card.id, paramID: param.id)
+                    // ONE number on screen, and it is the true one (fifth
+                    // review round). The editor badges its own coverage from
+                    // the context, and the context carries the target's
+                    // UN-NARROWED colour coverage — so on an effects_v2
+                    // transport, where the funnel narrows `base_color` to the
+                    // lights that list this effect, the badge was either
+                    // absent (3/3 colour, 1/3 reach) or overstated (3/4
+                    // colour, 1 light of reach) while the caption stayed
+                    // suppressed for colour. The resolution is the reach.
+                    let editorContext: ColorCapabilityContext = {
+                        var narrowed = context
+                        narrowed.coverage = StudioBoardAvailability.editorCoverage(
+                            resolution: resolution, snapshotColor: context.coverage)
+                        return narrowed
+                    }()
                     VStack(alignment: .leading, spacing: 3) {
                         StageColorEditor(
                             title: param.label,
                             current: vm.paramColor(for: card.id, paramID: param.id),
-                            context: context,
+                            context: editorContext,
                             isInteractive: interactive,
                             // A collapsed editor when the control is dead: the
                             // hue/saturation pad is a raw drag surface, and
