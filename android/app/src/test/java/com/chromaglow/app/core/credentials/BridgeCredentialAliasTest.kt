@@ -5,10 +5,11 @@ import org.junit.Assert.assertNotEquals
 import org.junit.Test
 
 class BridgeCredentialAliasTest {
+
+    private val bridgeId = "001788FFFE112233"
+
     @Test
     fun sameBridgeId_returnsStableAliasAndFilename() {
-        val bridgeId = "550e8400-e29b-41d4-a716-446655440000"
-
         val aliasOne = BridgeCredentialAlias.keystoreAlias(bridgeId)
         val aliasTwo = BridgeCredentialAlias.keystoreAlias(bridgeId)
         val fileOne = BridgeCredentialAlias.ciphertextFileName(bridgeId)
@@ -16,31 +17,59 @@ class BridgeCredentialAliasTest {
 
         assertEquals(aliasOne, aliasTwo)
         assertEquals(fileOne, fileTwo)
-        assertEquals(
-            "chromaglow.bridge.$bridgeId.api_token",
-            aliasOne,
-        )
+        assertEquals("chromaglow.bridge.$bridgeId.api_token", aliasOne)
         assertEquals("bridge_$bridgeId.api_token.enc", fileOne)
     }
 
     @Test
     fun differentBridgeIds_returnDifferentAliasAndFilename() {
-        val firstAlias = BridgeCredentialAlias.keystoreAlias("bridge-alpha")
-        val secondAlias = BridgeCredentialAlias.keystoreAlias("bridge-beta")
-        val firstFile = BridgeCredentialAlias.ciphertextFileName("bridge-alpha")
-        val secondFile = BridgeCredentialAlias.ciphertextFileName("bridge-beta")
+        val other = "AABBCCDDEEFF0011"
 
-        assertNotEquals(firstAlias, secondAlias)
-        assertNotEquals(firstFile, secondFile)
+        assertNotEquals(BridgeCredentialAlias.keystoreAlias(bridgeId), BridgeCredentialAlias.keystoreAlias(other))
+        assertNotEquals(
+            BridgeCredentialAlias.ciphertextFileName(bridgeId),
+            BridgeCredentialAlias.ciphertextFileName(other),
+        )
     }
 
     @Test
-    fun syntheticUuidLikeBridgeId_isAccepted() {
-        val bridgeId = "550e8400-e29b-41d4-a716-446655440000"
+    fun canonicalUppercaseHexId_isAccepted() {
+        assertEquals(bridgeId, BridgeCredentialAlias.validateBridgeId(bridgeId))
+        assertEquals("0000000000000000", BridgeCredentialAlias.validateBridgeId("0000000000000000"))
+        assertEquals("FFFFFFFFFFFFFFFF", BridgeCredentialAlias.validateBridgeId("FFFFFFFFFFFFFFFF"))
+    }
 
-        BridgeCredentialAlias.validateBridgeId(bridgeId)
-        BridgeCredentialAlias.keystoreAlias(bridgeId)
-        BridgeCredentialAlias.ciphertextFileName(bridgeId)
+    // The alias contract now equals the registry's PairedBridgeRecord contract: canonical
+    // UPPERCASE 16-hex only. Every looser shape the old pattern admitted is refused.
+
+    @Test(expected = IllegalArgumentException::class)
+    fun lowercaseHexId_isRejected() {
+        BridgeCredentialAlias.validateBridgeId("001788fffe112233")
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun uuidLikeId_isRejected() {
+        BridgeCredentialAlias.validateBridgeId("550e8400-e29b-41d4-a716-446655440000")
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun demoBridgeId_isRejected() {
+        BridgeCredentialAlias.validateBridgeId("demo-bridge-main")
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun fifteenHexChars_isRejected() {
+        BridgeCredentialAlias.validateBridgeId("001788FFFE11223")
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun seventeenHexChars_isRejected() {
+        BridgeCredentialAlias.validateBridgeId("001788FFFE1122334")
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun nonHexCharacter_isRejected() {
+        BridgeCredentialAlias.validateBridgeId("001788FFFE11223G")
     }
 
     @Test(expected = IllegalArgumentException::class)

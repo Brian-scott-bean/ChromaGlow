@@ -316,8 +316,14 @@ class AndroidKeystoreBridgeCredentialStoreTest {
         }
     }
 
+    /**
+     * A random canonical-shaped (UPPERCASE 16-hex) bridge id per test so aliases never collide
+     * across runs. [label] is kept for readability at call sites only; the alias contract now
+     * admits the physical Hue id shape exclusively.
+     */
+    @Suppress("UNUSED_PARAMETER")
     private fun syntheticBridgeId(label: String): String =
-        "test-$label-${UUID.randomUUID()}"
+        UUID.randomUUID().toString().replace("-", "").take(16).uppercase()
 
     private fun syntheticToken(label: String): String =
         "synthetic-token-$label-${UUID.randomUUID()}"
