@@ -38,6 +38,24 @@ struct SeededGenerator: RandomNumberGenerator {
     }
 }
 
+
+// MARK: - Gate-level shorthand
+
+private extension BeatMath.FlashSafety.OnsetGate {
+    /// `admit` followed by the `commit` production ALWAYS makes (Guard 14(i)):
+    /// delivered, at the same instant. The gate-level tests below used a bare
+    /// `admit` as shorthand; since safety round 5 a stamped rise is in flight
+    /// until its commit and holds every later onset, so the shorthand has to
+    /// say what production says.
+    @discardableResult
+    mutating func admitDelivered(frame: BeatMath.FlashSafety.WireFrame, at t: Double)
+        -> BeatMath.FlashSafety.Reservation {
+        let reservation = admit(frame: frame, at: t)
+        commit(reservation, delivered: true, at: t)
+        return reservation
+    }
+}
+
 // MARK: - The gate a wire model drives
 
 /// One reserve/commit pair, with the reservation held inside the gate so a
@@ -1214,10 +1232,10 @@ final class FlashSafetyTests: XCTestCase {
         XCTAssertEqual(high.relativeLuminance - low.relativeLuminance, 0.2348, accuracy: 0.002)
 
         var gate = FS.OnsetGate()
-        _ = gate.admit(frame: low, at: 0)
-        XCTAssertEqual(gate.admit(frame: high, at: 0.02).verdict, .hold(low),
+        _ = gate.admitDelivered(frame: low, at: 0)
+        XCTAssertEqual(gate.admitDelivered(frame: high, at: 0.02).verdict, .hold(low),
                        "a 23 % luminance rise 20 ms after the last frame is a flash")
-        XCTAssertEqual(gate.admit(frame: high, at: 0.34).verdict, .emit(high))
+        XCTAssertEqual(gate.admitDelivered(frame: high, at: 0.34).verdict, .emit(high))
     }
 
     func testAChromaStepThatRaisesLuminanceWhileDimmingFallsIsAnOnset() {
@@ -1250,19 +1268,19 @@ final class FlashSafetyTests: XCTestCase {
     func testFrameGateHoldsTheLastEMITTEDFrameUntilThePeriodPasses() {
         var gate = FS.OnsetGate()
         let dark = FS.WireFrame(x: 0.64, y: 0.33, brightness: 0.0)
-        _ = gate.admit(frame: dark, at: 10.0)
+        _ = gate.admitDelivered(frame: dark, at: 10.0)
         let flash = FS.WireFrame(x: 0.64, y: 0.33, brightness: 1.0)
-        XCTAssertEqual(gate.admit(frame: flash, at: 10.02).verdict, .emit(flash))
+        XCTAssertEqual(gate.admitDelivered(frame: flash, at: 10.02).verdict, .emit(flash))
         XCTAssertEqual(gate.lastOnset, 10.02)
 
         // Down and straight back up, 4 frames later.
-        _ = gate.admit(frame: dark, at: 10.04)
+        _ = gate.admitDelivered(frame: dark, at: 10.04)
         for n in 3...16 {
             let t = 10.02 + Double(n) * fd
-            XCTAssertEqual(gate.admit(frame: flash, at: t).verdict, .hold(dark),
+            XCTAssertEqual(gate.admitDelivered(frame: flash, at: t).verdict, .hold(dark),
                            "frame \(n): a refusal must repeat the frame ALREADY on the wire")
         }
-        XCTAssertEqual(gate.admit(frame: flash, at: 10.02 + Double(minFrames) * fd).verdict,
+        XCTAssertEqual(gate.admitDelivered(frame: flash, at: 10.02 + Double(minFrames) * fd).verdict,
                        .emit(flash), "17 frames later it is admissible")
 
         // The hold frame carries COLOUR as well as brightness (defect L1: the
@@ -1270,10 +1288,10 @@ final class FlashSafetyTests: XCTestCase {
         // the NEW colour on the wire while refusing the onset that step WAS).
         var party = FS.OnsetGate()
         let red = FS.WireFrame(x: 0.64, y: 0.33, brightness: 0.90)
-        _ = party.admit(frame: red, at: 20.0)
+        _ = party.admitDelivered(frame: red, at: 20.0)
         let blue = FS.WireFrame(x: 0.15, y: 0.06, brightness: 0.90)
-        XCTAssertEqual(party.admit(frame: blue, at: 20.02).verdict, .hold(red))
-        XCTAssertEqual(party.admit(frame: blue, at: 20.02).frame.x, 0.64)
+        XCTAssertEqual(party.admitDelivered(frame: blue, at: 20.02).verdict, .hold(red))
+        XCTAssertEqual(party.admitDelivered(frame: blue, at: 20.02).frame.x, 0.64)
     }
 
     func testChromaticityGovernsOnlyTheWCAGRedFlash() {
@@ -1286,9 +1304,9 @@ final class FlashSafetyTests: XCTestCase {
         XCTAssertTrue(red.isSaturatedRed)
         XCTAssertFalse(blue.isSaturatedRed)
         XCTAssertLessThan(blue.relativeLuminance, red.relativeLuminance)
-        _ = party.admit(frame: red, at: 0)
-        XCTAssertEqual(party.admit(frame: blue, at: 0.02).verdict, .hold(red))
-        XCTAssertEqual(party.admit(frame: blue, at: 0.34).verdict, .emit(blue))
+        _ = party.admitDelivered(frame: red, at: 0)
+        XCTAssertEqual(party.admitDelivered(frame: blue, at: 0.02).verdict, .hold(red))
+        XCTAssertEqual(party.admitDelivered(frame: blue, at: 0.34).verdict, .emit(blue))
 
         // A chroma step with NO red endpoint and a falling luminance is not an
         // onset at all: the storm's white afterglow giving way to its blue
@@ -1297,13 +1315,13 @@ final class FlashSafetyTests: XCTestCase {
         // `lastAdmittedBrightness` exemption; in luminance it needs nothing.
         var storm = FS.OnsetGate()
         let flash = FS.WireFrame(x: 0.3127, y: 0.3290, brightness: 0.90)
-        _ = storm.admit(frame: flash, at: 0)
+        _ = storm.admitDelivered(frame: flash, at: 0)
         let afterglow = FS.WireFrame(x: 0.3127, y: 0.3290, brightness: 0.36)
-        _ = storm.admit(frame: afterglow, at: 0.02)
+        _ = storm.admitDelivered(frame: afterglow, at: 0.02)
         let ambient = FS.WireFrame(x: 0.1548, y: 0.1220, brightness: 0.05)
         XCTAssertFalse(afterglow.isSaturatedRed)
         XCTAssertFalse(ambient.isSaturatedRed)
-        XCTAssertEqual(storm.admit(frame: ambient, at: 0.04).verdict, .emit(ambient))
+        XCTAssertEqual(storm.admitDelivered(frame: ambient, at: 0.04).verdict, .emit(ambient))
 
         // The case the afterglow floor creates: with the afterglow floored at
         // `max(0.4 × 0.50, 0.30)` the step to ambient is exactly level in
@@ -1311,23 +1329,23 @@ final class FlashSafetyTests: XCTestCase {
         // luminance of the storm's blue at the same dimming.
         var floored = FS.OnsetGate()
         let strike = FS.WireFrame(x: 0.3127, y: 0.3290, brightness: 0.50)
-        _ = floored.admit(frame: strike, at: 0)
+        _ = floored.admitDelivered(frame: strike, at: 0)
         let glow = FS.WireFrame(x: 0.3127, y: 0.3290, brightness: 0.30)
-        _ = floored.admit(frame: glow, at: 0.02)
+        _ = floored.admitDelivered(frame: glow, at: 0.02)
         let stormBlue = FS.WireFrame(x: 0.1548, y: 0.1220, brightness: 0.30)
         XCTAssertEqual(stormBlue.brightness, glow.brightness)
         XCTAssertLessThan(stormBlue.relativeLuminance, glow.relativeLuminance)
-        XCTAssertEqual(floored.admit(frame: stormBlue, at: 0.04).verdict, .emit(stormBlue),
+        XCTAssertEqual(floored.admitDelivered(frame: stormBlue, at: 0.04).verdict, .emit(stormBlue),
                        "a level-dimming colour step DOWN in luminance is decay, not an onset")
 
         // A red step with no luminance change at all — black to black — is not a
         // red flash: the rule needs 0.02 of luminance movement.
         var off = FS.OnsetGate()
         let black = FS.WireFrame(x: 0.64, y: 0.33, brightness: 0.0)
-        _ = off.admit(frame: black, at: 0)
+        _ = off.admitDelivered(frame: black, at: 0)
         let blackBlue = FS.WireFrame(x: 0.15, y: 0.06, brightness: 0.0)
         XCTAssertTrue(black.isSaturatedRed)
-        XCTAssertEqual(off.admit(frame: blackBlue, at: 0.02).verdict, .emit(blackBlue))
+        XCTAssertEqual(off.admitDelivered(frame: blackBlue, at: 0.02).verdict, .emit(blackBlue))
     }
 
     func testFrameGateRefusesABackwardsOrNonFiniteTimeWithoutMovingTheWire() {
@@ -3430,8 +3448,10 @@ final class FlashSafetyTests: XCTestCase {
 
     /// If another source stamps the clock between two of a sweep's batches
     /// (a slow bridge stretched the batches past the period), the sweep's
-    /// remaining lamps would rise inside THAT onset's period: `noteRealized`
-    /// says so and the builder sends no further batch.
+    /// remaining lamps would rise inside THAT onset's period: `beginRealizing`
+    /// refuses the next batch BEFORE it is dispatched, and a batch that was
+    /// already on its way when the clock changed hands still records its
+    /// rise — a fact about the wire whoever owns the clock (round 5).
     func testASweepThatLostTheClockSendsNoFurtherBatch() {
         let white = (x: 0.3127, y: 0.3290)
         let ledger = BeatMath.FlashSafety.OnsetLedger()
@@ -3449,17 +3469,81 @@ final class FlashSafetyTests: XCTestCase {
         r = ledger.admit(frame: bright, source: ent, at: 0.42)
         XCTAssertTrue(r.wasAdmitted)
         ledger.commit(r, delivered: true, at: 0.42)
-        // The sweep's second batch would land at 0.45: 0.03 s after the
-        // Strobe's onset. The sweep no longer owns the clock — it must stop.
+        // A batch already in flight lands at 0.45: 0.03 s after the Strobe's
+        // onset. Its rise IS recorded — the clock moves to 0.45 — and the
+        // sweep learns it no longer owns the clock.
         XCTAssertFalse(ledger.noteRealized(sweep, at: 0.45),
             "a sweep that lost the clock between batches went on lighting lamps inside the other onset's period")
-        XCTAssertEqual(ledger.lastOnset ?? -1, 0.42, accuracy: 1e-9, "…and it did not move the Strobe's stamp")
+        XCTAssertEqual(ledger.lastOnset ?? -1, 0.45, accuracy: 1e-9,
+            "a rise that happened is recorded whoever owns the clock (round 5)")
+        // The next batch is refused BEFORE dispatch.
+        XCTAssertFalse(ledger.beginRealizing(sweep), "the sweep must send no further batch")
         // An UNSTAMPED sweep (no rise) is never held back by ownership.
         ledger.commit(sweep, delivered: true, at: 0.45)
         let steady = ledger.admit(frame: bright, source: rest, at: 0.60)
         XCTAssertTrue(steady.wasAdmitted)
         XCTAssertTrue(ledger.noteRealized(steady, at: 0.66), "a frame that is not a rise has no clock to lose")
         ledger.commit(steady, delivered: true, at: 0.66)
+    }
+
+    /// The in-flight window (safety round 5, HIGH): a REST sweep is admitted
+    /// at 0.00 but a slow bridge lands its first batch at 0.50. Before round 5
+    /// the Strobe on the same bridge was admitted at 0.34 — 0.16 s BEFORE the
+    /// REST lamps rose. A stamped rise that has not yet been realized holds
+    /// every other source's onsets; each further batch re-opens the hold from
+    /// its dispatch until its lamps report up.
+    func testAnUnrealizedStampHoldsEveryOtherSource() {
+        let white = (x: 0.3127, y: 0.3290)
+        let ledger = BeatMath.FlashSafety.OnsetLedger()
+        let ent = BeatMath.FlashSafety.entertainmentSource
+        let rest = BeatMath.FlashSafety.restSource(roomID: "room-r")
+        let dark = BeatMath.FlashSafety.WireFrame(x: white.x, y: white.y, brightness: 0)
+        let bright = BeatMath.FlashSafety.WireFrame(x: white.x, y: white.y, brightness: 1)
+        var r = ledger.admit(frame: dark, source: ent, at: -0.5); ledger.commit(r, delivered: true, at: -0.5)
+        r = ledger.admit(frame: dark, source: rest, at: -0.4); ledger.commit(r, delivered: true, at: -0.34)
+        let sweep = ledger.admit(frame: bright, source: rest, at: 0.00)
+        XCTAssertTrue(sweep.wasAdmitted)
+        // The first batch is on its way. The Strobe's ON frame at 0.34 is
+        // 0.34 s after the ADMIT — and an unknown time before the lamps rise.
+        r = ledger.admit(frame: bright, source: ent, at: 0.34)
+        XCTAssertFalse(r.wasAdmitted, "the Strobe was admitted while a REST rise was still in flight")
+        ledger.commit(r, delivered: true, at: 0.34)
+        // The batch lands at 0.50: the clock is 0.50 and the hold is over.
+        XCTAssertTrue(ledger.noteRealized(sweep, at: 0.50))
+        r = ledger.admit(frame: bright, source: ent, at: 0.60)
+        XCTAssertFalse(r.wasAdmitted, "0.10 s after the lamps rose")
+        ledger.commit(r, delivered: true, at: 0.60)
+        // The second batch is dispatched at 0.58 (after the 80 ms sleep) and
+        // re-opens the hold: the Strobe at 0.84 — 0.34 s after batch one —
+        // is still refused, because batch two is on its way.
+        XCTAssertTrue(ledger.beginRealizing(sweep))
+        r = ledger.admit(frame: bright, source: ent, at: 0.84)
+        XCTAssertFalse(r.wasAdmitted, "a further batch in flight is a rise nobody has seen yet")
+        ledger.commit(r, delivered: true, at: 0.84)
+        XCTAssertTrue(ledger.noteRealized(sweep, at: 0.90))
+        // Nothing in flight, 0.34 s after the last lamps rose: admitted, and
+        // the clock is the Strobe's — the sweep's third batch is refused
+        // BEFORE it is dispatched.
+        r = ledger.admit(frame: bright, source: ent, at: 1.24)
+        XCTAssertTrue(r.wasAdmitted)
+        XCTAssertFalse(ledger.beginRealizing(sweep), "the clock changed hands — no further batch")
+        // …but the Strobe's send is DROPPED: its stamp rolls back to 0.90,
+        // and with it the clock returns to the sweep, which may go on.
+        ledger.commit(r, delivered: false, at: 1.25)
+        XCTAssertEqual(ledger.lastOnset ?? -1, 0.90, accuracy: 1e-9)
+        XCTAssertTrue(ledger.beginRealizing(sweep),
+            "a rolled-back stamp must hand the clock back to the sweep whose stamp is current again")
+        XCTAssertTrue(ledger.noteRealized(sweep, at: 1.30))
+        ledger.commit(sweep, delivered: true, at: 1.31)
+        // A ROLLED-BACK stamp holds nothing: the Strobe's dropped frame at
+        // 1.65 frees the clock for the room's next rise.
+        r = ledger.admit(frame: dark, source: ent, at: 1.58); ledger.commit(r, delivered: true, at: 1.58)
+        r = ledger.admit(frame: bright, source: ent, at: 1.65)
+        XCTAssertTrue(r.wasAdmitted)
+        ledger.commit(r, delivered: false, at: 1.65)
+        let next = ledger.admit(frame: bright, source: rest, at: 1.67)
+        XCTAssertTrue(next.wasAdmitted, "a rolled-back stamp must not hold the wire hostage")
+        ledger.commit(next, delivered: true, at: 1.73)
     }
 
     /// A rising sweep that half-landed: two of four lamps refused the PUT.

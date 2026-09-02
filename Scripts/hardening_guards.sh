@@ -1842,9 +1842,24 @@ hc_batched_builder_pins() {
     sleep_line=$(echo "$body" | grep -n 'Task.sleep(for: .milliseconds(80))' | head -1 | cut -d: -f1)
     [[ -n "$sleep_line" && "$realized" -lt "$sleep_line" ]] \
         || fail "slice3-flash" "$builder moves the clock after the inter-batch sleep, not at the delivery"
-    terminal_count=$(echo "$body" | grep -c 'deliveredIndices: deliveredIndices)' || true)
-    [[ "$terminal_count" -ge 3 ]] \
-        || fail "slice3-flash" "$builder has a terminal that no longer forwards deliveredIndices ($terminal_count of 3) — nil means 'every index' (round 4, LOW)"
+    # Round 5 (HIGH): before a batch is DISPATCHED the sweep must still own
+    # the clock, and from that dispatch until the lamps report up the rise is
+    # in flight — inside the loop, before the task group.
+    local loop_line dispatching group_line
+    loop_line=$(echo "$body" | grep -n 'for batchStart in stride(' | head -1 | cut -d: -f1)
+    dispatching=$(echo "$body" | grep -n 'guard self?.composerBatchDispatching(token: token) == true else {' | head -1 | cut -d: -f1)
+    group_line=$(echo "$body" | grep -n 'await withTaskGroup(' | head -1 | cut -d: -f1)
+    [[ -n "$loop_line" && -n "$dispatching" && -n "$group_line" && "$loop_line" -lt "$dispatching" && "$dispatching" -lt "$group_line" ]] \
+        || fail "slice3-flash" "$builder no longer probes the clock (and opens the in-flight hold) before each batch is dispatched (round 5, HIGH)"
+    echo "$body" | sed -n "$((dispatching + 1)),$((dispatching + 6))p" | grep -q '^ *return$' \
+        || fail "slice3-flash" "$builder's pre-dispatch refusal is not followed by a return — the batch would still PUT"
+    # Every terminal from the batch loop on forwards the delivered indices —
+    # a missing argument defaults to "every index" (round 4, LOW).
+    local terms fwd
+    terms=$(echo "$body" | sed -n "$loop_line,\$p" | grep -c 'composerWorkTerminated(' || true)
+    fwd=$(echo "$body" | sed -n "$loop_line,\$p" | grep -c 'deliveredIndices: deliveredIndices)' || true)
+    [[ "$terms" -ge 4 && "$terms" == "$fwd" ]] \
+        || fail "slice3-flash" "$builder has a terminal after the batch loop starts that no longer forwards deliveredIndices ($fwd of $terms)"
 }
 for builder in makeComposerGradientWork makeComposerPerLightWork makeComposerGroupedWork; do
     body=$(hc_ent_loop "$builder")
@@ -1926,14 +1941,24 @@ echo "$hc_settle" | grep -q 'if let landed, landed.count < Set(flash.sweep.map(\
     || fail "slice3-flash" "settleFlashReservation no longer detects a PARTIAL delivery (round 4, MEDIUM)"
 echo "$hc_settle" | grep -q 'flash.ledger.correctWire(' \
     || fail "slice3-flash" "settleFlashReservation no longer corrects the source's wire after a partial delivery"
-echo "$hc_settle" | grep -q 'lastDelivered: runtime.lastDeliveredFrames, sweep: \[\]))' \
-    || fail "slice3-flash" "the partial-delivery correction is not the field of what actually LANDED"
+echo "$hc_settle" | grep -q 'lastDelivered: runtime.lastDeliveredFrames, sweep: unknownAsBlack))' \
+    || fail "slice3-flash" "the partial-delivery correction is not the field of what actually LANDED with never-delivered lamps read as black (round 5)"
+echo "$hc_settle" | grep -q '.filter { !landed.contains($0.index) && runtime.lastDeliveredFrames\[$0.index\] == nil }' \
+    || fail "slice3-flash" "the never-delivered lamps of a partial sweep are no longer projected as black"
+echo "$hc_settle" | grep -q '.map { (index: $0.index, x: $0.x, y: $0.y, brightness: 0.0) }' \
+    || fail "slice3-flash" "the never-delivered lamps of a partial sweep are projected at something other than black"
 hc_realized=$(hc_ent_loop composerBatchRealized)
 [[ -n "$hc_realized" ]] || fail "slice3-flash" "composerBatchRealized is gone from $HC_ORCH"
 echo "$hc_realized" | grep -q 'return flash.ledger.noteRealized(flash.reservation, at: CACurrentMediaTime())' \
     || fail "slice3-flash" "composerBatchRealized no longer moves the ledger's clock through noteRealized"
 echo "$hc_realized" | grep -q 'guard let flash = composerFlashReservations\[token\] else { return false }' \
     || fail "slice3-flash" "composerBatchRealized answers true for a token with no reservation — unknown must stop the sweep"
+hc_dispatching=$(hc_ent_loop composerBatchDispatching)
+[[ -n "$hc_dispatching" ]] || fail "slice3-flash" "composerBatchDispatching is gone from $HC_ORCH (round 5)"
+echo "$hc_dispatching" | grep -q 'return flash.ledger.beginRealizing(flash.reservation)' \
+    || fail "slice3-flash" "composerBatchDispatching no longer opens the in-flight hold through beginRealizing"
+echo "$hc_dispatching" | grep -q 'guard let flash = composerFlashReservations\[token\] else { return false }' \
+    || fail "slice3-flash" "composerBatchDispatching answers true for a token with no reservation"
 echo "$hc_settle" | grep -q 'composerFlashReservations.removeValue(forKey: token)' \
     || fail "slice3-flash" "settleFlashReservation no longer consumes the reservation — a second terminal would commit it twice"
 echo "$hc_settle" | grep -q 'flash.ledger.commit(flash.reservation, delivered: delivered' \
@@ -2002,12 +2027,30 @@ hc_sc_forget=$(echo "$hc_stop_comp" | grep -n 'flashOnsetLedger(forBridge: bridg
 # The ledger refuses to restore a wire model a forget predates.
 echo "$hc_gate" | grep -q 'mutating func noteRealized(_ reservation: Reservation, at t: Double) -> Bool {' \
     || fail "slice3-flash" "OnsetGate.noteRealized is gone (round 4, HIGH)"
-echo "$hc_gate" | grep -q 'guard lastOnsetOwner == reservation.sequence else { return false }' \
-    || fail "slice3-flash" "noteRealized no longer refuses a sweep whose clock another source has taken"
-echo "$hc_gate" | grep -q 'if t.isFinite, let last = lastOnset, t > last { lastOnset = t }' \
-    || fail "slice3-flash" "noteRealized no longer moves the clock forward (only) to the delivery"
-echo "$hc_gate" | grep -q 'if stampedAt != nil { lastOnsetOwner = sequence }' \
-    || fail "slice3-flash" "a stamping reservation no longer takes ownership of the clock"
+hc_note=$(echo "$hc_gate" | awk '/mutating func noteRealized\(/,/^            \}$/')
+echo "$hc_note" | grep -q 'return lastOnsetOwner == reservation.sequence' \
+    || fail "slice3-flash" "noteRealized no longer tells a sweep whose clock another source has taken"
+hc_note_move=$(echo "$hc_note" | grep -n 'if t.isFinite, let last = lastOnset, t > last { lastOnset = t }' | head -1 | cut -d: -f1)
+hc_note_owner=$(echo "$hc_note" | grep -n 'return lastOnsetOwner == reservation.sequence' | head -1 | cut -d: -f1)
+[[ -n "$hc_note_move" && -n "$hc_note_owner" && "$hc_note_move" -lt "$hc_note_owner" ]] \
+    || fail "slice3-flash" "noteRealized answers ownership before recording the rise — a landed batch's rise is a fact about the wire whoever owns the clock (round 5)"
+echo "$hc_note" | grep -q 'if unrealizedStamp == reservation.sequence { unrealizedStamp = nil }' \
+    || fail "slice3-flash" "noteRealized no longer ends the in-flight hold"
+echo "$hc_gate" | grep -q 'if stampedAt != nil { lastOnsetOwner = sequence; unrealizedStamp = sequence }' \
+    || fail "slice3-flash" "a stamping reservation no longer takes ownership of the clock AND opens the in-flight hold (round 5, HIGH)"
+hc_try=$(echo "$hc_gate" | awk '/mutating func tryOnset\(/,/^            \}$/')
+echo "$hc_try" | grep -q 'guard unrealizedStamp == nil else { return false }' \
+    || fail "slice3-flash" "tryOnset no longer refuses every source while a stamped rise is in flight (round 5, HIGH)"
+hc_begin=$(echo "$hc_gate" | awk '/mutating func beginRealizing\(/,/^            \}$/')
+echo "$hc_begin" | grep -q 'guard lastOnsetOwner == reservation.sequence else { return false }' \
+    || fail "slice3-flash" "beginRealizing no longer refuses a batch whose clock another source has taken"
+echo "$hc_begin" | grep -q 'unrealizedStamp = reservation.sequence' \
+    || fail "slice3-flash" "beginRealizing no longer re-opens the in-flight hold for a further batch"
+hc_commit=$(echo "$hc_gate" | awk '/mutating func commit\(_ reservation: Reservation, delivered: Bool,/,/^            \}$/')
+[[ $(echo "$hc_commit" | grep -c 'if unrealizedStamp == reservation.sequence { unrealizedStamp = nil }') -eq 2 ]] \
+    || fail "slice3-flash" "commit no longer ends the in-flight hold on both the rollback and the delivered branch"
+echo "$hc_commit" | grep -q 'if lastOnsetOwner == reservation.sequence { lastOnsetOwner = reservation.priorOwner }' \
+    || fail "slice3-flash" "a rolled-back stamp still owns the clock — the sweep whose stamp is current again must regain it (round 5)"
 echo "$hc_gate" | grep -q 'guard var wire = wires\[source\], wire.lastEmitted != nil else { return }' \
     || fail "slice3-flash" "correctWire would resurrect a forgotten wire"
 echo "$hc_gate" | grep -q 'wire.trough = min(wire.trough, frame.relativeLuminance)' \
@@ -2018,7 +2061,7 @@ echo "$hc_gate" | grep -q 'forgetSequence = sequence' \
     || fail "slice3-flash" "OnsetGate.forgetWire no longer records the forget's sequence"
 
 # The REST model and its regression tests exist in the flash suite.
-for t in emitRESTComposition testPulseAtTwoFortyBpmRealizesAboveThreeHzOverUngatedREST testPulseAtTwoFortyBpmIsGatedToThreeHzOverREST testARestartInsideThePeriodCannotFlashOnceTheWireIsForgotten testAColdRefusalHoldsTheLastKnownChromaticity testALateRollbackCannotRestoreAWireAForgetPredates testAStaleSliceRiseIsMeasuredOnTheProjectedField testTheProjectedFieldIsWhatTheWireShows testTwoSourcesOnOneBridgeAreJudgedAgainstTheirOwnWires testEntertainmentAndRESTSourcesShareTheClockNotTheWire testARESTSweepsClockMovesToWhenItsLampsRose testASweepThatLostTheClockSendsNoFurtherBatch testAPartialDeliveryCorrectsTheSourceWire; do
+for t in emitRESTComposition testPulseAtTwoFortyBpmRealizesAboveThreeHzOverUngatedREST testPulseAtTwoFortyBpmIsGatedToThreeHzOverREST testARestartInsideThePeriodCannotFlashOnceTheWireIsForgotten testAColdRefusalHoldsTheLastKnownChromaticity testALateRollbackCannotRestoreAWireAForgetPredates testAStaleSliceRiseIsMeasuredOnTheProjectedField testTheProjectedFieldIsWhatTheWireShows testTwoSourcesOnOneBridgeAreJudgedAgainstTheirOwnWires testEntertainmentAndRESTSourcesShareTheClockNotTheWire testARESTSweepsClockMovesToWhenItsLampsRose testASweepThatLostTheClockSendsNoFurtherBatch testAPartialDeliveryCorrectsTheSourceWire testAnUnrealizedStampHoldsEveryOtherSource; do
     grep -q "$t" HueHomeTests/FlashSafetyTests.swift \
         || fail "slice3-flash" "FlashSafetyTests no longer carries $t"
 done

@@ -618,6 +618,10 @@ enum BeatMath {
             /// that had fallen to 0.02 and climbed back to 0.30 is measured as a
             /// rise from 0.30 and the climb that follows is under-measured.
             fileprivate let priorTrough: Double
+            /// Who owned the clock before this reservation stamped it — restored
+            /// on rollback so the sweep whose stamp is current again may go on
+            /// (safety round 5).
+            fileprivate let priorOwner: UInt64?
             /// Serial number of this admit, so a rollback can tell whether any
             /// other frame has touched the gate since.
             fileprivate let sequence: UInt64
@@ -718,6 +722,15 @@ enum BeatMath {
             /// only one allowed to move it forward as its lamps rise
             /// (safety round 4).
             private var lastOnsetOwner: UInt64?
+            /// A stamped rise that is IN FLIGHT — admitted (or a later batch
+            /// dispatched) and not yet realized on the wire (safety round 5,
+            /// HIGH). While one is pending no source may take an onset: the
+            /// lamps will rise somewhere between the stamp and now, so no
+            /// interval measured from the stamp is proven safe. Cleared by
+            /// the first `noteRealized` of that reservation and by its
+            /// `commit`; the DTLS loop clears its own at commit before its
+            /// next admit, so it costs that loop nothing.
+            private var unrealizedStamp: UInt64?
 
             init(lastOnset: Double? = nil, lastEmitted: WireFrame? = nil) {
                 self.lastOnset = lastOnset
@@ -745,6 +758,9 @@ enum BeatMath {
             mutating func tryOnset(at t: Double,
                                    minPeriod: Double = FlashSafety.minOnsetLedgerPeriod) -> Bool {
                 guard t.isFinite else { return false }
+                // A rise is in flight: its lamps will come up at a time this
+                // clock does not know yet. Nobody takes an onset until they do.
+                guard unrealizedStamp == nil else { return false }
                 let period = (minPeriod.isFinite && minPeriod > 0) ? minPeriod
                                                                    : FlashSafety.minOnsetLedgerPeriod
                 if let last = lastOnset {
@@ -1061,6 +1077,12 @@ enum BeatMath {
                     if let stamped = reservation.stampedAt, lastOnset == stamped {
                         lastOnset = reservation.priorLastOnset
                     }
+                    // Nothing rose: the rise is no longer in flight, and the
+                    // clock — restored above — belongs to whoever owned it
+                    // before this stamp, so a sweep whose stamp is current
+                    // again may go on with its batches.
+                    if unrealizedStamp == reservation.sequence { unrealizedStamp = nil }
+                    if lastOnsetOwner == reservation.sequence { lastOnsetOwner = reservation.priorOwner }
                     // A rollback restores the wire model ONLY if nothing has
                     // declared the wire unknown since the reservation was
                     // taken: `stopCompositionMode` forgets AFTER deactivating
@@ -1082,6 +1104,7 @@ enum BeatMath {
                     lastDeliveredAt = max(lastDeliveredAt ?? deliveredAt, deliveredAt)
                 }
                 if sequence == reservation.sequence { lastKnownFrame = reservation.frame }
+                if unrealizedStamp == reservation.sequence { unrealizedStamp = nil }
                 guard let stamped = reservation.stampedAt, lastOnset == stamped,
                       deliveredAt.isFinite, deliveredAt > stamped else { return }
                 lastOnset = deliveredAt
@@ -1127,10 +1150,31 @@ enum BeatMath {
             /// batch (the un-lit lamps hold; the next tick projects the rest
             /// of the rise and is judged on its own). An unstamped
             /// reservation is not a rise and is never held back here.
+            ///
+            /// The rise is recorded BEFORE ownership is answered (safety
+            /// round 5): lamps that rose are a fact about the wire whoever
+            /// owns the clock, and the batch that discovers the loss has
+            /// already landed. Forward only, so a legitimately later stamp is
+            /// never lowered. It also ends the in-flight window this
+            /// reservation (or `beginRealizing`) opened.
             mutating func noteRealized(_ reservation: Reservation, at t: Double) -> Bool {
                 guard reservation.stampedAt != nil else { return true }
-                guard lastOnsetOwner == reservation.sequence else { return false }
                 if t.isFinite, let last = lastOnset, t > last { lastOnset = t }
+                if unrealizedStamp == reservation.sequence { unrealizedStamp = nil }
+                return lastOnsetOwner == reservation.sequence
+            }
+
+            /// A further batch of a stamped sweep is about to be DISPATCHED
+            /// (safety round 5, HIGH): the clock must still be this sweep's,
+            /// or the batch would rise inside another onset's period — false
+            /// means send nothing. True re-opens the in-flight window until
+            /// `noteRealized` reports the batch on the wire, so no other
+            /// source can take an onset while these lamps are on their way
+            /// up. An unstamped reservation is not a rise.
+            mutating func beginRealizing(_ reservation: Reservation) -> Bool {
+                guard reservation.stampedAt != nil else { return true }
+                guard lastOnsetOwner == reservation.sequence else { return false }
+                unrealizedStamp = reservation.sequence
                 return true
             }
 
@@ -1152,11 +1196,13 @@ enum BeatMath {
             private mutating func reservation(_ verdict: FrameVerdict, stampedAt: Double?,
                                               prior: (onset: Double?, emitted: WireFrame?,
                                                       trough: Double)) -> Reservation {
-                if stampedAt != nil { lastOnsetOwner = sequence }
+                let priorOwner = lastOnsetOwner
+                if stampedAt != nil { lastOnsetOwner = sequence; unrealizedStamp = sequence }
                 return Reservation(verdict: verdict, source: currentSource, stampedAt: stampedAt,
                             priorLastOnset: prior.onset,
                             priorLastEmitted: prior.emitted,
                             priorTrough: prior.trough,
+                            priorOwner: priorOwner,
                             sequence: sequence)
             }
 
@@ -1258,6 +1304,14 @@ enum BeatMath {
             func noteRealized(_ reservation: Reservation, at t: Double) -> Bool {
                 lock.lock(); defer { lock.unlock() }
                 return gate.noteRealized(reservation, at: t)
+            }
+
+            /// A further batch of a stamped sweep is about to go out: false if
+            /// the clock is no longer this sweep's; true holds every other
+            /// source's onsets until the batch is on the wire (safety round 5).
+            func beginRealizing(_ reservation: Reservation) -> Bool {
+                lock.lock(); defer { lock.unlock() }
+                return gate.beginRealizing(reservation)
             }
 
             /// A partial delivery: the source's wire becomes the field that

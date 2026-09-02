@@ -3571,9 +3571,15 @@ final class UnifiedOrchestrator {
         // last frame. Hand the source's wire what actually landed, or the
         // retry lights the rest of a rise unmeasured.
         if let landed, landed.count < Set(flash.sweep.map(\.index)).count {
+            // A lamp that failed and has NEVER been delivered is unknown, and
+            // unknown reads as black (the cold rule) — not as absent, which
+            // would overstate the field the wire shows (safety round 5).
+            let unknownAsBlack = flash.sweep
+                .filter { !landed.contains($0.index) && runtime.lastDeliveredFrames[$0.index] == nil }
+                .map { (index: $0.index, x: $0.x, y: $0.y, brightness: 0.0) }
             let realized = BeatMath.FlashSafety.fieldFrame(
                 channels: BeatMath.FlashSafety.projectedField(
-                    lastDelivered: runtime.lastDeliveredFrames, sweep: []))
+                    lastDelivered: runtime.lastDeliveredFrames, sweep: unknownAsBlack))
             flash.ledger.correctWire(
                 source: BeatMath.FlashSafety.restSource(roomID: token.scope.roomID),
                 frame: realized)
@@ -3590,6 +3596,16 @@ final class UnifiedOrchestrator {
     private func composerBatchRealized(token: CompositionSendLedger.Token) -> Bool {
         guard let flash = composerFlashReservations[token] else { return false }
         return flash.ledger.noteRealized(flash.reservation, at: CACurrentMediaTime())
+    }
+
+    /// A batch of a token's sweep is about to be DISPATCHED (safety round 5,
+    /// HIGH): false when the clock has passed to another source — the batch
+    /// would rise inside that onset's period, so nothing is sent; true holds
+    /// every other source's onsets until `composerBatchRealized` reports the
+    /// lamps up. A token with no reservation is unknown: stop.
+    private func composerBatchDispatching(token: CompositionSendLedger.Token) -> Bool {
+        guard let flash = composerFlashReservations[token] else { return false }
+        return flash.ledger.beginRealizing(flash.reservation)
     }
 
     /// Monotonic token mint. Uniqueness only — ordering claims come from the
@@ -7001,6 +7017,16 @@ final class UnifiedOrchestrator {
                         deliveredIndices: deliveredIndices)
                     return
                 }
+                // Before anything goes out (safety round 5): the clock must
+                // still be this sweep's, and these lamps' rise is in flight
+                // from here until they report up.
+                guard self?.composerBatchDispatching(token: token) == true else {
+                    self?.composerWorkTerminated(
+                        token: token, kind: .cancelled,
+                        attemptedOperations: attempted, failures: failures,
+                        deliveredIndices: deliveredIndices)
+                    return
+                }
                 let batchEnd = min(batchStart + batchSize, entries.count)
                 let outcomes = await withTaskGroup(of: (indices: [Int], ok: Bool).self) { group -> [(indices: [Int], ok: Bool)] in
                     for entry in entries[batchStart..<batchEnd] {
@@ -7128,6 +7154,15 @@ final class UnifiedOrchestrator {
             let batchSize = CompositionRotationPlan.batchSize
             for batchStart in stride(from: 0, to: targets.count, by: batchSize) {
                 guard await stillCurrent() else {
+                    self?.composerWorkTerminated(
+                        token: token, kind: .cancelled,
+                        attemptedOperations: attempted, failures: failures,
+                        deliveredIndices: deliveredIndices)
+                    return
+                }
+                // Before anything goes out (safety round 5): the clock must
+                // still be this sweep's; the rise is in flight from here.
+                guard self?.composerBatchDispatching(token: token) == true else {
                     self?.composerWorkTerminated(
                         token: token, kind: .cancelled,
                         attemptedOperations: attempted, failures: failures,
