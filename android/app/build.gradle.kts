@@ -49,8 +49,12 @@ dependencies {
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.okhttp)
     implementation(libs.kotlinx.serialization.json)
+    // Explicit: the frozen session/transport contracts expose Flow/StateFlow directly.
+    implementation(libs.kotlinx.coroutines.core)
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+    // Contract tests introspect sealed hierarchies and data-class shapes (secret-free-by-construction pins).
+    testImplementation(libs.kotlin.reflect)
     testImplementation(libs.okhttp.mockwebserver3)
     testImplementation(libs.okhttp.tls)
     androidTestImplementation(platform(libs.androidx.compose.bom))
