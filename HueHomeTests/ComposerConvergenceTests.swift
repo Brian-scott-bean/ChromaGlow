@@ -988,6 +988,110 @@ final class ComposerConvergenceTests: XCTestCase {
                        "a generation bump does not tear the surface down")
     }
 
+    // MARK: - Keyboard / scroll stability (the Composer's row-55 analogue)
+
+    /// The deepest subview at least `minHeight` tall — the host's own backing
+    /// view — and its top edge in the harness's coordinate space.
+    private func deepestSubviewTop(in root: UIView, minHeight: CGFloat) -> CGFloat {
+        var best: (depth: Int, top: CGFloat)? = nil
+        func visit(_ view: UIView, depth: Int) {
+            let frame = view.convert(view.bounds, to: root)
+            if frame.height >= minHeight, frame.width > 200 {
+                if best == nil || depth > best!.depth { best = (depth, frame.minY) }
+            }
+            view.subviews.forEach { visit($0, depth: depth + 1) }
+        }
+        visit(root, depth: 0)
+        return best?.top ?? -1
+    }
+
+    /// The real composition order from `StudioView.body`: the wheel pinned on
+    /// top, the customization region below — with a COMPOSITION running.
+    private func hostRolodexAboveComposer(vm: StudioViewModel, room: RoomDisplayItem,
+                                          orchestrator: UnifiedOrchestrator) -> UIHostingController<AnyView> {
+        let root = AnyView(
+            VStack(spacing: 0) {
+                RoomRolodexView(
+                    rooms: [room], zones: [],
+                    selectedRoom: room, runningEffects: vm.runningEffects,
+                    onCommit: { _ in }, onActivate: { _ in }
+                )
+                .padding(.horizontal, HueSpacing.lg)
+                .padding(.vertical, HueSpacing.xs)
+
+                StudioCustomizationHost(
+                    vm: vm,
+                    performVM: .constant(nil),
+                    activeHarmonyRule: .constant(HarmonyRule.none),
+                    onBackToDecks: {},
+                    onSaveComposition: { _ in },
+                    onTransportSwitch: { _, _ in }
+                )
+                .frame(maxHeight: .infinity)
+            }
+            .background(StagePalette.stage)
+            .environment(orchestrator)
+        )
+        let host = UIHostingController(rootView: root)
+        host.overrideUserInterfaceStyle = .dark
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 402, height: 874))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        windows.append(window)
+        host.view.layoutIfNeeded()
+        return host
+    }
+
+    /// Checklist row 55, for the Composer: while the editor is up, a live
+    /// edit, a Revert (a generation bump) and a same-look restart must NOT
+    /// collapse the host, move it, or reach up into the wheel band — the host
+    /// is keyed by the target key, not the generation, and nothing here
+    /// presents a surface. (Keyboard focus itself cannot be driven
+    /// in-process; §V-C carries the physical row.)
+    func testComposerHostStaysMountedAndStillAcrossEditRevertAndRestart() async {
+        let orchestrator = await makeDemoOrchestrator()
+        let vm = StudioViewModel()
+        var motion = MotionConfig(); motion.speed = 33
+        let saved = preset(motion: motion)
+        vm.injectForTesting(compositionStore: storeWith([saved]))
+        let a = room("room-a")
+        vm.selectedRoom = a
+        let staged = stageRunningComposition(saved, on: a, in: vm)
+        vm.sessionMemory.update(staged.identity.targetKey) { $0.activeCompositionTab = .motion }
+
+        let host = hostRolodexAboveComposer(vm: vm, room: a, orchestrator: orchestrator)
+        pump(0.4)
+        let wheelBandBottom: CGFloat = 140
+        let topBefore = deepestSubviewTop(in: host.view, minHeight: 200)
+        XCTAssertGreaterThan(topBefore, wheelBandBottom - 1,
+            "the Composer host starts at y=\(topBefore), inside the wheel band")
+        XCTAssertLessThan(topBefore, 400, "the Composer host is a bottom-anchored overlay again")
+
+        // A live edit while the surface is up.
+        XCTAssertEqual(vm.commitComposerEdit(session(vm, on: a)) { $0.motion.speed = 77 }, .commit)
+        pump(0.3)
+        XCTAssertEqual(deepestSubviewTop(in: host.view, minHeight: 200), topBefore, accuracy: 0.5,
+                       "a live edit moved the host")
+        XCTAssertNil(host.presentedViewController)
+
+        // Revert to Saved: a generation bump on the same target key.
+        vm.revertActiveComposition()
+        XCTAssertEqual(staged.box.motion.speed, 33)
+        pump(0.3)
+        XCTAssertEqual(deepestSubviewTop(in: host.view, minHeight: 200), topBefore, accuracy: 0.5,
+                       "a Revert moved the host — it is keyed by the generation again")
+        XCTAssertEqual(vm.sessionMemory.state(for: staged.identity.targetKey).activeCompositionTab, .motion,
+                       "the layer selection survived the Revert")
+
+        // A same-look restart: new generation, same target key.
+        stageRunningComposition(saved, on: a, in: vm)
+        pump(0.3)
+        XCTAssertEqual(deepestSubviewTop(in: host.view, minHeight: 200), topBefore, accuracy: 0.5,
+                       "a same-look restart moved the host")
+        XCTAssertNil(host.presentedViewController, "nothing was presented across the three events")
+        XCTAssertNotNil(host.view.window, "the host is still mounted")
+    }
+
     // MARK: - Hosting (for the presentation probe)
 
     private var windows: [UIWindow] = []
