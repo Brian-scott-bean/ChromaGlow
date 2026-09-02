@@ -23,8 +23,10 @@ import java.io.File
  */
 class LiveAppGraph private constructor(context: Context) {
 
-    val registry: BridgeRegistry = DataStoreBridgeRegistry.create(context)
-    val credentialStore: BridgeCredentialStore = AndroidKeystoreBridgeCredentialStore(context)
+    // Private on purpose (A-02): feature code reaches persisted identity only through the
+    // pairing workflow and the live home, never the registry or the credential store directly.
+    private val registry: BridgeRegistry = DataStoreBridgeRegistry.create(context)
+    private val credentialStore: BridgeCredentialStore = AndroidKeystoreBridgeCredentialStore(context)
 
     val pairingWorkflow: LivePairingWorkflow = LivePairingWorkflow(
         pairingClient = OkHttpHuePairingClient.fromContext(context),
