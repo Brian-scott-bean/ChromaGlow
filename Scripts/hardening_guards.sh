@@ -1465,7 +1465,9 @@ done
 # (c) Function-scoped: each ENT loop still routes through the math. Comment-only
 #     lines are stripped, because the prose above each fix necessarily quotes the
 #     literals the rule bans.
-hc_ent_loop() { awk "/private func $1\(/,/^    }\$/" "$HC_ORCH" 2>/dev/null | grep -vE '^[[:space:]]*//' || true; }
+# Whole-line AND trailing comments are stripped (review round, D-5): a positive
+# grep below must be satisfied by CODE, never by a prose mention on a code line.
+hc_ent_loop() { awk "/private func $1\(/,/^    }\$/" "$HC_ORCH" 2>/dev/null | grep -vE '^[[:space:]]*//' | sed -E 's#[[:space:]]*//.*$##' || true; }
 
 for loop in runStrobeEntertainment runPartyEntertainment runThunderstormEntertainment; do
     body=$(hc_ent_loop "$loop")
@@ -1658,7 +1660,7 @@ for loop in runStrobeEntertainment runPartyEntertainment runThunderstormEntertai
     # could stream every frame through it with this guard green and the
     # ledger measuring nothing. `$body` is already comment-stripped by
     # hc_ent_loop, so a prose mention of either spelling is not a call.
-    hc_direct=$(echo "$body" | grep -cE 'sendUniform\(|\.send\(channels:' || true)
+    hc_direct=$(echo "$body" | grep -cE 'sendUniform[[:space:]]*\(|\.send[[:space:]]*\([[:space:]]*channels[[:space:]]*:' || true)
     [[ "$hc_direct" == "0" ]] \
         || fail "slice2-r1" "$loop makes $hc_direct direct transport call(s) (sendUniform( / .send(channels:) — every frame must go through emitGatedFrame(, or the ledger is measuring something other than the wire"
     hc_gated=$(echo "$body" | grep -c 'emitGatedFrame(' || true)
@@ -1682,7 +1684,7 @@ done
 hc_comp_body=$(hc_ent_loop runCompositionEntertainment)
 [[ -n "$hc_comp_body" ]] \
     || fail "slice3-flash" "runCompositionEntertainment not found in $HC_ORCH — the composition flash rule is unenforceable"
-hc_comp_direct=$(echo "$hc_comp_body" | grep -cE 'sendUniform\(|\.send\(channels:' || true)
+hc_comp_direct=$(echo "$hc_comp_body" | grep -cE 'sendUniform[[:space:]]*\(|\.send[[:space:]]*\([[:space:]]*channels[[:space:]]*:' || true)
 [[ "$hc_comp_direct" == "0" ]] \
     || fail "slice3-flash" "runCompositionEntertainment makes $hc_comp_direct direct transport call(s) — a composition frame that skips emitGatedCompositionFrame( is a frame the ledger never measured, and .pulse @ 240 bpm is 4 Hz"
 echo "$hc_comp_body" | grep -q 'emitGatedCompositionFrame(' \
@@ -1718,13 +1720,32 @@ hc_ce_commit=$(echo "$hc_comp_emit" | grep -n 'ledger.commit(' | head -1 | cut -
 # holding a frame the wire never saw (M-2), the same defect as a dropped send by
 # another route.
 hc_ce_between=$(echo "$hc_comp_emit" | sed -n "$((hc_ce_send + 1)),$((hc_ce_commit - 1))p" \
-    | grep -cE '(^|[^A-Za-z0-9_])(return|throw|break|continue)([^A-Za-z0-9_]|$)' || true)
+    | grep -cE '(^|[^A-Za-z0-9_])(return|throw|break|continue|try|fatalError|exit)([^A-Za-z0-9_]|$)' || true)
 [[ "$hc_ce_between" == "0" ]] \
     || fail "slice3-flash" "emitGatedCompositionFrame can exit between its send and its commit — the ledger would keep an onset the wire never showed"
 # A refusal repeats the frame ALREADY on the wire. Reconstructing one is how the
-# first pass shipped a hold frame that was itself a rise (blocker B1).
-echo "$hc_comp_emit" | grep -q 'lastEmitted' \
+# first pass shipped a hold frame that was itself a rise (blocker B1). Pinned
+# as the BRANCH, not the word (review round, C-4): the parameter name alone
+# satisfied `grep -q lastEmitted` with the hold branch deleted.
+echo "$hc_comp_emit" | grep -qE 'else if let lastEmitted[[:space:]]*\{' \
     || fail "slice3-flash" "emitGatedCompositionFrame no longer holds the last emitted per-channel frame — a refusal must repeat what the bridge is showing, not a reconstruction"
+echo "$hc_comp_emit" | grep -q 'onWire = lastEmitted' \
+    || fail "slice3-flash" "emitGatedCompositionFrame's hold branch no longer puts the last emitted frame on the wire"
+# A COLD refusal (no delivered frame to repeat) sends the ledger's own hold
+# frame — black at the last KNOWN chromaticity — to every channel (D-3). Black
+# at the requested chromaticity was a chroma step against the frame the bridge
+# was still showing.
+echo "$hc_comp_emit" | grep -q 'case .hold(let held) = reservation.verdict' \
+    || fail "slice3-flash" "emitGatedCompositionFrame's cold refusal no longer sends the ledger's hold frame — black at the requested chromaticity is a chroma step on the wire"
+echo "$hc_comp_emit" | grep -q 'x: held.x, y: held.y, brightness: held.brightness' \
+    || fail "slice3-flash" "emitGatedCompositionFrame's cold hold does not spread the held frame across the channels"
+# The commit takes the transport's answer, never a literal.
+echo "$hc_comp_emit" | grep -q 'ledger.commit(reservation, delivered: delivered' \
+    || fail "slice3-flash" "emitGatedCompositionFrame no longer commits on the transport's delivery answer — a literal there stamps onsets the wire never showed"
+# Non-throwing: a `throws` signature would let `try` exit between send and commit.
+echo "$hc_comp_emit" | grep -qE 'func emitGatedCompositionFrame\(' \
+    && ! echo "$hc_comp_emit" | grep -qE '\)[[:space:]]*async[[:space:]]+throws' \
+    || fail "slice3-flash" "emitGatedCompositionFrame is throwing — a `try` between its send and its commit is an exit the ordering check cannot see"
 
 # The field reduction itself. These pin the two choices that decide whether a
 # real flash is measured: the MEAN of the channels' luminances (not the max, and
@@ -1740,6 +1761,88 @@ echo "$hc_field" | grep -q 'relativeLuminance } / totalWeight' \
     || fail "slice3-flash" "fieldFrame's chromaticity is no longer luminance-weighted — an unweighted mean lets a dark tail drag a saturated-red strike off red until the red rule stops firing"
 echo "$hc_field" | grep -q 'inverseDimmingLuminance(' \
     || fail "slice3-flash" "fieldFrame no longer inverts the dimming curve — without it the returned frame's own relativeLuminance is not the field luminance the gate was asked to measure"
+echo "$hc_field" | grep -q 'let count = Double(frames.count)' \
+    || fail "slice3-flash" "fieldFrame's `count` is no longer the channel count — a rebound divisor turns the mean into something else while the mean-shaped grep stays green"
+
+# (D-4) The transport has exactly TWO entry points in the whole orchestrator —
+# the two gates — and no other production file calls either. Body-scoped
+# counts cannot see a helper defined OUTSIDE the scanned bodies that forwards
+# to the transport; this file-wide count can.
+hc_orch_code=$(grep -vE '^[[:space:]]*//' "$HC_ORCH" | sed -E 's#[[:space:]]*//.*$##')
+hc_send_channels=$(echo "$hc_orch_code" | grep -cE '\.send[[:space:]]*\([[:space:]]*channels[[:space:]]*:' || true)
+[[ "$hc_send_channels" == "1" ]] \
+    || fail "slice3-flash" "$HC_ORCH calls .send(channels:) $hc_send_channels time(s) — exactly one, inside emitGatedCompositionFrame, is the rule; a second caller is an ungated frame path"
+hc_send_uniform=$(echo "$hc_orch_code" | grep -cE 'sendUniform[[:space:]]*\(' || true)
+[[ "$hc_send_uniform" == "1" ]] \
+    || fail "slice3-flash" "$HC_ORCH calls sendUniform( $hc_send_uniform time(s) — exactly one, inside emitGatedFrame, is the rule"
+hc_other_senders=$(grep -rlE '\.send[[:space:]]*\([[:space:]]*channels[[:space:]]*:|sendUniform[[:space:]]*\(' HueHome --include='*.swift' 2>/dev/null \
+    | grep -vE 'UnifiedOrchestrator\.swift$|HueEntertainmentClient\.swift$' || true)
+[[ -z "$hc_other_senders" ]] \
+    || fail "slice3-flash" $'a production file outside the orchestrator reaches the Entertainment transport:\n'"$hc_other_senders"
+
+# (j) (Slice 3 review round, D-1) THE REST SCHEDULER IS FLASH-CLASS TOO.
+#
+#     `runCompositionScheduler` is the composition's SECOND shipping frame path
+#     — the user-selectable Room transport, the DTLS failover destination, and
+#     what a second room on an already-streaming bridge gets — and it ticked at
+#     120 ms with no ledger: `.pulse` at 240 bpm realized ~4 Hz over REST. Same
+#     rule: reserve on the FIELD frame against the BRIDGE's shared ledger before
+#     any work is enqueued; a refusal skips and rolls back; an admission is
+#     committed on the transport's word when the work terminates, and every
+#     path that retires work without a terminal rolls its reservation back.
+hc_rest=$(hc_ent_loop runCompositionScheduler)
+[[ -n "$hc_rest" ]] \
+    || fail "slice3-flash" "runCompositionScheduler not found in $HC_ORCH — the REST flash rule is unenforceable"
+echo "$hc_rest" | grep -q 'flashOnsetLedger(forBridge: runtime.restBridgeIdentity ?? "")' \
+    || fail "slice3-flash" "runCompositionScheduler no longer resolves the per-bridge shared ledger keyed exactly as the loops key it (restBridgeIdentity ?? \"\")"
+echo "$hc_rest" | grep -q 'BeatMath.FlashSafety.fieldFrame(' \
+    || fail "slice3-flash" "runCompositionScheduler no longer reserves on FlashSafety.fieldFrame("
+echo "$hc_rest" | grep -q 'BeatMath.FlashSafety.minOnsetLedgerPeriod' \
+    || fail "slice3-flash" "runCompositionScheduler no longer enforces minOnsetLedgerPeriod"
+echo "$hc_rest" | grep -qE 'guard flashReservation\.verdict\.wasAdmitted else' \
+    || fail "slice3-flash" "runCompositionScheduler no longer skips a refused frame"
+hc_rest_admit=$(echo "$hc_rest" | grep -n 'flashLedger.admit(' | head -1 | cut -d: -f1)
+hc_rest_refuse=$(echo "$hc_rest" | grep -n 'flashLedger.commit(flashReservation, delivered: false' | head -1 | cut -d: -f1)
+hc_rest_first_enqueue=$(echo "$hc_rest" | grep -n 'enqueueComposerWork(' | head -1 | cut -d: -f1)
+[[ -n "$hc_rest_admit" && -n "$hc_rest_refuse" && -n "$hc_rest_first_enqueue" ]] \
+    || fail "slice3-flash" "runCompositionScheduler is missing its admit / refusal-rollback / enqueue"
+[[ "$hc_rest_admit" -lt "$hc_rest_refuse" && "$hc_rest_refuse" -lt "$hc_rest_first_enqueue" ]] \
+    || fail "slice3-flash" "runCompositionScheduler's admit ($hc_rest_admit) / refusal rollback ($hc_rest_refuse) / first enqueue ($hc_rest_first_enqueue) are out of order — work enqueued before the reservation is a frame the ledger never measured"
+hc_rest_enqueues=$(echo "$hc_rest" | grep -c 'enqueueComposerWork(' || true)
+hc_rest_flashed=$(echo "$hc_rest" | grep -c 'flash: flash' || true)
+[[ "$hc_rest_enqueues" -ge 1 && "$hc_rest_enqueues" == "$hc_rest_flashed" ]] \
+    || fail "slice3-flash" "runCompositionScheduler enqueues $hc_rest_enqueues sweep(s) but only $hc_rest_flashed carry the flash reservation — an unreserved sweep is an ungated frame"
+hc_rest_term=$(hc_ent_loop composerWorkTerminated)
+echo "$hc_rest_term" | grep -q 'settleFlashReservation(token, delivered: attemptedOperations > failures)' \
+    || fail "slice3-flash" "composerWorkTerminated no longer commits the flash reservation on the transport's word (attemptedOperations > failures)"
+hc_rest_enq=$(hc_ent_loop enqueueComposerWork)
+hc_rest_reg=$(echo "$hc_rest_enq" | grep -n 'composerFlashReservations\[token\] = flash' | head -1 | cut -d: -f1)
+hc_rest_snd=$(echo "$hc_rest_enq" | grep -n 'sender.enqueue(' | head -1 | cut -d: -f1)
+[[ -n "$hc_rest_reg" && -n "$hc_rest_snd" && "$hc_rest_reg" -lt "$hc_rest_snd" ]] \
+    || fail "slice3-flash" "enqueueComposerWork does not register the flash reservation BEFORE the mailbox can dispatch the work — a fast completion would find nothing to commit"
+echo "$hc_rest_enq" | grep -q 'settleFlashReservation(previousToken, delivered: false)' \
+    || fail "slice3-flash" "enqueueComposerWork no longer rolls back a superseded sweep's reservation — the ledger would model a frame the wire never saw"
+hc_rest_deact=$(hc_ent_loop deactivateComposerTelemetrySession)
+echo "$hc_rest_deact" | grep -q 'settleFlashReservation(pending, delivered: false)' \
+    || fail "slice3-flash" "deactivateComposerTelemetrySession no longer rolls back the pending sweep's reservation"
+echo "$hc_orch_code" | grep -q 'for token in Array(composerFlashReservations.keys)' \
+    || fail "slice3-flash" "stop-all no longer rolls back every registered flash reservation"
+# (D-2) The wire is unknown after every session stop and every composition stop.
+hc_forget=$(echo "$hc_orch_code" | grep -c 'forgetWire()' || true)
+[[ "$hc_forget" -ge 7 ]] \
+    || fail "slice3-flash" "only $hc_forget forgetWire() call(s) in $HC_ORCH — every stopSession() and stopCompositionMode must tell the ledger the bridge reverted"
+hc_stop_comp=$(awk '/func stopCompositionMode\(/,/^    }$/' "$HC_ORCH" 2>/dev/null | grep -vE '^[[:space:]]*//' | sed -E 's#[[:space:]]*//.*$##' || true)
+echo "$hc_stop_comp" | grep -q 'flashOnsetLedger(forBridge: bridgeID ?? "").forgetWire()' \
+    || fail "slice3-flash" "stopCompositionMode no longer forgets the wire — a restart inside the period would emit an unstamped rise against a bridge that reverted"
+hc_stop_sessions=$(echo "$hc_orch_code" | grep -c 'stopSession()' || true)
+hc_forget_after=$(grep -vE '^[[:space:]]*//' "$HC_ORCH" | grep -A 3 'stopSession()' | grep -c 'forgetWire()' || true)
+[[ "$hc_forget_after" -ge 6 ]] \
+    || fail "slice3-flash" "only $hc_forget_after of $hc_stop_sessions stopSession() sites are followed by forgetWire() within three lines"
+# The REST model and its regression tests exist in the flash suite.
+for t in emitRESTComposition testPulseAtTwoFortyBpmRealizesAboveThreeHzOverUngatedREST testPulseAtTwoFortyBpmIsGatedToThreeHzOverREST testARestartInsideThePeriodCannotFlashOnceTheWireIsForgotten testAColdRefusalHoldsTheLastKnownChromaticity; do
+    grep -q "$t" HueHomeTests/FlashSafetyTests.swift \
+        || fail "slice3-flash" "FlashSafetyTests no longer carries $t"
+done
 # (The suite that proves all of the above is pinned into the target's Sources
 # phase by the existing FlashSafetyTests membership check further down.)
 

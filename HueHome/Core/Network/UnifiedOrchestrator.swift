@@ -1417,6 +1417,9 @@ final class UnifiedOrchestrator {
         }
         if let entClient = studioEntClients.removeValue(forKey: id) {
             await entClient.stopSession()
+            // The bridge restores its own state when the session ends: the
+            // wire is unknown from here (review round, D-2).
+            flashOnsetLedger(forBridge: id).forgetWire()
         }
         studioEntOwnerByBridge.removeValue(forKey: id)
         await retiredAllDaySender?.clearAll()
@@ -3480,6 +3483,26 @@ final class UnifiedOrchestrator {
     @ObservationIgnored
     private var composerPendingTokens: [ComposerTelemetrySessionKey: CompositionSendLedger.Token] = [:]
 
+    /// Realized-frame flash reservations (Slice 3 review round, D-1) taken
+    /// by the REST scheduler BEFORE its work was enqueued, keyed by the work's
+    /// token so the terminal report can commit exactly the reservation its
+    /// frame carried. Every path that retires a token without a terminal
+    /// (supersession, session deactivation, stop-all) rolls its reservation
+    /// back: a frame the transport never took changed nothing on the wire.
+    @ObservationIgnored
+    private var composerFlashReservations:
+        [CompositionSendLedger.Token: (ledger: BeatMath.FlashSafety.OnsetLedger,
+                                       reservation: BeatMath.FlashSafety.Reservation)] = [:]
+
+    /// Reconcile one token's flash reservation with what the transport did.
+    /// `delivered` = at least one operation of the sweep reached a light —
+    /// the field on the wire DID change, so the onset stands; nothing reached
+    /// anything → the reservation is rolled back (stamp, wire state, trough).
+    private func settleFlashReservation(_ token: CompositionSendLedger.Token, delivered: Bool) {
+        guard let flash = composerFlashReservations.removeValue(forKey: token) else { return }
+        flash.ledger.commit(flash.reservation, delivered: delivered, at: CACurrentMediaTime())
+    }
+
     /// Monotonic token mint. Uniqueness only — ordering claims come from the
     /// ledger's state machine, never from comparing sequences.
     @ObservationIgnored
@@ -5428,6 +5451,7 @@ final class UnifiedOrchestrator {
         await clearStudioRestScope(bridgeKey: room.bridgeID ?? "legacy")
         if let entClient = studioEntClients[stopBid], entClient !== prepared?.client {
             await entClient.stopSession()
+            flashOnsetLedger(forBridge: stopBid).forgetWire()   // the bridge reverted; the wire is unknown (D-2)
             studioEntClients.removeValue(forKey: stopBid)
             // The record dies with the session it described. Leaving it behind
             // is what would let `studioOwningEntertainment` name a look that is
@@ -6283,6 +6307,7 @@ final class UnifiedOrchestrator {
         entertainmentConfigsFetchedBridges.remove(bridgeID)
         if let entClient = studioEntClients[bridgeID] {
             await entClient.stopSession()   // no-op post-teardown (configID cleared)
+            flashOnsetLedger(forBridge: bridgeID).forgetWire()   // D-2
             // M5: remove only OUR client. `stopSession()` is a long await, and
             // a Studio look (or a successor composition) that acquires this
             // bridge inside it installs its OWN client under this very key —
@@ -6510,6 +6535,9 @@ final class UnifiedOrchestrator {
                 pending, at: compositionTelemetryNow(),
                 attemptedOperations: 0, failures: 0)
         }
+        if let pending = composerPendingTokens[sessionKey] {
+            settleFlashReservation(pending, delivered: false)
+        }
         if let session = composerTelemetrySessions[sessionKey] {
             compositionSendLedger.deactivateSession(
                 bridgeKey: sessionKey.bridgeKey, scope: sessionKey.scope,
@@ -6706,6 +6734,14 @@ final class UnifiedOrchestrator {
         let sessionKey = ComposerTelemetrySessionKey(
             bridgeKey: token.bridgeKey, scope: token.scope)
 
+        // Realized-frame gate (D-1): the reservation taken before this work
+        // was enqueued is committed on the transport's word. A sweep in which
+        // ANY operation succeeded moved the field on the wire, whatever the
+        // ledger below makes of the item; one in which nothing did is rolled
+        // back. Independent of `accepted`: a duplicate or stale-generation
+        // terminal still says something true about the wire.
+        settleFlashReservation(token, delivered: attemptedOperations > failures)
+
         // ACCEPTANCE FIRST. A rejected terminal (absent token, stale
         // generation, completed-before-started, duplicate) must not mutate the
         // pending tracker: that tracker is the teardown paths' map of what
@@ -6767,16 +6803,25 @@ final class UnifiedOrchestrator {
         sessionKey: ComposerTelemetrySessionKey,
         generation: Int,
         sender: RestSender,
+        flash: (ledger: BeatMath.FlashSafety.OnsetLedger,
+                reservation: BeatMath.FlashSafety.Reservation)? = nil,
         workBuilder: (CompositionSendLedger.Token) -> RestSender.Work
     ) async -> CompositionSendLedger.Token {
         let token = mintComposerToken(sessionKey: sessionKey, generation: generation)
         let work = workBuilder(token)
         let previousToken = composerPendingTokens[sessionKey]
+        // The flash reservation is registered BEFORE the mailbox can dispatch
+        // the closure, for the same reason the tracker is: a fast completion
+        // reports its terminal during the await below and must find it.
+        if let flash { composerFlashReservations[token] = flash }
         compositionSendLedger.enqueued(token, at: compositionTelemetryNow())
         composerPendingTokens[sessionKey] = token
         let result = await sender.enqueue(scope: sessionKey.scope, work)
         if result.replacedPending, let previousToken {
             compositionSendLedger.superseded(previousToken)
+            // Superseded work never reaches the transport: its frame changed
+            // nothing, so its reservation — stamp and wire model — is undone.
+            settleFlashReservation(previousToken, delivered: false)
         }
         refreshComposerCadencePublication(sessionKey: sessionKey)
         return token
@@ -7142,8 +7187,17 @@ final class UnifiedOrchestrator {
                 await entClient.stopSession()
                 studioEntClients.removeValue(forKey: bid)
             }
+            // Whichever transport carried it, the lights are no longer showing
+            // a frame this ledger put there (the explicit stop turns the group
+            // off; a DTLS stop lets the bridge revert): the wire is unknown.
+            flashOnsetLedger(forBridge: bid).forgetWire()
         }
         compositionRuntimes.removeValue(forKey: playbackKey)
+        // Whichever transport carried it (D-2): a REST stop turns the group
+        // off from StudioViewModel, a DTLS stop lets the bridge revert — the
+        // lights are no longer showing a frame this ledger put there. Keyed
+        // exactly as the loops key the ledger (`bridgeID ?? ""`).
+        flashOnsetLedger(forBridge: bridgeID ?? "").forgetWire()
         // Packet 4: DEACTIVATION, not merely reset — consume the sender's
         // pending-removal evidence gathered above, record the 0/0 pending
         // cancellation for the exact tracked token if the sender reported one,
@@ -7345,6 +7399,36 @@ final class UnifiedOrchestrator {
                 continue
             }
 
+            // ── REALIZED-FRAME FLASH GATE (Slice 3 review round, D-1) ──
+            //
+            // This scheduler is the composition's SECOND shipping frame path —
+            // the user-selectable Room transport, the DTLS failover
+            // destination, and what a second room on an already-streaming
+            // bridge gets — and it ticked at 120 ms with no ledger: `.pulse`
+            // at 240 bpm realized ~4 Hz over REST, and even an authored 3 Hz
+            // source realized sub-period pairs through tick jitter. Same
+            // structural rule as the DTLS loops: reserve on the FIELD frame
+            // (`fieldFrame` — what a viewer in the room receives) against the
+            // BRIDGE's shared ledger, keyed exactly as the loops key it, before
+            // any work is enqueued. A refusal on REST is a SKIP: nothing is
+            // written, the lights keep showing the last delivered frame — which
+            // is precisely what `.hold` means — and the reservation is rolled
+            // back because the transport took nothing. An admission is
+            // committed when the work terminates, on the transport's own word
+            // (`composerWorkTerminated` / supersession / deactivation).
+            let flashLedger = flashOnsetLedger(forBridge: runtime.restBridgeIdentity ?? "")
+            let flashReservation = flashLedger.admit(
+                frame: BeatMath.FlashSafety.fieldFrame(
+                    channels: frames.map { (x: $0.x, y: $0.y, brightness: $0.brightness) }),
+                at: CACurrentMediaTime(),
+                minPeriod: BeatMath.FlashSafety.minOnsetLedgerPeriod)
+            guard flashReservation.verdict.wasAdmitted else {
+                flashLedger.commit(flashReservation, delivered: false, at: CACurrentMediaTime())
+                try? await Task.sleep(for: tickInterval)
+                continue
+            }
+            let flash = (ledger: flashLedger, reservation: flashReservation)
+
             // Capture values for the closure
             let capturedAPI = runtime.api
             let capturedGamut = runtime.gamut
@@ -7377,7 +7461,7 @@ final class UnifiedOrchestrator {
                 let subset = Array(map.entries[slice.range])
                 await enqueueComposerWork(
                     sessionKey: sessionKey, generation: runtime.generation,
-                    sender: composerSender
+                    sender: composerSender, flash: flash
                 ) { token in
                     makeComposerGradientWork(
                         token: token, entries: subset, frames: frames,
@@ -7394,7 +7478,7 @@ final class UnifiedOrchestrator {
                 }
                 await enqueueComposerWork(
                     sessionKey: sessionKey, generation: runtime.generation,
-                    sender: composerSender
+                    sender: composerSender, flash: flash
                 ) { token in
                     makeComposerPerLightWork(
                         token: token, targets: subset, frames: frames,
@@ -7406,7 +7490,7 @@ final class UnifiedOrchestrator {
                 // No individual light IDs resolved — use grouped_light
                 await enqueueComposerWork(
                     sessionKey: sessionKey, generation: runtime.generation,
-                    sender: composerSender
+                    sender: composerSender, flash: flash
                 ) { token in
                     makeComposerGroupedWork(
                         token: token, groupedLightID: runtime.groupedLightID,
@@ -7670,6 +7754,9 @@ final class UnifiedOrchestrator {
             deactivateComposerTelemetrySession(
                 sessionKey: sessionKey, pendingRemovalReported: false)
         }
+        for token in Array(composerFlashReservations.keys) {
+            settleFlashReservation(token, delivered: false)
+        }
         composerPendingTokens.removeAll()
         activeRESTCadenceByBridgeRoom.removeAll()
         studioRestScopesByBridge.removeAll()
@@ -7685,6 +7772,7 @@ final class UnifiedOrchestrator {
                             bridgeID: bid, roomID: nil,
                             clientID: Self.stopAuditToken(entClient))
             let stopRequest = await entClient.stopSession()
+            flashOnsetLedger(forBridge: bid).forgetWire()   // D-2
             recordStopAudit(auditContext,
                             operation: stopRequest == .notSent
                                 ? .actionStopSuppressed : .actionStopSent,
@@ -7788,6 +7876,7 @@ final class UnifiedOrchestrator {
             recordStopAudit(context, operation: .clientStopSession,
                             bridgeID: bid, roomID: roomID, clientID: auditClientID)
             let stopRequest = await entClient.stopSession()
+            flashOnsetLedger(forBridge: bid).forgetWire()   // D-2
             recordStopAudit(context,
                             operation: stopRequest == .notSent
                                 ? .actionStopSuppressed : .actionStopSent,
@@ -8332,6 +8421,14 @@ final class UnifiedOrchestrator {
             onWire = channels
         } else if let lastEmitted {
             onWire = lastEmitted
+        } else if case .hold(let held) = reservation.verdict {
+            // COLD refusal (review round, D-3): no delivered per-channel frame
+            // to repeat, so send exactly the frame the ledger recorded as the
+            // hold — black at the LAST KNOWN chromaticity — to every channel.
+            // Black at the REQUESTED chromaticity, which shipped here first,
+            // was a chroma step against the frame the bridge was still showing
+            // and left the ledger modelling a frame the wire never had.
+            onWire = channels.map { (id: $0.id, x: held.x, y: held.y, brightness: held.brightness) }
         } else {
             onWire = channels.map { (id: $0.id, x: $0.x, y: $0.y, brightness: 0) }
         }

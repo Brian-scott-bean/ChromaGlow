@@ -50,6 +50,10 @@ protocol ModelledOnsetGate {
     mutating func reserve(_ frame: BeatMath.FlashSafety.WireFrame, at t: Double)
         -> (onWire: BeatMath.FlashSafety.WireFrame, admitted: Bool)
     mutating func settle(delivered: Bool, at t: Double)
+    /// The bridge is showing something this gate did not put there (a session
+    /// stop, an explicit group-off) — what `stopSession()` paths now tell the
+    /// production ledger (review round, D-2).
+    mutating func forgetWire()
 }
 
 /// The shipped gate, driven exactly as `emitGatedFrame` drives it.
@@ -70,6 +74,8 @@ struct ProductionOnsetGate: ModelledOnsetGate {
         gate.commit(reservation, delivered: delivered, at: t)
         pending = nil
     }
+
+    mutating func forgetWire() { gate.forgetWire() }
 }
 
 /// **The gate as it stood before the fifth review round**, kept here for the
@@ -172,6 +178,8 @@ struct LegacyForgetOnDropGate: ModelledOnsetGate {
               t.isFinite, t > stamped else { return }
         lastOnset = t
     }
+
+    mutating func forgetWire() { lastEmitted = nil }
 }
 
 /// The field a viewer receives from ONE per-channel composition frame, written
@@ -2432,7 +2440,12 @@ final class FlashSafetyTests: XCTestCase {
             } else if let lastEmittedChannels {
                 onWire = lastEmittedChannels
             } else {
-                onWire = channels.map { (x: $0.x, y: $0.y, brightness: 0) }
+                // COLD refusal: the ledger's OWN hold frame — black at the last
+                // KNOWN chromaticity — on every channel (D-3), exactly as
+                // production's `case .hold(let held)` branch spreads it.
+                onWire = channels.map { _ in
+                    (x: decided.onWire.x, y: decided.onWire.y, brightness: decided.onWire.brightness)
+                }
             }
             let delivered = transportAccepts
             if delivered {
@@ -2458,6 +2471,64 @@ final class FlashSafetyTests: XCTestCase {
             }
             frame += 1
         }
+
+        /// Pure mirror of the REST scheduler's gate (review round, D-1): reserve
+        /// on the field frame; a REFUSAL writes NOTHING and rolls the reservation
+        /// back (the lights keep showing the last delivered frame, which is what
+        /// `.hold` means on a transport with state); an admission is "sent" and
+        /// committed on the transport's word. `fd` is the scheduler's 120 ms tick.
+        @discardableResult
+        func emitRESTComposition(_ channels: [(x: Double, y: Double, brightness: Double)]) -> Bool {
+            let decided = gate.reserve(
+                BeatMath.FlashSafety.fieldFrame(channels: channels), at: time)
+            guard decided.admitted else {
+                gate.settle(delivered: false, at: time)
+                frame += 1
+                return false
+            }
+            let delivered = transportAccepts
+            if delivered {
+                wire.append(Emission(time: time, frame: viewerFieldFrame(channels)))
+                lastEmittedChannels = channels
+            } else {
+                dropped += 1
+            }
+            gate.settle(delivered: ledgerIgnoresDrops || delivered, at: time)
+            frame += 1
+            return delivered
+        }
+
+        /// **The REST scheduler as it SHIPPED** — 120 ms ticks straight into the
+        /// mailbox, no ledger.
+        func emitUngatedRESTComposition(_ channels: [(x: Double, y: Double, brightness: Double)]) {
+            if transportAccepts {
+                wire.append(Emission(time: time, frame: viewerFieldFrame(channels)))
+            } else {
+                dropped += 1
+            }
+            frame += 1
+        }
+
+        /// The bridge restores its OWN light state (a session stop, an explicit
+        /// group-off): a black frame the viewer sees and the ledger did not put
+        /// there. Advances the clock by one frame.
+        func bridgeReverted() {
+            wire.append(Emission(time: time, frame: BeatMath.FlashSafety.WireFrame(
+                x: 0.3127, y: 0.3290, brightness: 0)))
+            frame += 1
+        }
+
+        /// What the production stop paths now tell the ledger (D-2). The
+        /// loop-local held frame dies with the loop task on a restart — a new
+        /// loop instance starts with `lastEmitted == nil` — so it is cleared
+        /// here too; the ledger's own memory is what survives.
+        func forgetWire() {
+            gate.forgetWire()
+            lastEmittedChannels = nil
+        }
+
+        /// Advance the clock without emitting — the teardown / restart gap.
+        func idle(_ frames: Int = 1) { frame += frames }
     }
 
     // ── The viewer's measurement, written from the DEFINITION ──
@@ -3028,6 +3099,154 @@ final class FlashSafetyTests: XCTestCase {
             }
         }
         return m
+    }
+
+    /// The REST scheduler's frame production through its gate at its real
+    /// 120 ms tick. `gated: false` is the scheduler as it shipped.
+    private func restCompositionWire(
+        envelope: EnvelopeConfig,
+        palette: PaletteConfig = PaletteConfig(),
+        motion: MotionConfig = MotionConfig(pattern: .static),
+        channels: Int = 4,
+        seconds: Double = 6.0,
+        gated: Bool = true
+    ) -> WireModel {
+        let m = WireModel()
+        m.fd = 0.12                      // the REST scheduler's tick
+        let box = CompositionParamBox(
+            palette: palette, motion: motion, envelope: envelope, reaction: ReactionConfig())
+        let ticks = Int((seconds / 0.12).rounded())
+        for i in 0..<ticks {
+            let chans = compositionChannels(box: box, time: Double(i) * 0.12, channels: channels)
+            if gated { m.emitRESTComposition(chans) } else { m.emitUngatedRESTComposition(chans) }
+        }
+        return m
+    }
+
+    // ── The REST scheduler (review round, D-1) ──
+
+    func testPulseAtTwoFortyBpmRealizesAboveThreeHzOverUngatedREST() {
+        // The REST scheduler as it shipped: 120 ms ticks, no ledger. A 250 ms
+        // square sampled on a 120 ms grid alternates nearly every tick.
+        let onsets = realizedOnsets(
+            restCompositionWire(envelope: EnvelopeConfig(shape: .pulse, bpm: 240, depth: 100,
+                                                         minBrightness: 0, maxBrightness: 100),
+                                gated: false).wire)
+        XCTAssertGreaterThan(onsets.count, 6, "a 4 Hz square wave must realize onsets to grade")
+        XCTAssertLessThan(minimumGap(onsets) ?? .infinity,
+                          BeatMath.FlashSafety.minOnsetLedgerPeriod,
+                          "the ungated REST scheduler must breach the ceiling, or the fix is untested")
+    }
+
+    func testPulseAtTwoFortyBpmIsGatedToThreeHzOverREST() {
+        let onsets = realizedOnsets(
+            restCompositionWire(envelope: EnvelopeConfig(shape: .pulse, bpm: 240, depth: 100,
+                                                         minBrightness: 0, maxBrightness: 100)).wire)
+        assertOnsetsRespectTheFloor(onsets, label: "REST composition .pulse @ 240 bpm", atLeast: 3)
+    }
+
+    func testFlickerIsGatedToThreeHzOverREST() {
+        let onsets = realizedOnsets(
+            restCompositionWire(envelope: EnvelopeConfig(shape: .flicker, bpm: 20, depth: 100,
+                                                         minBrightness: 0, maxBrightness: 100),
+                                seconds: 10).wire)
+        assertOnsetsRespectTheFloor(onsets, label: "REST composition .flicker", atLeast: 1)
+    }
+
+    func testEveryAuthoredEnvelopeShapeAtEveryTempoRespectsTheFloorOverREST() {
+        for shape in EnvelopeConfig.Shape.allCases {
+            for bpm in [20.0, 60, 137, 180, 240] {
+                let onsets = realizedOnsets(
+                    restCompositionWire(envelope: EnvelopeConfig(shape: shape, bpm: bpm, depth: 100,
+                                                                 minBrightness: 0, maxBrightness: 100),
+                                        seconds: 8).wire)
+                assertOnsetsRespectTheFloor(onsets, label: "REST \(shape) @ \(bpm) bpm", atLeast: 0)
+            }
+        }
+    }
+
+    /// A refused REST tick writes NOTHING — no black, no hold frame — and the
+    /// reservation is rolled back, so the next admissible frame is admitted on
+    /// the real onset clock rather than against a phantom.
+    func testARefusedRESTTickWritesNothingAndRollsBack() {
+        let m = WireModel()
+        m.fd = 0.12
+        let bright = Array(repeating: (x: 0.3127, y: 0.3290, brightness: 1.0), count: 4)
+        let dark = Array(repeating: (x: 0.3127, y: 0.3290, brightness: 0.0), count: 4)
+        // The viewer's detector seeds its trough from the first delivered
+        // frame, so the wire starts dark and the first ONSET is the rise at
+        // t = 0.12.
+        XCTAssertTrue(m.emitRESTComposition(dark), "t=0.00: the wire starts dark")
+        XCTAssertTrue(m.emitRESTComposition(bright), "t=0.12: the first onset is admitted")
+        XCTAssertTrue(m.emitRESTComposition(dark), "t=0.24: a fall is always admitted")
+        let before = m.wire.count
+        XCTAssertFalse(m.emitRESTComposition(bright), "t=0.36: a rise 0.24 s after the onset is refused")
+        XCTAssertEqual(m.wire.count, before, "…and NOTHING reached the transport")
+        XCTAssertTrue(m.emitRESTComposition(bright), "t=0.48: admitted on the real clock")
+        let onsets = realizedOnsets(m.wire)
+        XCTAssertEqual(onsets.count, 2, "\(onsets)")
+        XCTAssertGreaterThanOrEqual(minimumGap(onsets) ?? 0, BeatMath.FlashSafety.minOnsetLedgerPeriod - 1e-9)
+    }
+
+    // ── Restart inside the period (review round, D-2) ──
+
+    /// A composition stops (the bridge restores its own state — black) and a
+    /// fast restart streams its first bright frame 0.25 s after the previous
+    /// onset. With the wire FORGOTTEN at the stop, the ledger takes the cold
+    /// path, refuses, and holds black; the realized wire shows no sub-period
+    /// pair. Without the forget (the ledger still modelling the pre-stop bright
+    /// frame) the same bright frame is "not a candidate" and goes out
+    /// unstamped — a 4 Hz pair on the wire. Both halves, so the fix is checked
+    /// against the defect.
+    func testARestartInsideThePeriodCannotFlashOnceTheWireIsForgotten() {
+        let bright = Array(repeating: (x: 0.3127, y: 0.3290, brightness: 1.0), count: 4)
+        let dark = Array(repeating: (x: 0.3127, y: 0.3290, brightness: 0.0), count: 4)
+        func run(forgetting: Bool) -> [Double] {
+            let m = WireModel()
+            m.fd = 0.05
+            m.emitComposition(dark)        // t = 0.00, the wire starts dark
+            m.emitComposition(bright)      // t = 0.05, admitted onset
+            m.bridgeReverted()             // t = 0.10, the stop: bridge shows black
+            if forgetting { m.forgetWire() }
+            m.idle(2)                      // t = 0.15, 0.20 teardown / handshake
+            m.emitComposition(bright)      // t = 0.25, the restart's first frame (0.20 s after the onset)
+            m.emitComposition(bright)      // t = 0.30
+            m.emitComposition(bright)      // t = 0.35
+            m.emitComposition(bright)      // t = 0.40, admissible again (0.35 s)
+            m.emitComposition(bright)      // t = 0.45
+            return realizedOnsets(m.wire)
+        }
+        let defect = run(forgetting: false)
+        XCTAssertLessThan(minimumGap(defect) ?? .infinity, BeatMath.FlashSafety.minOnsetLedgerPeriod,
+                          "without forgetting the wire at the stop, the restart flashes — the defect must be reproducible")
+        let fixed = run(forgetting: true)
+        assertOnsetsRespectTheFloor(fixed, label: "restart 0.25 s after the previous onset", atLeast: 2)
+    }
+
+    // ── Cold refusal chroma (review round, D-3) ──
+
+    /// A cold refusal — no delivered per-channel frame to repeat — sends the
+    /// ledger's own hold frame: black at the last KNOWN chromaticity, not at
+    /// the requested one. Black at the requested colour was a chroma step
+    /// against the frame the bridge was still showing.
+    func testAColdRefusalHoldsTheLastKnownChromaticity() {
+        let dark = Array(repeating: (x: 0.3127, y: 0.3290, brightness: 0.0), count: 4)
+        let red = Array(repeating: (x: 0.675, y: 0.322, brightness: 1.0), count: 4)
+        // Green, not blue: a saturated blue at full drive carries ~0.07 relative
+        // luminance and is not a candidate at all; the refusal needs a REAL rise.
+        let green = Array(repeating: (x: 0.17, y: 0.70, brightness: 1.0), count: 4)
+        let m = WireModel()
+        m.fd = 0.05
+        m.emitComposition(dark)    // t = 0.00
+        m.emitComposition(red)     // t = 0.05: admitted, last known = red
+        m.forgetWire()             // the stop
+        m.idle(2)                  // t = 0.10, 0.15
+        XCTAssertFalse(m.emitComposition(green), "t = 0.20: a bright rise 0.15 s after the onset is refused")
+        let held = m.wire.last!.frame
+        XCTAssertEqual(held.brightness, 0, accuracy: 1e-9, "the hold is black")
+        XCTAssertEqual(held.x, 0.675, accuracy: 0.02, "…at the last KNOWN (red) chromaticity, not the requested green")
+        XCTAssertEqual(held.y, 0.322, accuracy: 0.02)
+        assertOnsetsRespectTheFloor(realizedOnsets(m.wire), label: "cold refusal", atLeast: 1)
     }
 
     // ── The field reduction ──
