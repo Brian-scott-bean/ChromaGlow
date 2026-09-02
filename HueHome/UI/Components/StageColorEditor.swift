@@ -41,13 +41,15 @@ struct StageColorEditor: View {
     @Binding var isExpanded: Bool
     let onApply: (Color) -> Void
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 // Current color chip — tap to expand/collapse the pad inline.
                 Button {
                     guard isInteractive else { return }
-                    withAnimation(HueAnimation.fast) { isExpanded.toggle() }
+                    withAnimation(reduceMotion ? nil : HueAnimation.fast) { isExpanded.toggle() }
                     HapticManager.shared.light()
                 } label: {
                     HStack(spacing: 6) {
@@ -80,7 +82,7 @@ struct StageColorEditor: View {
                 selected: current,
                 onSelect: { color in
                     guard isInteractive else { return }
-                    withAnimation(HueAnimation.fast) { onApply(color) }
+                    withAnimation(reduceMotion ? nil : HueAnimation.fast) { onApply(color) }
                 }
             )
 
@@ -113,7 +115,7 @@ struct StageColorEditor: View {
                         onApply(Color(hue: hue, saturation: sat, brightness: 1.0))
                     }
                 )
-                .transition(.opacity.combined(with: .move(edge: .top)))
+                .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .top)))
             }
         }
     }

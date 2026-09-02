@@ -110,7 +110,7 @@ struct CompositionEditorPanel: View {
             // The compact horizontal domain switcher (spec §12.2) — moving
             // across domains of the same instrument, never navigation.
             StageSteppedEncoder(
-                title: "Layer",
+                title: "",
                 items: CompositionLayerTab.allCases.map {
                     ChipPickerRow<CompositionLayerTab>.Item(value: $0, label: $0.title, icon: $0.symbolName)
                 },
@@ -177,9 +177,9 @@ struct CompositionEditorPanel: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "metronome.fill")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.caption2.weight(.semibold))
                 Text(isBeatOn ? "Beat On" : "Beat")
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.caption.weight(.bold))
             }
             .foregroundStyle(isBeatOn ? Color.black.opacity(0.85) : HuePalette.amber)
             .padding(.horizontal, 10)
@@ -189,7 +189,10 @@ struct CompositionEditorPanel: View {
             )
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(isBeatOn ? "Disable beat reaction" : "Enable beat reaction")
+        .disabled(availability.session == nil)
+        .accessibilityLabel("Beat reaction")
+        .accessibilityValue(isBeatOn ? "on" : "off")
+        .accessibilityHint(isBeatOn ? "Turns the beat reaction off" : "Turns the beat reaction on and switches to the React layer")
     }
 
     private func compositionSectionHeader(_ title: String, subtitle: String?) -> some View {
@@ -200,7 +203,7 @@ struct CompositionEditorPanel: View {
                 .tracking(0.6)
             if let subtitle {
                 Text(subtitle)
-                    .font(.system(size: 11))
+                    .font(.caption)
                     .foregroundStyle(.white.opacity(0.45))
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -249,7 +252,28 @@ struct CompositionEditorPanel: View {
                 },
                 onDismissKeyboard: onDismissKeyboard)
 
-            if (availability.session?.box.palette.mode ?? .gradient) == .temperature {
+            let paletteMode = availability.session?.box.palette.mode ?? .gradient
+            if paletteMode == .spectrum {
+                // Spectrum derives its colour from hueShift + saturation and
+                // never reads color1: the pad's hue axis was a dead control
+                // here (review round, B-2). Hue shift is CHARACTER → the hero
+                // knob; saturation is an AMOUNT → fader.
+                HStack(alignment: .top, spacing: HueSpacing.lg) {
+                    ComposerContinuousControl(
+                        label: "Hue Shift", controlID: "hueShift", vm: vm, availability: availability,
+                        style: .knob, range: -180...180, defaultValue: PaletteConfig().hueShift,
+                        format: { "\(Int($0.rounded()))°" }, isHero: true,
+                        read: { $0.palette.hueShift },
+                        write: { $0.palette.hueShift = $1 })
+                    ComposerContinuousControl(
+                        label: "Saturation", controlID: "saturation", vm: vm, availability: availability,
+                        style: .fader, range: 0...100, defaultValue: PaletteConfig().saturation,
+                        format: { "\(Int($0.rounded()))%" }, isHero: true,
+                        read: { $0.palette.saturation },
+                        write: { $0.palette.saturation = $1 })
+                    Spacer(minLength: 0)
+                }
+            } else if paletteMode == .temperature {
                 // Temperature mode ignores color1/saturation — the pad was a
                 // fully dead control surface here. Warmth is what the engine
                 // reads (spectrum approximation live, real mirek one-shot).
@@ -268,13 +292,20 @@ struct CompositionEditorPanel: View {
                         defaultValue: 366,
                         format: StudioParamFormat.kelvin,
                         isHero: true,
+                        // The readout is Kelvin; the range is mirek. Typing
+                        // "2700K" must land at 2700 K, not clamp to 500 mirek
+                        // (review round, B-7).
+                        parseDraft: ComposerWarmthEntry.mirek(from:),
                         read: { Double($0.palette.temperature) },
                         write: { $0.palette.temperature = Int($1.rounded()) })
                     Spacer(minLength: 0)
                 }
             } else {
                 let colorPad = availability.resolve("colorPad")
-                ComposerControlGate(label: "Color", resolution: colorPad, isColor: true) {
+                // `isColor: false`: the pad carries no coverage badge of its
+                // own, so the caption is the ONE place a partial room's
+                // "n OF m LIGHTS RESPOND" is stated (review round, B-1).
+                ComposerControlGate(label: "Color", resolution: colorPad, isColor: false) {
                     hueSaturationPad(availability,
                                      interactive: ComposerControlAvailability.isInteractive(colorPad))
                 }
@@ -296,7 +327,7 @@ struct CompositionEditorPanel: View {
         if showHarmonyControls(availability) {
             let harmony = availability.resolve("harmony")
             let interactive = ComposerControlAvailability.isInteractive(harmony)
-            ComposerControlGate(label: "Harmony", resolution: harmony, isColor: true) {
+            ComposerControlGate(label: "Harmony", resolution: harmony, isColor: false) {
             VStack(alignment: .leading, spacing: 8) {
                 // The rule is StudioView-scoped state (its onChange chain
                 // rewrites the palette), so the chips bind to it directly;
@@ -324,7 +355,7 @@ struct CompositionEditorPanel: View {
                     // Hint for static motion
                     if availability.session?.box.motion.pattern == .static {
                         Text("Try Cascade or Wave to spread harmony across lights")
-                            .font(.system(size: 11))
+                            .font(.caption)
                             .foregroundStyle(.white.opacity(0.40))
                             .padding(.top, 2)
                     }
@@ -479,7 +510,7 @@ struct CompositionEditorPanel: View {
                 }
             } else {
                 Text("Static holds every light on its palette color — pick a moving pattern to unlock speed and direction.")
-                    .font(.system(size: 11))
+                    .font(.caption)
                     .foregroundStyle(.white.opacity(0.40))
                     .frame(maxWidth: .infinity, alignment: .leading)
             }

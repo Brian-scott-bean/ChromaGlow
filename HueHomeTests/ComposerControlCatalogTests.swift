@@ -120,9 +120,13 @@ final class ComposerControlCatalogTests: XCTestCase {
         XCTAssertFalse(essentials(.reaction, source: .micBass).contains("smoothing"))
         XCTAssertFalse(advanced(.reaction, source: .beat).contains("smoothing"))
 
-        // Spectrum saturation: advanced in spectrum mode only.
-        XCTAssertTrue(advanced(.palette, mode: .spectrum).contains("saturation"))
+        // Spectrum reads hueShift + saturation and never color1: those two are
+        // its ESSENTIALS and the pad is not on its page (review round, B-2).
+        XCTAssertEqual(essentials(.palette, mode: .spectrum), ["mode", "hueShift", "saturation"])
+        XCTAssertFalse(essentials(.palette, mode: .spectrum).contains("colorPad"))
+        XCTAssertFalse(advanced(.palette, mode: .spectrum).contains("saturation"))
         XCTAssertFalse(advanced(.palette, mode: .gradient).contains("saturation"))
+        XCTAssertFalse(essentials(.palette, mode: .gradient).contains("hueShift"))
     }
 
     /// Essential and supporting sets never overlap for any state.

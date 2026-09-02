@@ -215,6 +215,21 @@ struct HueSaturationPad: View {
     @State private var liveSaturation: Double = 1
     @State private var lastHapticAt: CFAbsoluteTime = 0
 
+    /// The non-gesture path (review round, B-8): the pad is a raw drag
+    /// surface, so VoiceOver gets one element whose adjustable action steps
+    /// the hue and whose named actions step the saturation — each a real
+    /// `onChanged` sample, gamut-clamped exactly as a drag sample is.
+    private func nudge(hue newHue: Double, saturation newSat: Double) {
+        let h = ((newHue.truncatingRemainder(dividingBy: 1)) + 1).truncatingRemainder(dividingBy: 1)
+        let s = min(1, max(0, newSat))
+        let xy = HueColorUtils.xyFrom(hue: h, saturation: s, brightness: 1.0)
+        let clamped = HueColorUtils.clampXYToGamut(x: xy.x, y: xy.y, gamut: gamut)
+        let hsb = HueColorUtils.hsb(fromX: clamped.x, y: clamped.y, brightness: 100)
+        onDragStateChanged?(true)
+        onChanged(hsb.h, hsb.s, (clamped.x, clamped.y))
+        onDragStateChanged?(false)
+    }
+
     var body: some View {
         let displayHue = isDragging ? liveHue : hue
         let displaySat = isDragging ? liveSaturation : saturation
@@ -308,6 +323,19 @@ struct HueSaturationPad: View {
             }
             .frame(height: height)
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(title)
+        .accessibilityValue("hue \(Int((displayHue * 360).rounded())) degrees, saturation \(Int((displaySat * 100).rounded())) percent")
+        .accessibilityHint("Swipe up or down to change the hue; use the actions to change the saturation")
+        .accessibilityAdjustableAction { direction in
+            switch direction {
+            case .increment: nudge(hue: hue + 15.0 / 360.0, saturation: saturation)
+            case .decrement: nudge(hue: hue - 15.0 / 360.0, saturation: saturation)
+            @unknown default: break
+            }
+        }
+        .accessibilityAction(named: "Increase saturation") { nudge(hue: hue, saturation: saturation + 0.10) }
+        .accessibilityAction(named: "Decrease saturation") { nudge(hue: hue, saturation: saturation - 0.10) }
     }
 }
 

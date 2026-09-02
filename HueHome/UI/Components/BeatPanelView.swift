@@ -97,6 +97,9 @@ struct ChipPickerRow<Value: Hashable>: View {
         /// Tiny static waveform icon (16 normalized samples) — takes
         /// precedence over `icon`. Used by the Brightness Shape chips.
         var curveSamples: [Double]? = nil
+        /// What VoiceOver reads when the visible label is a glyph ("→") or an
+        /// abbreviation ("Comp.") — review round, B-10.
+        var accessibilityLabel: String? = nil
     }
 
     let items: [Item]
@@ -135,6 +138,7 @@ struct ChipPickerRow<Value: Hashable>: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel(item.accessibilityLabel ?? item.label)
                     .accessibilityAddTraits(selected ? .isSelected : [])
                 }
             }

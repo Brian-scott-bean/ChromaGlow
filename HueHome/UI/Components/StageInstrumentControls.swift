@@ -44,6 +44,11 @@ struct StageKnob: View {
     /// Points of vertical travel that sweep the full range at coarse gain.
     var travel: CGFloat = 220
     var onEditingChanged: ((Bool) -> Void)? = nil
+    /// Exact-entry parser for readouts whose unit is not the value's unit
+    /// (a Kelvin readout over a mirek range — review round, B-7). Returns
+    /// the value in the RANGE's unit; the knob clamps it. Nil → the shared
+    /// `StageDraftMath` parse.
+    var parseDraft: ((String) -> Double?)? = nil
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var drag: InstrumentDragState? = nil
@@ -181,7 +186,13 @@ struct StageKnob: View {
         guard isTyping else { return }
         isTyping = false
         draftFocused = false
-        guard let parsed = StageDraftMath.parseDraft(draft, range: range) else { return }
+        let parsed: Double?
+        if let parseDraft {
+            parsed = parseDraft(draft).map { min(range.upperBound, max(range.lowerBound, $0)) }
+        } else {
+            parsed = StageDraftMath.parseDraft(draft, range: range)
+        }
+        guard let parsed else { return }
         onEditingChanged?(true)
         value = parsed
         onEditingChanged?(false)
@@ -200,6 +211,8 @@ struct StageFader: View {
     var format: (Double) -> String = { "\(Int($0.rounded()))" }
     var trackHeight: CGFloat = 148
     var onEditingChanged: ((Bool) -> Void)? = nil
+    /// See `StageKnob.parseDraft`.
+    var parseDraft: ((String) -> Double?)? = nil
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var drag: InstrumentDragState? = nil
@@ -331,7 +344,13 @@ struct StageFader: View {
         guard isTyping else { return }
         isTyping = false
         draftFocused = false
-        guard let parsed = StageDraftMath.parseDraft(draft, range: range) else { return }
+        let parsed: Double?
+        if let parseDraft {
+            parsed = parseDraft(draft).map { min(range.upperBound, max(range.lowerBound, $0)) }
+        } else {
+            parsed = StageDraftMath.parseDraft(draft, range: range)
+        }
+        guard let parsed else { return }
         onEditingChanged?(true)
         value = parsed
         onEditingChanged?(false)
@@ -357,6 +376,8 @@ struct StageSteppedEncoder<Value: Hashable>: View {
     @Binding var selection: Value
     var prominence: Prominence = .chips
 
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     /// The board's form: label/value pairs.
     init(title: String,
          options: [(label: String, value: Value)],
@@ -381,43 +402,60 @@ struct StageSteppedEncoder<Value: Hashable>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(title)
-                .font(HueFont.stageControl)
-                .foregroundStyle(.white.opacity(0.60))
+            // An empty title is a caption deliberately omitted (a control
+            // whose section header already names it), not a blank line.
+            if !title.isEmpty {
+                Text(title)
+                    .font(HueFont.stageControl)
+                    .foregroundStyle(.white.opacity(0.60))
+            }
             switch prominence {
             case .chips:
                 ChipPickerRow(items: items, selection: $selection)
             case .pads:
-                HStack(spacing: 8) {
-                    ForEach(items, id: \.value) { item in
-                        Button {
-                            selection = item.value
-                            HapticManager.shared.selection()
-                        } label: {
-                            HStack(spacing: 4) {
-                                if let icon = item.icon {
-                                    Image(systemName: icon).font(.system(size: 10, weight: .semibold))
-                                }
-                                Text(item.label)
-                                    .font(HueFont.stageControl)
-                            }
-                            .foregroundStyle(selection == item.value
-                                             ? StagePalette.stage : StagePalette.ink)
-                            .frame(maxWidth: .infinity, minHeight: 44)
-                            .background(
-                                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .fill(selection == item.value
-                                          ? HuePalette.amber
-                                          : StagePalette.raised)
-                            )
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel(item.label)
-                        .accessibilityAddTraits(selection == item.value ? .isSelected : [])
+                // Pads reflow into a column at accessibility text sizes
+                // (review round, B-6): a fixed row of five 73 pt pads wraps
+                // its labels mid-word long before the largest sizes.
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(spacing: 8) {
+                        ForEach(items, id: \.value) { item in pad(item) }
+                    }
+                } else {
+                    HStack(spacing: 8) {
+                        ForEach(items, id: \.value) { item in pad(item) }
                     }
                 }
             }
         }
+    }
+
+    private func pad(_ item: ChipPickerRow<Value>.Item) -> some View {
+        Button {
+            selection = item.value
+            HapticManager.shared.selection()
+        } label: {
+            HStack(spacing: 4) {
+                if let icon = item.icon {
+                    Image(systemName: icon).font(.caption2.weight(.semibold))
+                }
+                Text(item.label)
+                    .font(HueFont.stageControl)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+            .foregroundStyle(selection == item.value
+                             ? StagePalette.stage : StagePalette.ink)
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(selection == item.value
+                          ? HuePalette.amber
+                          : StagePalette.raised)
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(item.accessibilityLabel ?? item.label)
+        .accessibilityAddTraits(selection == item.value ? .isSelected : [])
     }
 }
 

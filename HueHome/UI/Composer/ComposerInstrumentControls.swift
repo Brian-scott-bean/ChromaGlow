@@ -41,6 +41,8 @@ struct ComposerContinuousControl: View {
     let defaultValue: Double
     var format: ((Double) -> String)? = nil
     var isHero: Bool = false
+    /// Exact-entry parser in the RANGE's unit (see `StageKnob.parseDraft`).
+    var parseDraft: ((String) -> Double?)? = nil
     let read: (CompositionParamBox) -> Double
     let write: (CompositionParamBox, Double) -> Void
 
@@ -107,14 +109,29 @@ struct ComposerContinuousControl: View {
                       defaultValue: defaultValue,
                       format: format ?? { "\(Int($0.rounded()))" },
                       diameter: isHero ? 84 : 60,
-                      onEditingChanged: editingChanged)
+                      onEditingChanged: editingChanged,
+                      parseDraft: parseDraft)
         case .fader:
             StageFader(title: label, value: binding, range: range,
                        defaultValue: defaultValue,
                        format: format ?? { "\(Int($0.rounded()))" },
                        trackHeight: isHero ? 168 : 128,
-                       onEditingChanged: editingChanged)
+                       onEditingChanged: editingChanged,
+                       parseDraft: parseDraft)
         }
+    }
+}
+
+// MARK: - Warmth exact entry
+
+/// The Warmth knob READS Kelvin and RANGES in mirek (review round, B-7):
+/// typing what the readout shows — "2700K" — used to parse as 2700 mirek and
+/// clamp to 500 (2000 K), the opposite end of the scale. A number above the
+/// mirek span is Kelvin and converts; anything within it is taken as mirek.
+enum ComposerWarmthEntry {
+    static func mirek(from text: String) -> Double? {
+        guard let value = StageDraftMath.parseDraft(text, range: 1...1_000_000) else { return nil }
+        return value > 1000 ? 1_000_000 / value : value
     }
 }
 

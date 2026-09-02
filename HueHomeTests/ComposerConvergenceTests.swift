@@ -203,7 +203,7 @@ final class ComposerConvergenceTests: XCTestCase {
     /// "Density" for twinkle; direction is the dial when an Entertainment
     /// area exists and the inline "Create Entertainment Area" row when not).
     private static let spokenNames: [String: [String]] = [
-        "mode": ["Mode"], "temperature": ["Warmth"], "colorPad": ["Hue", "Fine Tune", "Color"],
+        "mode": ["Mode"], "temperature": ["Warmth"], "colorPad": ["HueSaturationPad"],
         "harmony": ["Harmony"],
         "hueShift": ["Hue Shift"], "saturation": ["Saturation"], "randomize": ["Randomize"],
         "dynamicSceneExport": ["Save as Hue dynamic scene"],
@@ -544,6 +544,47 @@ final class ComposerConvergenceTests: XCTestCase {
         XCTAssertEqual(tabZ.wrappedValue, .motion, "…without touching the zone's")
     }
 
+    // MARK: - Review-round UX/capability fixes (B-1, B-2, B-7)
+
+    /// Spectrum never reads color1: its page carries the Hue Shift knob and
+    /// the Saturation fader as essentials and NO hue/saturation pad — a pad
+    /// whose hue axis wrote a field the engine ignores was a dead control.
+    func testSpectrumModeHasNoDeadPad() async {
+        let orchestrator = await makeDemoOrchestrator()
+        var spectrum = PaletteConfig(); spectrum.mode = .spectrum
+        let tree = inventory(of: preset(palette: spectrum), tab: .palette, orchestrator: orchestrator)
+        XCTAssertFalse(tree.types.contains { $0.hasPrefix("HueSaturationPad") },
+            "the pad is on Spectrum's page — its hue axis writes color1, which spectrum never reads")
+        XCTAssertEqual(tree.instruments["Hue Shift"], "StageKnob")
+        XCTAssertEqual(tree.instruments["Saturation"], "StageFader")
+        var gradient = PaletteConfig(); gradient.mode = .gradient
+        let gradientTree = inventory(of: preset(palette: gradient), tab: .palette, orchestrator: orchestrator)
+        XCTAssertTrue(gradientTree.types.contains { $0.hasPrefix("HueSaturationPad") }, "gradient keeps the pad")
+        XCTAssertNil(gradientTree.instruments["Hue Shift"], "hue shift is spectrum-only")
+    }
+
+    /// Partial colour coverage is STATED on the primary colour controls —
+    /// the pad and the harmony row — not only on the supporting ones.
+    func testPartialCoverageIsCaptionedOnThePadAndTheHarmonyRow() {
+        let (vm, orch) = seededInventory([light("L1", color: true), light("L2", color: true), light("L3", color: false)])
+        var gradient = PaletteConfig(); gradient.mode = .gradient
+        let page = pageStrings(vm: vm, orchestrator: orch, preset: preset(palette: gradient), tab: .palette)
+        let captions = page.filter { $0 == "2 OF 3 LIGHTS RESPOND" }
+        // Pad, harmony, Randomize, dynamic-scene export: four colour-gated
+        // controls, four captions — the two PRIMARY ones included.
+        XCTAssertEqual(captions.count, 4, "partial coverage is not stated on every colour control: \(page)")
+    }
+
+    /// The Warmth knob reads Kelvin over a mirek range: typing what the
+    /// readout shows lands where the readout says.
+    func testWarmthExactEntryAcceptsKelvinAndMirek() {
+        XCTAssertEqual(ComposerWarmthEntry.mirek(from: "2700K")!, 1_000_000 / 2700, accuracy: 1e-9)
+        XCTAssertEqual(ComposerWarmthEntry.mirek(from: "6500")!, 1_000_000 / 6500, accuracy: 1e-9)
+        XCTAssertEqual(ComposerWarmthEntry.mirek(from: "370")!, 370, accuracy: 1e-9, "a value inside the mirek span is mirek")
+        XCTAssertEqual(ComposerWarmthEntry.mirek(from: " 153 ")!, 153, accuracy: 1e-9)
+        XCTAssertNil(ComposerWarmthEntry.mirek(from: "warm"))
+    }
+
     // MARK: - Capability truth on the page (S3-4)
 
     private func light(_ id: String, color: Bool, ct: (Int, Int)? = nil) -> HueLight {
@@ -673,8 +714,9 @@ final class ComposerConvergenceTests: XCTestCase {
             ("envelope", .envelope, preset(envelope: swell), ["BPM": "StageKnob", "Depth": "StageFader", "Attack": "StageKnob",
                                                             "Min Brightness": "StageFader", "Max Brightness": "StageFader"]),
             ("palette", .palette, preset(palette: spectrum), ["Hue Shift": "StageKnob", "Saturation": "StageFader"]),
+            // Threshold is a LEVEL (the tick on the meter bar) → fader; smoothing is character → knob.
             ("reaction", .reaction, preset(reaction: mic), ["Sensitivity": "StageKnob", "Smoothing": "StageKnob",
-                                                           "Threshold": "StageKnob", "Intensity": "StageFader"]),
+                                                           "Threshold": "StageFader", "Intensity": "StageFader"]),
         ]
         for (name, tab, p, instruments) in expectations {
             let tree = inventory(of: p, tab: tab, orchestrator: orchestrator)

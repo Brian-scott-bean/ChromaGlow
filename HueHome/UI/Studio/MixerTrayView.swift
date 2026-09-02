@@ -37,6 +37,7 @@ import SwiftUI
 
 struct StudioCustomizationHost: View {
     @Environment(UnifiedOrchestrator.self) private var orchestrator
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let vm: StudioViewModel
     @Binding var performVM: PerformanceViewModel?
@@ -81,7 +82,7 @@ struct StudioCustomizationHost: View {
                 guard let newSource,
                       newSource == .beat || newSource == .onset || newSource == .tapTempo
                 else { return }
-                withAnimation(HueAnimation.fast) {
+                withAnimation(reduceMotion ? nil : HueAnimation.fast) {
                     proxy.scrollTo("reactionBeatControls", anchor: .center)
                 }
             }
@@ -406,7 +407,7 @@ struct StudioCustomizationHost: View {
                     // Shortcut to the in-page Beat instrument — scrolls the
                     // one real surface; never a popover-only path (spec §19).
                     Button {
-                        withAnimation(HueAnimation.fast) {
+                        withAnimation(reduceMotion ? nil : HueAnimation.fast) {
                             proxy.scrollTo("reactionBeatControls", anchor: .center)
                         }
                         HapticManager.shared.light()

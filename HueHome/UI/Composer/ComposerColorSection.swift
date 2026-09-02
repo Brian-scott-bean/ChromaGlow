@@ -75,6 +75,14 @@ struct ComposerHarmonySwatches: View {
         return (0..<3).first { Self.controlID(cardID: cardID, slot: $0) == expanded }
     }
 
+    /// "hue 120 degrees, saturation 80 percent" for VoiceOver (B-9).
+    private func slotSpokenColor(_ slot: Int) -> String {
+        let ui = UIColor(slotColor(slot))
+        var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0
+        ui.getHue(&h, saturation: &s, brightness: &b, alpha: nil)
+        return "hue \(Int((h * 360).rounded())) degrees, saturation \(Int((s * 100).rounded())) percent"
+    }
+
     private func slotColor(_ slot: Int) -> Color {
         guard let box = availability.session?.box else { return .gray }
         let c: CodableColor
@@ -131,24 +139,28 @@ struct ComposerHarmonySwatches: View {
                             HapticManager.shared.selection()
                         }
                         .accessibilityLabel("Color \(slot + 1): \(isEditing ? "collapse" : "expand") precise color editor")
-                        .accessibilityAddTraits(isEditing ? .isSelected : [])
+                        .accessibilityValue(slotSpokenColor(slot))
+                        .accessibilityAddTraits(isEditing ? [.isButton, .isSelected] : [.isButton])
                         .animation(reduceMotion ? nil : .spring(response: 0.25, dampingFraction: 0.7), value: isEditing)
                 }
                 Spacer()
-                Text("Tap to fine-tune")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.white.opacity(0.30))
+                if isInteractive {
+                    Text("Tap to fine-tune")
+                        .font(.caption2)
+                        .foregroundStyle(.white.opacity(0.30))
+                }
             }
 
             if let slot = expandedSlot, isInteractive {
                 // The SHARED inline editor for the open slot — the same
                 // instrument the Studio board's colour controls use.
+                // No coverage badge here: the harmony row's gate already
+                // captions "n OF m LIGHTS RESPOND" (review round, B-1), and
+                // one number on screen is the rule.
                 let context: ColorCapabilityContext = {
                     var context = ColorCapabilityContext()
                     context.gamut = vm.activeCompositionGamut
-                    context.coverage = StudioBoardAvailability.editorCoverage(
-                        resolution: availability.resolve("harmony"),
-                        snapshotColor: availability.snapshot?.color)
+                    context.coverage = nil
                     return context
                 }()
                 StageColorEditor(

@@ -62,8 +62,19 @@ enum ComposerControlCatalog {
         switch tab {
         case .palette:
             var ids = ["mode"]
-            ids.append(paletteMode == .temperature ? "temperature" : "colorPad")
-            if paletteMode == .solid || paletteMode == .gradient { ids.append("harmony") }
+            switch paletteMode {
+            case .temperature:
+                ids.append("temperature")
+            case .spectrum:
+                // Spectrum derives its colour from hueShift + saturation and
+                // never reads color1 — the pad's hue axis was a dead control
+                // there (review round, B-2). The two fields it DOES read are
+                // its essentials.
+                ids += ["hueShift", "saturation"]
+            case .solid, .gradient:
+                ids.append("colorPad")
+                ids.append("harmony")
+            }
             return ids
         case .motion:
             var ids = ["pattern"]
@@ -98,10 +109,7 @@ enum ComposerControlCatalog {
     ) -> [String] {
         switch tab {
         case .palette:
-            var ids: [String] = []
-            if paletteMode == .spectrum { ids += ["hueShift", "saturation"] }
-            ids += ["randomize", "dynamicSceneExport"]
-            return ids
+            return ["randomize", "dynamicSceneExport"]
         case .motion:
             guard motionPattern != .static else { return [] }
             var ids: [String] = []
@@ -267,6 +275,8 @@ struct ComposerControlGate<Content: View>: View {
 /// essentials and the "Advanced" card on different lifetimes, so a tab switch
 /// rebuilt one half of the page and not the other.
 struct ComposerSupportingControls: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     let vm: StudioViewModel
     /// Explicit, not `@Environment`: see `CompositionEditorPanel`.
     let orchestrator: UnifiedOrchestrator
@@ -301,29 +311,6 @@ struct ComposerSupportingControls: View {
 
     @ViewBuilder
     private var paletteSupporting: some View {
-        if (availability.session?.box.palette.mode ?? .gradient) == .spectrum {
-            HStack(alignment: .top, spacing: HueSpacing.lg) {
-                // Hue shift is CHARACTER (an offset around the wheel) → knob;
-                // saturation is an AMOUNT → fader. Spectrum consumes saturation
-                // directly; before this control it was only settable as a side
-                // effect of the hue pad (which also wrote an ignored color1 in
-                // spectrum mode).
-                ComposerContinuousControl(
-                    label: "Hue Shift", controlID: "hueShift", vm: vm, availability: availability,
-                    style: .knob, range: -180...180, defaultValue: PaletteConfig().hueShift,
-                    format: { "\(Int($0.rounded()))°" },
-                    read: { $0.palette.hueShift },
-                    write: { $0.palette.hueShift = $1 })
-                ComposerContinuousControl(
-                    label: "Saturation", controlID: "saturation", vm: vm, availability: availability,
-                    style: .fader, range: 0...100, defaultValue: PaletteConfig().saturation,
-                    format: { "\(Int($0.rounded()))%" },
-                    read: { $0.palette.saturation },
-                    write: { $0.palette.saturation = $1 })
-                Spacer(minLength: 0)
-            }
-        }
-
         ComposerToggleControl(
             label: "Randomize", controlID: "randomize", vm: vm, availability: availability,
             read: { $0.palette.randomize },
@@ -344,12 +331,12 @@ struct ComposerSupportingControls: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "square.and.arrow.down.on.square")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.caption.weight(.semibold))
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Save as Hue dynamic scene")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.caption.weight(.semibold))
                     Text("Loops on the bridge — works with the app closed")
-                        .font(.system(size: 10))
+                        .font(.caption2)
                         .opacity(0.55)
                 }
                 Spacer()
@@ -561,9 +548,11 @@ struct ComposerSupportingControls: View {
                     style: .knob, range: 0...100, defaultValue: ReactionConfig().smoothing,
                     read: { $0.reaction.smoothing },
                     write: { $0.reaction.smoothing = $1 })
+                // Threshold is a LEVEL — the tick on the meter bar — so it is
+                // a fader; smoothing beside it is character (review round, B-11).
                 ComposerContinuousControl(
                     label: "Threshold", controlID: "threshold", vm: vm, availability: availability,
-                    style: .knob, range: 0...100, defaultValue: ReactionConfig().threshold,
+                    style: .fader, range: 0...100, defaultValue: ReactionConfig().threshold,
                     read: { $0.reaction.threshold },
                     write: { $0.reaction.threshold = $1 })
             }
@@ -583,10 +572,12 @@ struct ComposerSupportingControls: View {
 
     /// Auto (PCA, `-1`) plus the eight compass presets.
     private static let directionPresets: [ChipPickerRow<Double>.Item] =
-        [ChipPickerRow<Double>.Item(value: -1, label: "Auto")]
-        + [("→", 0.0), ("↗", 45.0), ("↑", 90.0), ("↖", 135.0),
-           ("←", 180.0), ("↙", 225.0), ("↓", 270.0), ("↘", 315.0)].map {
-            ChipPickerRow<Double>.Item(value: $0.1, label: $0.0)
+        [ChipPickerRow<Double>.Item(value: -1, label: "Auto",
+                                    accessibilityLabel: "Automatic direction, from the area's layout")]
+        + [("→", 0.0, "east"), ("↗", 45.0, "north-east"), ("↑", 90.0, "north"), ("↖", 135.0, "north-west"),
+           ("←", 180.0, "west"), ("↙", 225.0, "south-west"), ("↓", 270.0, "south"), ("↘", 315.0, "south-east")].map {
+            ChipPickerRow<Double>.Item(value: $0.1, label: $0.0,
+                                       accessibilityLabel: "\(Int($0.1)) degrees, \($0.2)")
         }
 
     /// Which preset the current angle sits on (within the 5° snap), or the
@@ -613,18 +604,23 @@ struct ComposerSupportingControls: View {
                 // double-tap, adjustable accessibility), replacing the
                 // hand-rolled dial. `Auto` (-1) reads as 0° on the knob; the
                 // pads below are where Auto is chosen.
+                // 0…355 in 5° steps: 360 and 0 are one direction, and a range
+                // that ends at 360 put them at opposite ends of the arc. No
+                // `defaultValue`: a double-tap "reset" cannot mean 0° when the
+                // model's default is Auto (-1) — Auto is the preset chip's job
+                // (review round, B-3).
                 StageKnob(
                     title: "Direction",
                     value: Binding(
                         get: { max(0, angle) },
                         set: { newAngle in
-                            let snapped = (newAngle / 5).rounded() * 5
-                            recomputeSpatialPositions(angle: snapped.truncatingRemainder(dividingBy: 360))
+                            let snapped = ((newAngle / 5).rounded() * 5).truncatingRemainder(dividingBy: 360)
+                            recomputeSpatialPositions(angle: snapped)
                         }
                     ),
-                    range: 0...360,
-                    defaultValue: 0,
-                    format: { angle < 0 ? "Auto" : "\(Int($0.rounded()))°" },
+                    range: 0...355,
+                    defaultValue: nil,
+                    format: { shown in angle < 0 && shown == 0 ? "Auto" : "\(Int(shown.rounded()))°" },
                     diameter: 60)
                 Spacer(minLength: 0)
             }
@@ -655,7 +651,8 @@ struct ComposerSupportingControls: View {
 
     private var spatialMiniMap: some View {
         let mapSize: CGFloat = 80
-        let currentAngle = max(0, availability.session?.box.motion.motionAngle ?? 0)
+        let rawAngle = availability.session?.box.motion.motionAngle ?? -1
+        let currentAngle = max(0, rawAngle)
 
         return ZStack {
             // Background
@@ -666,10 +663,14 @@ struct ComposerSupportingControls: View {
                         .strokeBorder(.white.opacity(0.10), lineWidth: 1)
                 )
 
-            // Direction arrow through center
+            // Direction arrow through center — drawn only for an AUTHORED
+            // angle. Under Auto the runtime derives the direction from the
+            // area's principal axis at start; drawing 0° here said "east"
+            // beside a readout that said "Auto" (review round, B-3).
             let arrowRad: CGFloat = (CGFloat(currentAngle) - 90) * .pi / 180
             let arrowCos: CGFloat = CoreGraphics.cos(arrowRad)
             let arrowSin: CGFloat = CoreGraphics.sin(arrowRad)
+            if rawAngle >= 0 {
             Path { path in
                 let cx = mapSize / 2, cy = mapSize / 2
                 let len: CGFloat = mapSize / 2 - 8
@@ -686,6 +687,7 @@ struct ComposerSupportingControls: View {
                 HuePalette.amber.opacity(0.35),
                 style: StrokeStyle(lineWidth: 1.5, lineCap: .round, dash: [4, 3])
             )
+            }
 
             // Light position dots
             if let config = orchestrator.activeEntertainmentConfig(for: availability.room) {
@@ -720,7 +722,8 @@ struct ComposerSupportingControls: View {
             }
         }
         .frame(width: mapSize, height: mapSize)
-        .animation(.interactiveSpring(response: 0.3), value: currentAngle)
+        .animation(reduceMotion ? nil : .interactiveSpring(response: 0.3), value: currentAngle)
+        .accessibilityHidden(true)   // a preview; the knob and the presets carry the semantics
     }
 
     private func paletteSwatchColor(at index: Int) -> Color {
@@ -741,17 +744,17 @@ struct ComposerSupportingControls: View {
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: "plus.circle")
-                    .font(.system(size: 14))
+                    .font(.subheadline)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Create Entertainment Area")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.caption.weight(.semibold))
                     Text("Unlock directional motion across your room")
-                        .font(.system(size: 10))
+                        .font(.caption2)
                         .foregroundStyle(.white.opacity(0.4))
                 }
                 Spacer()
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 11))
+                    .font(.caption)
                     .foregroundStyle(.white.opacity(0.3))
             }
             .foregroundStyle(HuePalette.amber.opacity(0.85))
