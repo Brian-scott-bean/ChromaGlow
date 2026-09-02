@@ -135,7 +135,9 @@ data class ClipScene(
     val paletteColors: List<ClipXy>?,
 ) {
     val isActive: Boolean get() = statusActive == "static" || statusActive == "dynamic_palette"
-    val isDynamic: Boolean get() = type == "dynamic" || statusActive == "dynamic_palette"
+
+    /** A scene is dynamic only while the bridge reports it running its palette; `type` is always "scene". */
+    val isDynamic: Boolean get() = statusActive == "dynamic_palette"
 }
 
 /** `GET /clip/v2/resource/bridge` element, for the diagnostic identity probe. */
