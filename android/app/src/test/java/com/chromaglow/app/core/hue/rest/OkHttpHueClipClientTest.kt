@@ -133,7 +133,7 @@ class OkHttpHueClipClientTest {
         val f = fixture(leafCommonName = bridgeId.value, serverCa = rogue, trustedCa = rootCa)
         f.server.enqueue(json(body = """{"data":[]}"""))
 
-        assertEquals(ClipError.Transport, err(f.client.getResources(ResourceType.LIGHT)))
+        assertEquals(ClipError.Transport(), err(f.client.getResources(ResourceType.LIGHT)))
         assertEquals(0, f.server.requestCount)
     }
 
@@ -287,6 +287,36 @@ class OkHttpHueClipClientTest {
         val error = err(client.putResource(ResourceType.LIGHT, ResourceId("l1"), ClipBodies.power(true)))
 
         assertEquals(ClipError.Timeout(afterTransmission = false), error)
+    }
+
+    // D-02 / E-03: a failure AFTER the body reached the socket must say so.
+
+    @Test
+    fun socketDroppedAfterTheRequestWasSent_isTransportAfterTransmission() = runTest {
+        val f = fixture(leafCommonName = bridgeId.value)
+        f.server.enqueue(MockResponse.Builder().onResponseStart(mockwebserver3.SocketEffect.CloseSocket()).build())
+
+        val error = err(f.client.putResource(ResourceType.LIGHT, ResourceId("l1"), ClipBodies.power(true)))
+
+        assertEquals(ClipError.Transport(afterTransmission = true), error)
+        assertEquals(1, f.server.requestCount)
+    }
+
+    @Test
+    fun socketDroppedDuringTheResponseBody_isTransportAfterTransmission() = runTest {
+        val f = fixture(leafCommonName = bridgeId.value)
+        f.server.enqueue(MockResponse.Builder().code(200).body("""{"data":[{"rid":"l1","rtype":"light"}]}""").onResponseBody(mockwebserver3.SocketEffect.CloseSocket()).build())
+
+        val error = err(f.client.putResource(ResourceType.LIGHT, ResourceId("l1"), ClipBodies.power(true)))
+
+        assertTrue("was $error", (error is ClipError.Transport && error.afterTransmission) || error is ClipError.Decode)
+    }
+
+    @Test
+    fun invalidHostInARecord_isATypedTransportFailure_neverAnException() = runTest {
+        val trust = HueTrust.fromCertificateAuthorities(listOf(rootCa.certificate))
+        val client = OkHttpHueClipClient(bridgeId, host = "not a host!", port = 443, keys = { ApplicationKey.of(secret) }, tls = trust.forBridge(bridgeId))
+        assertEquals(ClipError.Transport(afterTransmission = false), err(client.getResources(ResourceType.LIGHT)))
     }
 
     // --- credentials --------------------------------------------------------------------------

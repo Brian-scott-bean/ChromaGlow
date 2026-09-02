@@ -110,9 +110,13 @@ fun ChromaGlowApp() {
         }
     }
 
-    // A live destination with no live session (Forget, exit-to-setup) returns to Setup.
+    // A live destination with no live session (Forget, exit-to-setup) returns to Setup, and a
+    // live session appearing while on Setup (fresh pair / restore) lands on Home.
     val live = session as? AppSession.Live
     LaunchedEffect(live, destination) {
+        if (live != null && destination == ChromaGlowDestination.Setup) {
+            destination = ChromaGlowDestination.Home
+        }
         if (live == null && destination in LIVE_DESTINATIONS) {
             selectedGroupKey = null
             selectedLightKey = null
@@ -163,10 +167,7 @@ fun ChromaGlowApp() {
 
         ChromaGlowDestination.Setup -> SetupPlaceholderScreen(
             onEnterDemoMode = { enterDemo() },
-            onPaired = { record ->
-                controller.enterLive(record)
-                destination = ChromaGlowDestination.Home
-            },
+            onPaired = { controller.enterLiveFromSetup() },
         )
 
         ChromaGlowDestination.Home -> LiveOnly(live, controller.commands) { home, commands ->

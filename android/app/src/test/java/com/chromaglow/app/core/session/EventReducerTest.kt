@@ -59,7 +59,7 @@ class EventReducerTest {
     fun pendingBrightness_suppressesOnlyBrightness_colourStillLands() {
         val s = snapshot(bridgeA)
         val l1 = key(bridgeA, ResourceType.LIGHT, "l1")
-        authority.claim(l1, FieldGroup.DIMMING, MutationToken(1), now + 1_000) { it }
+        authority.claim(l1, FieldGroup.DIMMING, MutationToken(1), now + 1_000, prior = s)
         val out = EventReducer.reduce(s, update("""{"id":"l1","type":"light","dimming":{"brightness":5},"color":{"xy":{"x":0.2,"y":0.4}}}"""), authority, now)
         val l = out.lights.getValue(l1)
         assertEquals(50.0, l.brightness!!, 0.0)
@@ -70,7 +70,7 @@ class EventReducerTest {
     fun pendingEffect_doesNotSuppressOnOff() {
         val s = snapshot(bridgeA)
         val l1 = key(bridgeA, ResourceType.LIGHT, "l1")
-        authority.claim(l1, FieldGroup.EFFECT, MutationToken(1), now + 1_000) { it }
+        authority.claim(l1, FieldGroup.EFFECT, MutationToken(1), now + 1_000, prior = s)
         val out = EventReducer.reduce(s, update("""{"id":"l1","type":"light","on":{"on":false},"effects_v2":{"status":{"effect":"candle"}}}"""), authority, now)
         val l = out.lights.getValue(l1)
         assertFalse(l.isOn)
@@ -108,7 +108,7 @@ class EventReducerTest {
         assertFalse(off.scenes.getValue(s1).isActive)
         assertFalse(off.scenes.getValue(s2).isActive)
         // A pending recall keeps the optimistic state.
-        authority.claim(s2, FieldGroup.SCENE, MutationToken(1), now + 1_000) { it }
+        authority.claim(s2, FieldGroup.SCENE, MutationToken(1), now + 1_000, prior = s)
         val fenced = EventReducer.reduce(s, update("""{"id":"s2","type":"scene","status":{"active":"inactive"}}"""), authority, now)
         assertTrue(fenced.scenes.getValue(s2).isActive)
     }
@@ -150,6 +150,15 @@ class EventReducerTest {
             assertSame(type, s, EventReducer.reduce(s, payload, authority, now))
         }
         assertSame(s, EventReducer.reduce(s, """[{"type":"add","data":[{"id":"l9","type":"light","on":{"on":true}}]}]""", authority, now))
+    }
+
+    @Test
+    fun d07_aClaimOnBridgeAsLamp_neverFencesTheSameRidOnBridgeB() {
+        val b = snapshot(bridgeB)
+        val fence = PendingAuthority()
+        fence.claim(key(bridgeA, ResourceType.LIGHT, "l1"), FieldGroup.POWER, MutationToken(9), now + 1_000, prior = snapshot(bridgeA))
+        val out = EventReducer.reduce(b, update("""{"id":"l1","type":"light","on":{"on":false}}"""), fence, now)
+        assertFalse("bridge B's event lands despite A's claim on the same rid", out.lights.getValue(key(bridgeB, ResourceType.LIGHT, "l1")).isOn)
     }
 
     @Test

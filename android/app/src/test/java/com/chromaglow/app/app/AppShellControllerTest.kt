@@ -86,20 +86,39 @@ class AppShellControllerTest {
     }
 
     @Test
-    fun launch_recordWithoutToken_landsOnSetup_andDeletesNothing() = runTest {
+    fun launch_onlyRecordWithoutToken_landsOnSetup_andDeletesNothing() = runTest {
         val h = Harness(this)
-        h.registry.records += recordA
-        h.registry.records += recordB
-        h.store.tokens[idB] = "key-b" // A needs repair; B is fine — the whole home stays on Setup.
+        h.registry.records += recordA // no token: NeedsRepair, Setup shows it
 
         h.controller.restoreAtLaunch()
 
         assertEquals(AppShellController.Startup.Setup, h.controller.startup.value)
         assertEquals(AppSession.None, h.controller.session.value)
         assertEquals(0, h.store.deleteCount)
+        assertEquals(1, h.registry.records.size)
+        assertTrue(h.homes.isEmpty())
+    }
+
+    @Test
+    fun launch_oneHealthyOneNeedsRepair_opensLive_keepsBoth_andDeletesNothing() = runTest {
+        val h = Harness(this)
+        h.registry.records += recordA
+        h.registry.records += recordB
+        h.store.tokens[idB] = "key-b" // A needs repair → surfaces as its own Error session + Forget.
+
+        h.controller.restoreAtLaunch()
+
+        assertEquals(AppShellController.Startup.Live, h.controller.startup.value)
+        assertTrue(h.controller.session.value is AppSession.Live)
+        assertEquals(0, h.store.deleteCount)
         assertEquals(2, h.registry.records.size)
         assertEquals("key-b", h.store.tokens[idB])
-        assertTrue(h.homes.isEmpty())
+
+        // Forgetting the repair-needing record keeps Live for the healthy one (A-06 seeding).
+        h.controller.forgetBridge(BridgeId(idA))
+        testScheduler.advanceUntilIdle()
+        assertTrue(h.controller.session.value is AppSession.Live)
+        assertEquals(listOf(recordB), h.registry.records)
     }
 
     @Test
@@ -184,16 +203,34 @@ class AppShellControllerTest {
     }
 
     @Test
-    fun enterLive_isIdempotent_andPairedFromSetupOpensOneHome() = runTest {
+    fun pairedFromSetup_reclassifiesFromPersistedTruth_andOpensOneHome() = runTest {
         val h = Harness(this)
         h.controller.restoreAtLaunch()
         assertEquals(AppShellController.Startup.Setup, h.controller.startup.value)
 
-        h.controller.enterLive(recordA)
-        h.controller.enterLive(recordA)
+        // Setup persisted the pairing (token + record) before reporting Paired.
+        h.registry.records += recordA
+        h.store.tokens[idA] = "key-a"
+        h.controller.enterLiveFromSetup()
+        h.controller.enterLiveFromSetup()
+        testScheduler.advanceUntilIdle()
 
         assertEquals(1, h.homes.size)
         assertSame(h.homes.single(), (h.controller.session.value as AppSession.Live).home)
+    }
+
+    @Test
+    fun pairedFromSetup_withoutPersistedToken_staysOnSetup() = runTest {
+        val h = Harness(this)
+        h.controller.restoreAtLaunch()
+        h.registry.records += recordA // metadata only; no readable token
+
+        h.controller.enterLiveFromSetup()
+        testScheduler.advanceUntilIdle()
+
+        assertEquals(AppSession.None, h.controller.session.value)
+        assertTrue(h.homes.isEmpty())
+        assertEquals(0, h.store.deleteCount)
     }
 
     @Test

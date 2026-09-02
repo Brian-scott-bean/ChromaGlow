@@ -21,6 +21,12 @@ enum class DeliveryOutcome {
     DELIVERED,
     FAILED_BEFORE_TRANSMISSION,
     AMBIGUOUS_AFTER_TRANSMISSION,
+
+    /**
+     * The bridge authoritatively did NOT apply the write (429, HTTP 4xx, `errors[]` with no data).
+     * Clock-conservative: the stamp stays; the wire memory is restored to what it was (E-05).
+     */
+    NOT_APPLIED,
 }
 
 /**

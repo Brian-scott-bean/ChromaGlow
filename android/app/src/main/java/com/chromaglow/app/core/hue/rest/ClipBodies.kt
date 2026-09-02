@@ -25,6 +25,9 @@ object ClipBodies {
     /** CLIP v2 timed_effects duration cap (6 h); equals LiveMutation.MAX_TIMED_EFFECT_MILLIS (pinned by test). */
     const val MAX_TIMED_EFFECT_MILLIS: Long = 21_600_000L
 
+    /** Floor for a timed effect body (60 s); equals LiveMutation.MIN_TIMED_EFFECT_MILLIS. A 0 s "sunrise" is a flash (E-08). */
+    const val MIN_TIMED_EFFECT_MILLIS: Long = 60_000L
+
     /** Protocol gradient point cap; equals LiveMutation.MAX_GRADIENT_POINTS (pinned by test). */
     const val MAX_GRADIENT_POINTS: Int = 5
 
@@ -104,13 +107,13 @@ object ClipBodies {
 
     /**
      * Start a bridge-native timed effect ([effect] is the wire name, e.g. [TIMED_SUNRISE]).
-     * Duration clamped 0…[MAX_TIMED_EFFECT_MILLIS].
+     * Duration clamped [MIN_TIMED_EFFECT_MILLIS]…[MAX_TIMED_EFFECT_MILLIS].
      * A running firmware effect takes precedence on the bridge, so [clearFirmwareEffect] (default
      * true) sends `effects.no_effect` in the SAME PUT.
      */
     fun timedEffect(effect: String, durationMillis: Long, clearFirmwareEffect: Boolean = true): ClipWriteBody {
         require(effect.isNotBlank()) { "effect must not be blank" }
-        val duration = durationMillis.coerceIn(0L, MAX_TIMED_EFFECT_MILLIS)
+        val duration = durationMillis.coerceIn(MIN_TIMED_EFFECT_MILLIS, MAX_TIMED_EFFECT_MILLIS)
         return ClipWriteBody(buildJsonObject {
             put("timed_effects", buildJsonObject {
                 put("effect", effect)

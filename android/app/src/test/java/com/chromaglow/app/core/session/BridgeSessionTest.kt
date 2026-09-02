@@ -13,13 +13,16 @@ import com.chromaglow.app.testing.FakeSnapshotCache
 import com.chromaglow.app.testing.ManualClock
 import com.chromaglow.app.testing.RecordingAttachment
 import com.chromaglow.app.testing.RecordingCoordinator
+import com.chromaglow.app.testing.FakeEventStream
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.async
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -30,7 +33,14 @@ class BridgeSessionTest {
     private val other = BridgeId("AABBCCDDEEFF0011")
     private val lightKey = ResourceKey(bridge, ResourceType.LIGHT, ResourceId("la"))
 
-    private class Harness(scope: TestScope, token: String? = "tok-000000000000", store: BridgeCredentialStore? = null, probe: Boolean = true) {
+    private class Harness(
+        scope: TestScope,
+        token: String? = "tok-000000000000",
+        store: BridgeCredentialStore? = null,
+        probe: Boolean = true,
+        realCoordinator: Boolean = false,
+        stream: FakeEventStream? = null,
+    ) {
         val bridge = BridgeId("001788FFFE112233")
         val dispatcher = StandardTestDispatcher(scope.testScheduler)
         val credentialStore: BridgeCredentialStore = store ?: FakeCredentialStore().also { s -> token?.let { s.tokens[bridge.value] = it } }
@@ -38,17 +48,20 @@ class BridgeSessionTest {
         val cache = FakeSnapshotCache(bridge)
         val clock = ManualClock()
         val coordinator = RecordingCoordinator()
+        var realCoordinatorInstance: DefaultMutationCoordinator? = null
         val attachment = RecordingAttachment()
         val credentials = SessionCredentials(bridge, credentialStore, dispatcher)
+        val virtualClock = SessionClock { scope.testScheduler.currentTime }
         val session = DefaultBridgeSession(
             bridgeId = bridge,
             parentScope = CoroutineScope(dispatcher),
             transport = transport,
             credentials = credentials,
             cache = cache,
-            clock = clock,
-            coordinatorFactory = { coordinator },
-            attachmentFactories = listOf({ attachment }),
+            clock = if (realCoordinator) virtualClock else clock,
+            coordinatorFactory = { env -> if (realCoordinator) DefaultMutationCoordinator(env).also { realCoordinatorInstance = it } else coordinator },
+            attachmentFactories = listOf<(SessionEnvironment) -> SessionAttachment>({ attachment }) +
+                (if (stream != null) listOf<(SessionEnvironment) -> SessionAttachment>({ env -> EventStreamRunner(env, stream, env.authority) }) else emptyList()),
             probeBridgeIdentity = probe,
         )
 
@@ -244,6 +257,128 @@ class BridgeSessionTest {
 
         assertEquals(listOf("foreground", "background", "foreground"), h.attachment.events)
         assertEquals(loads + 5, h.transport.getCount)
+    }
+
+    // --- fix batch -----------------------------------------------------------------------------
+
+    @Test
+    fun b01_anAuthoritativeLoadLandingMidMutation_keepsTheOptimisticValue_untilItSettles() = runTest {
+        val h = Harness(this, probe = false, realCoordinator = true)
+        h.session.start()
+        advanceUntilIdle()
+        val gate = CompletableDeferred<Unit>()
+        h.transport.getGate = gate
+        h.session.requestRefresh(RefreshReason.USER_PULL)
+        advanceUntilIdle()
+        val putGate = h.transport.holdNextPut()
+        assertTrue(h.session.submit(LiveMutation.SetPower(lightKey, false)) is MutationOutcome.Accepted)
+        advanceUntilIdle()
+        assertFalse(h.session.snapshot.value.lights.getValue(lightKey).isOn)
+        gate.complete(Unit)               // the older GET (lamp on) lands while the PUT is in flight
+        advanceUntilIdle()
+        assertFalse("the load must not flicker the pending field back on", h.session.snapshot.value.lights.getValue(lightKey).isOn)
+        putGate.complete(com.chromaglow.app.core.hue.rest.ClipResult.Ok(com.chromaglow.app.core.hue.rest.ClipDocument(emptyList())))
+        advanceUntilIdle()
+        assertFalse(h.session.snapshot.value.lights.getValue(lightKey).isOn)
+    }
+
+    @Test
+    fun b04_aProbeThatAnswersUnauthorized_revokesWithoutEverStartingTheStream() = runTest {
+        val stream = FakeEventStream(bridge) { testScheduler.currentTime }
+        stream.fallback = FakeEventStream.connectedAndHang()
+        val h = Harness(this, probe = true, stream = stream)
+        h.transport.fail(ResourceType.BRIDGE, ClipError.Unauthorized(401))
+        h.session.start()
+        advanceUntilIdle()
+        assertEquals(ConnectionState.Revoked, h.session.connection.value)
+        assertEquals(0, stream.openCount)
+        assertTrue(h.attachment.events.none { it == "foreground" })
+        assertEquals("no load after a revoked probe", 1, h.transport.getCount)
+    }
+
+    @Test
+    fun b05_backgroundDuringStart_keepsTheStreamOff_andForegroundRefreshesBeforeReconnecting() = runTest {
+        val h = Harness(this, probe = true)
+        h.session.start()
+        h.session.onBackground()
+        advanceUntilIdle()
+        assertTrue("attachments never started while backgrounded: ${h.attachment.events}", h.attachment.events.isEmpty())
+        val loads = h.transport.getCount
+        h.session.onForeground()
+        advanceUntilIdle()
+        assertEquals(listOf("foreground"), h.attachment.events)
+        assertEquals(loads + 5, h.transport.getCount)
+    }
+
+    @Test
+    fun b05_foregroundBeforeCredentialsLoaded_doesNotStartAKeylessStream() = runTest {
+        val h = Harness(this, probe = false)
+        h.session.onForeground()   // before start(): nothing loaded yet
+        assertTrue(h.attachment.events.isEmpty())
+        h.session.start()
+        advanceUntilIdle()
+        assertEquals(listOf("foreground"), h.attachment.events)
+    }
+
+    @Test
+    fun b06_anEventReducedDuringAnInFlightLoad_isReconciledByAFollowUpRefresh() = runTest {
+        val stream = FakeEventStream(bridge) { testScheduler.currentTime }
+        val off = """[{"type":"update","data":[{"id":"la","type":"light","on":{"on":false}}]}]"""
+        stream.fallback = FakeEventStream.connectedAndHang(off)
+        val h = Harness(this, probe = false, stream = stream)
+        val gate = CompletableDeferred<Unit>()
+        h.transport.getGate = gate
+        h.session.start()
+        advanceUntilIdle()                 // load in flight, stream connected, event reduced
+        h.transport.getGate = null
+        val loadsBefore = h.transport.getCount / 5
+        gate.complete(Unit)                // the older GET (lamp on) lands
+        advanceUntilIdle()
+        assertEquals("one reconciling load followed the stale one", loadsBefore + 1, h.transport.getCount / 5)
+    }
+
+    @Test
+    fun b10_a04_close_closesTheCoordinator_andDropsTheKey() = runTest {
+        val h = Harness(this, probe = false, realCoordinator = true)
+        h.session.start()
+        advanceUntilIdle()
+        assertEquals(CredentialState.Loaded, h.credentials.state)
+        h.session.close()
+        assertEquals(CredentialState.Dropped, h.credentials.state)
+        assertNull(h.credentials.applicationKey())
+        assertEquals(MutationOutcome.Refused(RefusalReason.SESSION_CLOSED), h.realCoordinatorInstance!!.submit(LiveMutation.SetPower(lightKey, true)))
+        assertEquals("the stored token is untouched", BridgeSecretResult.Present("tok-000000000000"), h.credentialStore.loadApiToken(h.bridge.value))
+    }
+
+    @Test
+    fun d06_twoOverlappingLoads_theOlderResultIsSuperseded_andNeverLands() = runTest {
+        val fake = FakeHueClipTransport(bridge)
+        val loader = BridgeLoader(fake)
+        fake.collection(ResourceType.LIGHT, """{"data":[{"id":"old","type":"light"}]}""")
+        val gate1 = CompletableDeferred<Unit>()
+        fake.getGate = gate1
+        val first = async(StandardTestDispatcher(testScheduler)) { loader.load() }
+        advanceUntilIdle()
+        fake.getGate = null
+        fake.collection(ResourceType.LIGHT, """{"data":[{"id":"new","type":"light"}]}""")
+        val second = loader.load()
+        gate1.complete(Unit)
+        advanceUntilIdle()
+        assertEquals(LoadOutcome.Superseded, first.await())
+        assertEquals("new", (second as LoadOutcome.Loaded).snapshot.lights.keys.single().id.value)
+    }
+
+    @Test
+    fun d08_noDiagnosticLineEverContainsTheToken() = runTest {
+        val h = Harness(this, probe = true)
+        h.transport.fail(ResourceType.BRIDGE, ClipError.Http(500))
+        h.transport.fail(ResourceType.SCENE, ClipError.Transport(afterTransmission = true))
+        h.session.start()
+        advanceUntilIdle()
+        assertTrue(h.session.diagnostics.isNotEmpty())
+        for (line in h.session.diagnostics) assertFalse(line, line.contains("tok-000000000000"))
+        // Even a line that WOULD carry the key is masked by the session's own redaction.
+        assertEquals("key=<redacted>", h.credentials.redact("key=tok-000000000000"))
     }
 
     private fun lightState(key: ResourceKey, name: String) = LightState(
