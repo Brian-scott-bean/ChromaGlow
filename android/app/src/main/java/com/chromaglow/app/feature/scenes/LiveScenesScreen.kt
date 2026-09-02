@@ -54,8 +54,17 @@ fun LiveScenesRoute(
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsState()
+    val feedback by viewModel.feedback.collectAsState()
     CompositionLocalProvider(LocalReduceMotion provides rememberReduceMotion()) {
-        LiveScenesScreen(state = state, onBack = onBack, onActivate = viewModel::activate, onRefresh = viewModel::refresh, modifier = modifier)
+        LiveScenesScreen(
+            state = state,
+            onBack = onBack,
+            onActivate = viewModel::activate,
+            onRefresh = viewModel::refresh,
+            modifier = modifier,
+            feedback = feedback,
+            onFeedbackShown = viewModel::dismissFeedback,
+        )
     }
 }
 

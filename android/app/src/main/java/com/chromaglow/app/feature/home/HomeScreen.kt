@@ -51,6 +51,7 @@ fun HomeRoute(
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsState()
+    val feedback by viewModel.feedback.collectAsState()
     CompositionLocalProvider(LocalReduceMotion provides rememberReduceMotion()) {
         HomeScreen(
             state = state,
@@ -60,6 +61,8 @@ fun HomeRoute(
             onRefresh = viewModel::refresh,
             onGroupPower = viewModel::setGroupPower,
             onGroupBrightness = viewModel::setGroupBrightness,
+            feedback = feedback,
+            onFeedbackShown = viewModel::dismissFeedback,
             modifier = modifier,
         )
     }

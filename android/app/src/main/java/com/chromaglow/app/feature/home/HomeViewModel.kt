@@ -2,12 +2,16 @@ package com.chromaglow.app.feature.home
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.chromaglow.app.core.identity.ResourceKey
+import com.chromaglow.app.core.identity.ResourceType
 import com.chromaglow.app.core.session.HomeCommands
 import com.chromaglow.app.core.session.LiveHome
 import com.chromaglow.app.core.session.RefreshReason
+import com.chromaglow.app.ui.components.MutationFeedbackController
+import com.chromaglow.app.ui.components.MutationFeedbackUi
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 
 /**
@@ -22,13 +26,30 @@ class HomeViewModel(
     private val clock: () -> Long = { System.currentTimeMillis() },
 ) : ViewModel() {
 
-    val uiState: StateFlow<HomeUiState> = liveHome.home
-        .map { HomeUiMapper.map(it, clock()) }
-        .stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5_000),
-            initialValue = HomeUiMapper.map(liveHome.home.value, clock()),
-        )
+    val uiState: StateFlow<HomeUiState> = combine(liveHome.home, liveHome.bridgeNames) { home, names ->
+        HomeUiMapper.map(home, clock(), names)
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000),
+        initialValue = HomeUiMapper.map(liveHome.home.value, clock(), liveHome.bridgeNames.value),
+    )
+
+    /** Home renders grouped lights only, so only grouped_light outcomes are its feedback. */
+    private val feedbackController = MutationFeedbackController(
+        scope = viewModelScope,
+        events = liveHome.mutationEvents,
+        isRelevant = { it.target.type == ResourceType.GROUPED_LIGHT },
+        nameOf = { key -> groupNameFor(key) },
+    )
+
+    val feedback: StateFlow<MutationFeedbackUi?> = feedbackController.feedback
+
+    fun dismissFeedback(shown: MutationFeedbackUi) = feedbackController.dismiss(shown)
+
+    private fun groupNameFor(groupedLight: ResourceKey): String? {
+        val snapshot = liveHome.home.value.bridges[groupedLight.bridgeId] ?: return null
+        return (snapshot.rooms.values + snapshot.zones.values).firstOrNull { it.groupedLight == groupedLight }?.name
+    }
 
     fun setGroupPower(card: GroupCardUi, on: Boolean) {
         val target = card.target ?: return

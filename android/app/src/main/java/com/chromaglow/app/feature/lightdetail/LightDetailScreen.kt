@@ -101,6 +101,7 @@ fun LightDetailRoute(
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsState()
+    val feedback by viewModel.feedback.collectAsState()
     CompositionLocalProvider(LocalReduceMotion provides rememberReduceMotion()) {
         LightDetailScreen(
             state = state,
@@ -125,6 +126,8 @@ fun LightDetailRoute(
                 onGradientApply = viewModel::applyGradient,
                 onAcknowledgeNotice = viewModel::acknowledgeNotice,
             ),
+            feedback = feedback,
+            onFeedbackShown = viewModel::dismissFeedback,
             modifier = modifier,
         )
     }

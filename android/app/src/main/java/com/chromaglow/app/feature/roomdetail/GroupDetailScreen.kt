@@ -56,6 +56,7 @@ fun GroupDetailRoute(
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsState()
+    val feedback by viewModel.feedback.collectAsState()
     CompositionLocalProvider(LocalReduceMotion provides rememberReduceMotion()) {
         GroupDetailScreen(
             state = state,
@@ -67,6 +68,8 @@ fun GroupDetailRoute(
             onLightBrightness = viewModel::setLightBrightness,
             onGroupColor = viewModel::setGroupColor,
             onGroupColorTemperature = viewModel::setGroupColorTemperature,
+            feedback = feedback,
+            onFeedbackShown = viewModel::dismissFeedback,
             modifier = modifier,
         )
     }
