@@ -164,6 +164,9 @@ class AndroidNsdBridgeDiscoveryService(
 
     private fun handleServiceFound(serviceInfo: NsdServiceInfo, gen: Int) {
         val serviceName = serviceInfo.serviceName?.takeIf { it.isNotBlank() } ?: return
+        // Bounded tracking (audit L-39): a flood of distinct service names cannot grow the maps
+        // or callback set past the cap; already-tracked services keep receiving updates.
+        if (!DiscoveryBounds.canTrack(discoveredServiceNames.size, serviceName in discoveredServiceNames)) return
         discoveredServiceNames.add(serviceName)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             registerServiceInfoCallback(serviceName, serviceInfo, gen)
@@ -237,6 +240,7 @@ class AndroidNsdBridgeDiscoveryService(
     private fun enqueueLegacyResolve(serviceName: String, serviceInfo: NsdServiceInfo) {
         if (serviceName in queuedLegacyServiceNames) return
         if (serviceName == currentlyResolvingServiceName) return
+        if (!DiscoveryBounds.canQueue(pendingResolveQueue.size)) return
         queuedLegacyServiceNames.add(serviceName)
         pendingResolveQueue.addLast(serviceInfo)
         drainLegacyResolveQueue()
@@ -397,7 +401,9 @@ class AndroidNsdBridgeDiscoveryService(
     private fun publish() {
         val snapshot = BridgeDiscoverySnapshot(
             isScanning = isScanning,
-            choices = BridgeEndpointDeduper.deduplicate(endpointByServiceName.values.toList()),
+            choices = DiscoveryBounds.boundedChoices(
+                BridgeEndpointDeduper.deduplicate(endpointByServiceName.values.toList()),
+            ),
             statusMessage = statusMessage,
         )
         onSnapshot?.invoke(snapshot)
