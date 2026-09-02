@@ -10,10 +10,10 @@ not advertise it). Any FAIL in H9 or H12-C is a merge blocker.
 | Field | Value |
 |---|---|
 | Feature branch | `feat/android-live-capability-convergence` |
-| HEAD | `__HEAD__` |
+| HEAD | `c66205e8f97e62c38aec0280b13fd6dca7859319 (code head; the docs commit on top does not change the APK)` |
 | versionCode / versionName | 3 / 1.0 |
 | Debug APK path | `android/app/build/outputs/apk/debug/app-debug.apk` |
-| APK SHA-256 | `__SHA__` |
+| APK SHA-256 | `5b6e93098ee82f6ea9a1b8a148e76e699aac948cd67678ef11d2460c76cff861` |
 | Build command | `cd android && ./gradlew clean lintDebug testDebugUnitTest assembleDebug` (JDK 21 at `/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home`) |
 | Install | `adb install -r android/app/build/outputs/apk/debug/app-debug.apk` then confirm Settings → About shows 1.0 |
 

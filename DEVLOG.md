@@ -625,14 +625,16 @@
   per fix; validate with
   `xcodebuild test -project HueHome.xcodeproj -scheme "HueHome 1" -destination 'platform=iOS Simulator,name=iPhone 17 Pro'`.
 
-### Android — unchanged since 2026-07-01
-- Kotlin/Compose demo MVP on `main` (originally landed @ `f3380a7`): Setup (mDNS/manual-IP/demo),
-  Dashboard, RoomDetail, Scenes, Settings; Android Keystore credential boundary; tested non-UI Hue
-  pairing foundations under `core/hue/pairing/**` + bundled CA roots (Batch 3, incl. D-014).
-  Full inventory + durable contracts: `AGENTS.md` → "Android Current State".
-- Batch 4 live pairing onboarding is executed/integrated on `integration/parallel-batch-4` @
-  `040fed7` (automated gate green; physical H0 link-button gate pending re-run with the correct
-  worktree APK — see the 2026-07-01 stale-APK diagnosis below); **not yet merged to `main`**.
+### Android — LIVE CONTROL SLICE MERGED TO MAIN (2026-09-02, versionCode 3)
+- `main` now carries the Android Live Control + Hue Capability Convergence slice (feature branch
+  `feat/android-live-capability-convergence`, fast-forwarded on Brian's instruction; also pushed as
+  `staging`). Batch-4 live pairing is converged and remediated; a real authenticated CLIP v2 controller
+  (CA trust + typed leaf-CN identity, per-bridge sessions, snapshot cache, field-aware mutation
+  coordinator, lamp-keyed rise ledger with the ported FlashSafety, SSE reconciliation) drives live Home,
+  Room/Zone, Light detail (effects_v2, timed, gradient), Scenes and Settings. Signaling is decode-only.
+- **Hardware: none run, none claimed.** Brian's packet: `docs/android/android-live-capability-hardware-packet.md`
+  (APK SHA-256 recorded there; H12-C effect cadence is a merge blocker for advertised effects).
+- Follow-up debt lives on `lane/alcc-core` (Charles's uncommitted mini-batch, see the 2026-09-02 Android entry).
 - Parallel pipeline docs (lane registry, Decision Log): `docs/coordination/parallel-agent-pipeline.md`.
 
 ### Audit
@@ -664,6 +666,25 @@
 ### Gotchas
 - ...
 ```
+
+---
+
+## 2026-09-02 - [Claude] Android Live Control + Hue Capability Convergence — merged to main (versionCode 3)
+
+**Branch:** `feat/android-live-capability-convergence` (base `main` @ `485f49f`), final head ``c66205e` (code) + this docs commit`, fast-forwarded to `main` and pushed to `origin/main` and `origin/staging` on Brian's explicit instruction. Historical worktrees untouched.
+
+**Did.** Converged Batch-4 live pairing onto `main` (six cherry-picks + 14 remediation commits: L-31/32/33/38/39/40/55, I-01/13, 16-hex alias, per-element registry decode, NonCancellable persist, classify-only restore, local Reset), froze the P2 contracts (`core/identity`, `core/hue/capability`, `core/hue/rest`, `core/hue/sse`, `core/session`, `app/AppSession`; `docs/android/android-live-capability-contracts-p2.md`), then built the live controller in two writer lanes:
+- Core (Charles, `lane/alcc-core`): `HueTrust`/`BridgeLeafIdentity` typed CN boundary (upper/lower/mixed 16-hex canonicalised only at the TLS boundary, no key transmitted on mismatch), `OkHttpHueClipClient` (443, key header, no redirects/retry, 1 MiB bound, transmission-aware errors), tolerant CLIP v2 codec, deterministic `ClipBodies` (iOS goldens), `CapabilityResolver` (KNOWN/ABSENT/UNSUPPORTED/UNREADABLE/UNKNOWN, gamut BRIDGE→SPEC_DERIVED→UNKNOWN, CT-without-schema = CHECKING, v2 shadows v1, RunUnverified never sends), `DefaultLiveHome`/`DefaultBridgeSession`, generation-fenced loader, `FileBridgeSnapshotCache`, `DefaultMutationCoordinator` (field-aware `PendingAuthority`, latest-wins, per-type pacing 100 ms light / 1 s group+scene, rollback by token, `MutationEvent` stream), lamp-keyed `DefaultRiseLedger` + `DefaultFlashSafety` (faithful iOS port, exported vector fixture + independent viewer oracle), `EventReducer`/`EventStreamRunner` (5/10/20/40/60 s backoff), `restoreAll`.
+- UI (Elmo, `lane/alcc-ui`): live Home, Room/Zone detail (group instrument incl. colour/warmth with "N of M" coverage), Light detail (evidence-gated progressive disclosure, effects_v2 + speed/colour/mirek, timed sunrise/sunset, gradient), Scenes (per-target Activating/Active, fail-fast), Settings (bridge list + local Forget + About), shared instruments, Snackbar mutation feedback, durable photosensitivity-notice acknowledgement, bridge names; accessibility as acceptance criteria.
+- Shell (Adam): `LiveAppGraph`, `AppShellController`/`AppShellViewModel` (classify-only cold start, ordered local Forget, demo/live exclusivity), router.
+
+**Adversarial review A–E** (Baylee, Darwin, Adam, Frank×2): 2 BLOCKER + 9 HIGH + 21 MEDIUM found, all BLOCKER/HIGH and the approved MEDIUMs fixed and re-checked CLOSED by the original reviewers (finding→test map in the CNVS canvas memory "CHARLES FIX REPORT" / "ELMO FIX REPORT"; ledger at the session scratchpad `FINDING-LEDGER.md`). Red-rule verdict: Android is provably more conservative than iOS at the rule level. Settlement: only pre-transmission failures release a safety reservation.
+
+**Validation.** Final tree: `./gradlew clean lintDebug testDebugUnitTest assembleDebug` twice — both runs 704 passed / 0 failed / 0 skipped, lint 0 errors (28 warnings), assembleDebug OK, APK identical. `git diff --check` clean. **Connected tests and ALL hardware rows are NOT run** (Brian runs them): packet at `docs/android/android-live-capability-hardware-packet.md`, APK SHA-256 `5b6e93098ee82f6ea9a1b8a148e76e699aac948cd67678ef11d2460c76cff861`, versionCode 3 / versionName 1.0.
+
+**Left / debt.** HARDWARE-UNPROVEN: every live control; RESTRICTED_TLS on real firmware; bridge-resource probe field shape; real SSE framing; per-lamp effects_v2/timed/gradient; H12-C effect cadence (deny set still empty). LOW debt: SetupViewModel's composition-root exemption in `ArchitectureBoundaryTest` (inject the workflow later); reducer JSON parse on Main (B-13); Charles's uncommitted mini-batch on `lane/alcc-core` (B-17 MEDIUM: unbounded reload chain on a very chatty bridge — one follow-up GET per Data frame; B-18 LOW: cache clear may be cancelled on last-bridge Forget; BridgeRejected could settle as AMBIGUOUS for extra conservatism; three shell files not yet in the boundary-guard scan set) — integrate as a follow-up PR after the hardware round. Signaling stays decode-only. Pair-another-bridge UI, dynamic-scene activation UI, scene authoring remain out of scope.
+
+**Gotchas.** JDK is keg-only `openjdk@21` (`JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home`). `.gitignore` had an unanchored `ChromaGlow/` rule that hid the Android package dirs (fixed, anchored). `assertDoesNotExist` is a member, not an importable extension. Value-class parameters need Kotlin reflection in contract tests. KDoc cannot contain `/**`-shaped globs.
 
 ---
 
