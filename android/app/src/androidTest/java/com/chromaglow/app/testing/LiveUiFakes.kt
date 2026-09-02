@@ -25,6 +25,9 @@ import com.chromaglow.app.core.session.HomeSnapshot
 import com.chromaglow.app.core.session.LightState
 import com.chromaglow.app.core.session.LiveHome
 import com.chromaglow.app.core.session.LiveMutation
+import com.chromaglow.app.core.session.MutationEvent
+import com.chromaglow.app.core.session.MutationEvents
+import kotlinx.coroutines.flow.MutableSharedFlow
 import com.chromaglow.app.core.session.MutationOutcome
 import com.chromaglow.app.core.session.MutationToken
 import com.chromaglow.app.core.session.RefreshReason
@@ -219,6 +222,13 @@ class FakeBridgeSession(
 
 class FakeLiveHome(initial: HomeSnapshot = HomeSnapshot(emptyMap(), emptyMap())) : LiveHome {
     override val home = MutableStateFlow(initial)
+    override val mutationEvents: MutableSharedFlow<MutationEvent> = MutationEvents.sink()
+    override val bridgeNames = MutableStateFlow<Map<BridgeId, String>>(emptyMap())
+
+    /** Test seam: publish an event as the coordinator would. */
+    fun emitEvent(event: MutationEvent) { check(mutationEvents.tryEmit(event)) }
+
+    fun name(bridge: BridgeId, name: String) { bridgeNames.value = bridgeNames.value + (bridge to name) }
     val sessions = mutableMapOf<BridgeId, FakeBridgeSession>()
     val refreshes = mutableListOf<RefreshReason>()
     val submitted = mutableListOf<LiveMutation>()

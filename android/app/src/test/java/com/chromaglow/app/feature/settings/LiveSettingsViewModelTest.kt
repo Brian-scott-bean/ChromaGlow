@@ -92,4 +92,14 @@ class LiveSettingsViewModelTest {
         assertTrue(s.bridges.isEmpty())
         assertNull(s.confirmingForget)
     }
+
+    @Test
+    fun bridgeNames_labelRows_idStillShownSeparately() {
+        val home = FakeLiveHome(homeOf(snapshot(bridge = BRIDGE_A) to ConnectionState.Connected))
+        home.name(BRIDGE_A, "Kitchen Bridge")
+        val s = LiveSettingsViewModel(home, shell, appVersion = "1.0", clock = { 0L }).uiState.value
+        assertEquals("Kitchen Bridge", s.bridges.single().label)
+        assertEquals("Kitchen Bridge", s.bridges.single().row.bridgeLabel)
+        assertEquals(BRIDGE_A, s.bridges.single().bridgeId)
+    }
 }
