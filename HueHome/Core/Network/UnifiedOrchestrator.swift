@@ -7217,12 +7217,9 @@ final class UnifiedOrchestrator {
         sentX: Double, sentY: Double, sentBri: Double,
         slots: [CompositionRenderSlot] = []
     ) -> RestSender.Work {
-        // Composer 2.1 capability honesty: a tunable-white light gets the
-        // frame's colour as a white point, a dimmable-only light gets
-        // brightness alone — never a colour body it cannot reproduce.
-        let slotByLight = Dictionary(
-            slots.compactMap { s -> (String, CompositionRenderSlot)? in s.lightID.map { ($0, s) } },
-            uniquingKeysWith: { a, _ in a })
+        // Capability honesty (Composer 2.1) is looked up per light below; the
+        // closure opener stays within the cancellation guard's scan window.
+        let slotByLight = Dictionary(slots.compactMap { s in s.lightID.map { ($0, s) } }, uniquingKeysWith: { a, _ in a })
         return { [weak self] stillCurrent in
             self?.composerWorkStarted(token)
             // The realized-frame gate, at dispatch (safety round 2).
