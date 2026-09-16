@@ -1229,6 +1229,9 @@ struct StudioView: View {
 
                 composerCreateHero(visible: visible)
 
+                // Composer 2 lab (experimental): one self-contained card, its own cover.
+                Composer2EntryCard(selectedRoom: vm.selectedRoom)
+
                 if let error = vm.aiGenerationErrorMessage, !error.isEmpty {
                     Text(error)
                         .font(.system(size: 12, weight: .medium))

@@ -113,7 +113,8 @@ enum Composer2Hash {
         parts.reduce(0x1234_5678_9ABC_DEF1) { mix($0, $1) }
     }
 
-    /// Folds the sixteen UUID bytes — process-independent, unlike `hashValue`.
+    /// Folds the sixteen UUID bytes — process-independent, unlike Swift's
+    /// per-process randomized hashing.
     static func seed(from id: UUID) -> UInt64 {
         let u = id.uuid
         var hi: UInt64 = 0
