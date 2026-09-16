@@ -4,13 +4,20 @@
 
 ---
 
-## Current Status Snapshot (updated 2026-09-15)
+## Current Status Snapshot (updated 2026-09-16)
 
 ### Pointers
 - Canonical agent context: `AGENTS.md`. Claude Code entry point: `CLAUDE.md` points there.
 - Live shared handoff: append-only entries in this `DEVLOG.md`. Git is the shared memory between tools.
 
 ### iOS — where we are RIGHT NOW
+- **COMPOSER 2.1 — HARDENING + INTEGRATION PASS ON THE EXPERIMENT BRANCH, BUILD 54, NOT MERGED (2026-09-16).**
+  Branch `experiment/composer-2-dream-studio-v2.1` (from the v2.0 prototype `fe7ee82`; rollback tag
+  `checkpoint/pre-composer2-v2.1`; pushed to origin for phone testing only). Exact render-slot identity from the
+  orchestrator at both start paths, Dashboard/Now Playing Stop that stops the real Composer 2 transport, attended
+  takeover through the orchestrator, capability-honest per-light sends, saved looks on the Studio card, measured
+  performance, stability/recovery suite, P2 polish. Guards green, 13 Composer 2 suites green, full suite green,
+  **hardware NOT verified**. Entry below; record in `docs/ios/composer2-dream-studio/README.md`.
 - **COMPOSER 2 "DREAM STUDIO" PROTOTYPE — ISOLATED EXPERIMENT BRANCH, NOT MERGED (2026-09-15).** Branch
   `experiment/composer-2-dream-studio` (base `main` @ `c2368c8`, rollback tag `checkpoint/pre-composer2-dream-studio`).
   A one-shot product prototype of the creative lighting instrument: universal layer model + seeded pure engine +
@@ -673,6 +680,78 @@
 ### Gotchas
 - ...
 ```
+
+---
+
+## 2026-09-16 - [Claude] Composer 2.1 — hardening + integration pass on the isolated experiment branch (build 54)
+
+**Branch:** `experiment/composer-2-dream-studio-v2.1` (base = the verified v2.0 prototype `fe7ee82` on
+`experiment/composer-2-dream-studio`, itself off `main` @ `c2368c8`). **Isolated experiment — no PR, no merge, `main`
+untouched. Pushed to `origin/experiment/composer-2-dream-studio-v2.1` for phone testing only.**
+**Rollback:** tag `checkpoint/pre-composer2-v2.1` at `fe7ee82`.
+**Record:** `docs/ios/composer2-dream-studio/README.md` § "v2.1" (+ new renders in `screenshots/`).
+
+### Did (by the brief's numbering)
+- **P0.1 Exact render slots.** New `CompositionRenderSlot` (bridge id, light id, DTLS channel id, segment k/n, real
+  position, capability, white range) on `CompositionParamBox.renderSlots`. `UnifiedOrchestrator.startCompositionMode`
+  publishes it at BOTH branches — streaming (one slot per channel in plan order, membership → light id) and Room mode
+  (resolver order, gradient strips expanded from `GradientChannelMap`; segments share the light's Entertainment position,
+  none is invented). `Composer2LiveOutput` adopts the slots (geometry from real positions, identity for light-id masks),
+  the hero relabels from them ("TV Strip · 2/2", white-only marks), count mismatch still falls through.
+- **P0.2 Dashboard / Now Playing Stop.** `UnifiedOrchestrator.composer2StopHandler` (consulted BEFORE
+  `studioStopHandler` in both exact and room-only stop overloads; returns true only when Composer 2 owned the target).
+  The gateway publishes a `composer2` Now Playing row on start and retires it on stop/ended; the center's
+  `stopIfOwning(bridgeID:roomID:)` is the one authoritative owner — repeated Stop is a no-op, a Studio replacement is
+  never stopped by us.
+- **P0.3 Apply lifecycle truth.** Nothing about playback persists; cold launch = idle, no claim, no auto-start (tested);
+  saved compositions remain.
+- **P0.4 Stability.** One serialized operation chain in `Composer2PlaybackCenter` (rapid Live/Stop, room switch while
+  starting), screen attach/detach (an audition nobody is watching is stopped on arrival), scene-phase-aware heartbeat
+  (silence while inactive is expected; re-armed on return), `ended` retires the row but never unbinds/stops a runtime it
+  no longer owns. Corrupt/truncated/huge/empty stores load as empty, never rewrite the file; the store now creates its
+  folder.
+- **P1.5 Attended takeover.** `UnifiedOrchestrator.startCompositionModeAttended(room:paramBox:preferEntertainment:askTakeover:)`
+  runs the orchestrator's own preflight → prompt → `resolveForeignTakeover` (the guarded API stays in the orchestrator
+  file; Guard 11(c) untouched). Composer 2 shows the standard consent alert; "Keep existing" ⇒ "Kept the other app's
+  show. Nothing was changed." (new `EntertainmentConsentCopy.takeoverDeclined`).
+- **P1.6 Capability honesty.** `makeComposerPerLightWork` sends per slot capability: colour → xy; tunable white →
+  `mirek` inside the light's own range; dimmable → brightness only. Layout slots carry capability; the hero shows a
+  dashed ring + "N lights show brightness only".
+- **P1.7 Studio integration.** Saved Composer 2 looks are one-tap looks on the Studio card (tap = applied playback via
+  the same center; context menu Open / Rename / Delete). Siri NOT wired: the App Shortcuts registry is at its
+  10-shortcut cap — adding one would evict an existing shortcut.
+- **P1.8 Performance** measured (`Composer2LabPerformanceTests`, attachments in the xcresult): engine (6 layers × 100 slots, events + masks + audio, 25 fps): **1.13 ms/frame, worst 1.24 ms** (budget 40 ms); seam path `CompositionEngine.render` with exact slots: 0.51 ms/frame; preview feed at 20 fps: 0.55 ms/frame; `Composer2SlotLayout.resolved` for 100 slots: 0.16 ms; event-heavy minute early vs late: 1.12 vs 1.13 ms/frame (no accumulation). iPhone 17 Pro simulator, Debug.
+- **P1.9 Gradient identity** — k/n + channel id per segment; Room-mode fanning is display-only and labelled estimated.
+- **P2:** drag-to-reorder behaviors (Expert; up/down kept), harmony presets in the Palette editor via `HarmonyEngine`,
+  Collapse all / Expand all (Advanced), Save (owned) vs Save as new…, legacy-preset import sheet (Quick mode),
+  non-destructive Quick Energy (master energy/variation only; "Exact / Calm / As authored / Lively / Wild"),
+  audio brightness "Adding light" (punch, default) vs "Dimming when quiet" (legacy imports keep the legacy mode),
+  accessibility-size renders, VoiceOver labels/hints on every new control.
+
+### Validation
+- `xcodebuild … generic/platform=iOS build`: BUILD SUCCEEDED.
+- `./Scripts/hardening_guards.sh`: all guards passed.
+- Composer 2 suites (13): **170 tests / 0 failures** (Primitive 23 · Layer 16 · Event 17 · Engine 16 · Persistence 10 · Preset 8 · Lifecycle 16 · Guard 9 · Snapshot 15 · Slot 10 · Integration 7 · Recovery 19 · Performance 4), plus HueTokensTests and PresetCatalogTests in the same run: 202/202.
+- Full registered suite: **2245 passed / 0 failed / 0 skipped** (`xcresulttool` summary; the first full run was 2244/2245 — the one failure was the cancellation-guard scan window, fixed in `e6d06a5` and rerun green) (`-maximum-parallel-testing-workers 2`).
+- Build 54 installed on Brian's iPhone over the existing build 53 (no delete; data preserved) — `xcrun devicectl device install app` succeeded; `devicectl device info apps --bundle-id com.huehome.pro` reports ChromaGlow 1.0.0 / Bundle Version 54.
+- **Hardware: NOT verified.** Exact slot labels against a real area, Dashboard Stop against a real transport, the
+  takeover prompt against a real controller, tunable-white/dimmable sends, mic layers live — all unproven.
+
+### Left / limitations
+- Applied playback ends when ChromaGlow quits (by design; nothing persists). No Siri entity for Composer 2 looks.
+- Every Stop leaves the lights at their last frame (does not turn the room off); Studio's own looks still do.
+- Room-mode segments share one real position; on screen they are fanned apart and marked estimated.
+
+### Gotchas
+- `Composer2LabGuardTests` now allows `addActiveEffect(`/`removeActiveEffect(`/`composer2StopHandler` ONLY in
+  `Composer2LiveGateway.swift`; `UnifiedOrchestrator.swift` joins the allowed "existing files touched" list.
+- v2.0 lifecycle tests start auditions with a screen attached now (`center()` helper) — an audition without a viewer is
+  stopped on arrival by design.
+- `LightDisplayItem.supportsColorTemp` means `mirekMin != mirekMax`; a dimmable fixture must use an empty range.
+- `MultiBridgeRoutingTests.testEveryEnqueuedClosureIsCooperativelyCancellable` finds each `-> RestSender.Work {`
+  factory by scanning at most SIX lines to its `{ … in` opener. Anything computed before the `return {` in
+  `makeComposerPerLightWork` must stay within that window (the first v2.1 cut pushed it to eight lines and the guard
+  silently lost the flat batch loop — caught by the full suite, fixed in its own commit).
 
 ---
 
