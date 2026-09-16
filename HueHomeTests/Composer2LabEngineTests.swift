@@ -78,7 +78,8 @@ final class Composer2LabEngineTests: XCTestCase {
                                    name: "Reactive", color: .solid(Composer2XY(x: 0.5, y: 0.4)),
                                    motion: Composer2Motion(kind: .flow, periodSeconds: 6),
                                    rhythm: Composer2Rhythm(shape: .steady))
-        layer.audio = Composer2AudioModulation(source: .amplitude, sensitivity: 0.8, threshold: 0,
+        layer.audio = Composer2AudioModulation(source: .amplitude, brightnessMode: .dimWhenQuiet,
+                                               sensitivity: 0.8, threshold: 0,
                                                smoothing: 0, intensity: 1,
                                                targets: [.brightness, .motionSpeed, .eventProbability])
         layer.events = Composer2EventSpec(timing: .random, minDelay: 1, maxDelay: 2, probability: 0.2,
@@ -104,6 +105,19 @@ final class Composer2LabEngineTests: XCTestCase {
         }
         XCTAssertEqual(a.layers[0].events?.schedule, b.layers[0].events?.schedule)
         XCTAssertEqual(a.layers[0].events?.opportunityIndex, b.layers[0].events?.opportunityIndex)
+    }
+
+    func testPunchModeAddsLightOnSoundAndLeavesQuietUntouched() {
+        var c = reactiveComposition
+        c.layers[0].audio.brightnessMode = .punch
+        c.layers[0].rhythm = Composer2Rhythm(shape: .steady, maxBrightness: 0.4)
+        var loud = AudioFeatures.silent
+        loud.level = 0.9
+        let quiet = sequence(c, slots: 3, frames: 40)
+        let driven = sequence(c, slots: 3, frames: 40, audio: loud)
+        XCTAssertEqual(quiet[30][0].brightness, 0.4, accuracy: 1e-9, "quiet keeps the authored level")
+        XCTAssertGreaterThan(driven[30][0].brightness, 0.6, "sound adds light")
+        XCTAssertLessThanOrEqual(driven[30][0].brightness, 1)
     }
 
     func testSlotCountChangeMidRunKeepsCountsAndFinite() {

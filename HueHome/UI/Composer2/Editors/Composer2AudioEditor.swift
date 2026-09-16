@@ -39,6 +39,12 @@ struct Composer2AudioEditorContent: View {
                 }
                 Composer2EditorSection(title: "What it changes") {
                     targetToggle("Brightness", .brightness)
+                    if audio.targets.contains(.brightness) {
+                        Composer2ChipRow(title: "Brightness responds by", options: [
+                            ("Adding light", Composer2AudioModulation.BrightnessMode.punch, "plus.circle"),
+                            ("Dimming when quiet", .dimWhenQuiet, "moon")
+                        ], selection: document.layerBinding(\.audio.brightnessMode))
+                    }
                     targetToggle("Colour position", .palettePosition)
                     targetToggle("Motion speed", .motionSpeed)
                     targetToggle("Event chance", .eventProbability)

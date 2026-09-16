@@ -26,6 +26,20 @@ struct Composer2ExpertStack: View {
                 Composer2BehaviorRow(document: document, layer: layer, index: index,
                                      total: document.composition.layers.count,
                                      onRefused: { notice = $0 })
+                    .draggable(layer.id.uuidString)
+                    .dropDestination(for: String.self) { items, _ in
+                        guard let raw = items.first, let dragged = UUID(uuidString: raw), dragged != layer.id else { return false }
+                        HapticManager.shared.selection()
+                        withAnimation(reduceMotion ? nil : HueAnimation.fast) {
+                            document.moveLayer(id: dragged, onto: layer.id)
+                        }
+                        return true
+                    }
+            }
+            if document.composition.layers.count > 1 {
+                Text(Composer2Copy.dragToReorder)
+                    .font(HueFont.stageStatus)
+                    .foregroundStyle(Composer2Theme.muted)
             }
             addMenu
             if let notice {

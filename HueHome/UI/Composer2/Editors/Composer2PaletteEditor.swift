@@ -23,6 +23,28 @@ struct Composer2PaletteEditorContent: View {
                     presets
                 }
             }
+            Composer2EditorSection(title: "Harmony", subtitle: "Build a set of colours from the selected one.") {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(HarmonyRule.allCases.filter { $0 != .none }) { rule in
+                            Button {
+                                applyHarmony(rule)
+                            } label: {
+                                Label(Self.harmonyName(rule), systemImage: rule.icon)
+                                    .font(HueFont.stageChip)
+                                    .foregroundStyle(Composer2Theme.ink)
+                                    .padding(.horizontal, 12)
+                                    .frame(minHeight: 36)
+                                    .background(Capsule().fill(Color.white.opacity(0.08)))
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("\(Self.harmonyName(rule)) harmony")
+                            .accessibilityHint("Replaces the colours with a \(Self.harmonyName(rule).lowercased()) set around colour \(selectedStop + 1)")
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
             Composer2EditorSection(title: "Blend") {
                 Composer2ChipRow(title: "Between colours", options: [
                     ("Hue blend", Composer2ColorSource.Interpolation.hueArc, "circle.lefthalf.filled"),
@@ -139,6 +161,44 @@ struct Composer2PaletteEditorContent: View {
         next.remove(at: selectedStop)
         document.editSelectedLayer { $0.color.stops = next }
         selectedStop = max(0, min(selectedStop, next.count - 1))
+    }
+
+    // MARK: Harmony
+
+    static func harmonyName(_ rule: HarmonyRule) -> String {
+        switch rule {
+        case .none: return "Single"
+        case .complementary: return "Complementary"
+        case .triadic: return "Triad"
+        case .analogous: return "Analogous"
+        case .splitComplementary: return "Split"
+        case .tetradic: return "Square"
+        case .monochromatic: return "Mono"
+        case .doubleComp: return "Double"
+        }
+    }
+
+    /// Pure: the stops a harmony rule produces around a root colour.
+    static func harmonyStops(rule: HarmonyRule, rootX: Double, rootY: Double) -> [Composer2PaletteStop] {
+        let root = HueColorUtils.hsb(fromX: rootX, y: rootY, brightness: 100)
+        let count = rule == .monochromatic ? 4 : max(2, rule.anchorCount)
+        let colours = HarmonyEngine.palette(rule: rule, rootHue: root.h, saturation: max(0.55, root.s),
+                                            brightness: 1, count: count)
+        return colours.map { colour in
+            let xy = HueColorUtils.xyFrom(hue: colour.hue, saturation: colour.saturation, brightness: 1)
+            let clamped = HueColorUtils.clampXYToGamut(x: xy.x, y: xy.y, gamut: .c)
+            return Composer2PaletteStop(x: clamped.x, y: clamped.y, position: nil)
+        }
+    }
+
+    private func applyHarmony(_ rule: HarmonyRule) {
+        guard selectedStop < stops.count else { return }
+        HapticManager.shared.selection()
+        let root = stops[selectedStop]
+        let next = Self.harmonyStops(rule: rule, rootX: root.x, rootY: root.y)
+        guard !next.isEmpty else { return }
+        document.editSelectedLayer { $0.color.stops = next }
+        selectedStop = 0
     }
 
     // MARK: Pad

@@ -129,7 +129,8 @@ struct Composer2MasterControls: Codable, Equatable {
     var speed: Double = 1
     /// 0…1 quick-mode "energy" (drives the variation preset and event chance).
     var energy: Double = 0.5
-    /// 0…1 global variation scale.
+    /// Global variation scale, 0…2 (1 = as authored). Quick mode's Energy
+    /// drives this so it never rewrites a layer's own variation settings.
     var variation: Double = 1
     var seed: UInt64
 

@@ -28,6 +28,21 @@ struct Composer2AdvancedPanel: View {
             if document.composition.layers.count > 1 {
                 Composer2LayerPicker(document: document)
             }
+            HStack(spacing: 12) {
+                Button(Composer2Copy.collapseAll) {
+                    HapticManager.shared.selection()
+                    withAnimation(reduceMotion ? nil : HueAnimation.fast) { expanded = [] }
+                }
+                Button(Composer2Copy.expandAll) {
+                    HapticManager.shared.selection()
+                    withAnimation(reduceMotion ? nil : HueAnimation.fast) { expanded = Set(order.map(\.0)) }
+                }
+                Spacer(minLength: 0)
+            }
+            .font(HueFont.stageChip)
+            .foregroundStyle(Composer2Theme.cyan)
+            .buttonStyle(.plain)
+            .frame(minHeight: 32)
             ForEach(order, id: \.0) { editor, title in
                 section(editor, title: title)
             }

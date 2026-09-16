@@ -52,7 +52,16 @@ struct Composer2AudioModulation: Codable, Equatable {
         case eventProbability = "event_probability"
     }
 
+    /// How a brightness target responds: `punch` adds light on sound (the
+    /// look stays as authored when quiet); `dimWhenQuiet` is the legacy
+    /// Composer rule that dims to (1 − intensity) in silence.
+    enum BrightnessMode: String, Codable, CaseIterable {
+        case punch
+        case dimWhenQuiet = "dim_when_quiet"
+    }
+
     var source: Source = .off
+    var brightnessMode: BrightnessMode = .punch
     var sensitivity: Double = 0.7
     /// Noise gate 0…1.
     var threshold: Double = 0.1
@@ -66,10 +75,12 @@ struct Composer2AudioModulation: Codable, Equatable {
     var punchDecay: Double = 0.4
     var triggerEventsOnOnset: Bool = false
 
-    init(source: Source = .off, sensitivity: Double = 0.7, threshold: Double = 0.1, smoothing: Double = 0.3,
+    init(source: Source = .off, brightnessMode: BrightnessMode = .punch, sensitivity: Double = 0.7,
+         threshold: Double = 0.1, smoothing: Double = 0.3,
          intensity: Double = 0.7, targets: Set<Target> = [.brightness], quantizeBeats: Double = 1,
          paletteStep: Double = 0.25, punchDecay: Double = 0.4, triggerEventsOnOnset: Bool = false) {
         self.source = source
+        self.brightnessMode = brightnessMode
         self.sensitivity = sensitivity
         self.threshold = threshold
         self.smoothing = smoothing
@@ -82,13 +93,14 @@ struct Composer2AudioModulation: Codable, Equatable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case source, sensitivity, threshold, smoothing, intensity, targets, quantizeBeats, paletteStep, punchDecay, triggerEventsOnOnset
+        case source, brightnessMode, sensitivity, threshold, smoothing, intensity, targets, quantizeBeats, paletteStep, punchDecay, triggerEventsOnOnset
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = Composer2AudioModulation()
         source = (try? c.decode(Source.self, forKey: .source)) ?? d.source
+        brightnessMode = (try? c.decode(BrightnessMode.self, forKey: .brightnessMode)) ?? d.brightnessMode
         sensitivity = (try? c.decode(Double.self, forKey: .sensitivity)) ?? d.sensitivity
         threshold = (try? c.decode(Double.self, forKey: .threshold)) ?? d.threshold
         smoothing = (try? c.decode(Double.self, forKey: .smoothing)) ?? d.smoothing
@@ -107,6 +119,7 @@ struct Composer2AudioModulation: Codable, Equatable {
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(source, forKey: .source)
+        try c.encode(brightnessMode, forKey: .brightnessMode)
         try c.encode(sensitivity, forKey: .sensitivity)
         try c.encode(threshold, forKey: .threshold)
         try c.encode(smoothing, forKey: .smoothing)
@@ -162,11 +175,18 @@ struct Composer2AudioModulation: Codable, Equatable {
         return Composer2Math.clamp01(gated * (0.5 + Composer2Math.clamp01(sensitivity) * 1.5))
     }
 
-    /// Multiplier on brightness: quiet dims toward (1 − intensity), loud restores full.
+    /// Multiplier on brightness (legacy `dimWhenQuiet` only): quiet dims
+    /// toward (1 − intensity), loud restores full. `punch` returns 1.
     func brightnessScale(drive: Double) -> Double {
-        guard targets.contains(.brightness), isActive else { return 1 }
+        guard targets.contains(.brightness), isActive, brightnessMode == .dimWhenQuiet else { return 1 }
         let k = Composer2Math.clamp01(intensity)
         return Composer2Math.clamp01(1 - k * (1 - Composer2Math.clamp01(drive)))
+    }
+
+    /// Additive brightness on sound (`punch` only): 0…1 share of the headroom to add.
+    func punch(drive: Double) -> Double {
+        guard targets.contains(.brightness), isActive, brightnessMode == .punch else { return 0 }
+        return Composer2Math.clamp01(drive) * Composer2Math.clamp01(intensity)
     }
 
     func speedMultiplier(drive: Double) -> Double {

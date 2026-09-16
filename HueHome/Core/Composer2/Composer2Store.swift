@@ -124,6 +124,7 @@ final class Composer2Store {
         encoder.outputFormatting = [.sortedKeys, .prettyPrinted]
         let envelope = FileEnvelope(schema: FileEnvelope.currentSchema, compositions: compositions)
         guard let data = try? encoder.encode(envelope) else { return }
+        try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? data.write(to: fileURL, options: [.atomic])
     }
 }

@@ -91,7 +91,7 @@ struct Composer2LayerPlan: Equatable {
         let eventSeed = Composer2Engine.eventSeed(layerSeed: layerSeed, spec: events)
         let n = geometry.count
         var variation = layer.variation
-        variation.amount = Composer2Math.clamp01(variation.amount * Composer2Math.clamp01(composition.master.variation))
+        variation.amount = Composer2Math.clamp01(variation.amount * Composer2Math.clamp(composition.master.variation, 0, 2))
         let axis = geometry.projection(kind: layer.motion.axisKind, angleDegrees: layer.motion.angleDegrees)
         let crossKind: Composer2Motion.AxisKind = layer.motion.axisKind == .angle ? .angle : .principal
         let crossAngle = (layer.motion.axisKind == .angle ? layer.motion.angleDegrees : geometry.principalAngleDegrees) + 90
@@ -258,6 +258,7 @@ enum Composer2Engine {
             }
 
             let brightnessScale = mod.brightnessScale(drive: drive)
+            let punch = mod.punch(drive: drive)
             let evolving = layer.variation.evolveRate > 0
             let coverageBase = Composer2Math.clamp01(layer.opacity)
             let modulatesBrightness = eventSpec?.modulates.contains(.brightness) ?? false
@@ -308,6 +309,7 @@ enum Composer2Engine {
                 }
                 var bri = rhythm.value(cyclePhase: cyclePhase + jitter.phase, time: time, slot: i, seed: plan.layerSeed)
                 bri *= sample.weight * brightnessScale * (1 - jitter.brightness)
+                if punch > 0 { bri += (1 - bri) * punch }
 
                 if e > 0 {
                     if modulatesBrightness { bri += (1 - bri) * e }

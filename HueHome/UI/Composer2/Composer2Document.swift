@@ -185,6 +185,33 @@ final class Composer2Document {
         edit { $0.layers.swapAt(index, target) }
     }
 
+    /// Drag-and-drop reorder: put `id` where `targetID` sits.
+    func moveLayer(id: UUID, onto targetID: UUID) {
+        guard id != targetID,
+              let from = composition.layers.firstIndex(where: { $0.id == id }),
+              let to = composition.layers.firstIndex(where: { $0.id == targetID }) else { return }
+        edit { composition in
+            let layer = composition.layers.remove(at: from)
+            composition.layers.insert(layer, at: to)
+        }
+    }
+
+    /// True when the document came from a composition the user owns (so
+    /// Save can overwrite it); built-ins and imports always save as new.
+    var isSourceUserOwned: Bool {
+        guard let sourceID else { return false }
+        return Composer2Store.shared.compositions.contains { $0.id == sourceID }
+    }
+
+    /// Bring a legacy Composer preset in as one behavior (non-destructive).
+    func importLegacy(_ preset: CompositionPreset, now: Date = Date()) {
+        var imported = Composer2LegacyImport.composition(from: preset, now: now)
+        imported.target = composition.target
+        load(imported, asSource: false)
+        sourceID = nil
+        isDirty = true   // an import is unsaved work until the user saves it
+    }
+
     func setLayer(id: UUID, enabled: Bool) {
         editLayer(id: id) { $0.enabled = enabled }
     }

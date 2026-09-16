@@ -152,6 +152,7 @@ enum Composer2LegacyImport {
 
     static func audio(from reaction: ReactionConfig) -> Composer2AudioModulation {
         var a = Composer2AudioModulation()
+        a.brightnessMode = .dimWhenQuiet   // the legacy Composer rule, preserved on import
         switch reaction.source {
         case .none: a.source = .off
         case .micAmplitude: a.source = .amplitude

@@ -9,11 +9,25 @@ import SwiftUI
 
 struct Composer2QuickPanel: View {
     let document: Composer2Document
+    var onImport: () -> Void = {}
     private let store = Composer2Store.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: HueSpacing.lg) {
-            section("Mood") { moodChips }
+            section("Mood") {
+                moodChips
+                Button {
+                    HapticManager.shared.light()
+                    onImport()
+                } label: {
+                    Label(Composer2Copy.importLegacyTitle, systemImage: "square.and.arrow.down")
+                        .font(HueFont.stageChip)
+                        .foregroundStyle(Composer2Theme.cyan)
+                        .frame(minHeight: 36)
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint(Composer2Copy.importLegacyHint)
+            }
             section("Colours") { colourRow }
             section("Feel") { sliders }
         }
@@ -111,7 +125,7 @@ struct Composer2QuickPanel: View {
                         format: { Composer2QuickMapping.speedLabel(slider: $0) },
                         onEditingChanged: { _ in Composer2PlaybackCenter.shared.noteEditBurst() })
             StageSlider(title: "Energy", value: energyBinding, range: 0...1,
-                        format: { Composer2Copy.presetName(Composer2QuickMapping.variationPreset(forEnergy: $0)) },
+                        format: { Composer2QuickMapping.energyWord($0) },
                         onEditingChanged: { _ in Composer2PlaybackCenter.shared.noteEditBurst() })
         }
     }
@@ -166,14 +180,23 @@ enum Composer2QuickMapping {
         }
     }
 
-    /// Energy sets the master value and re-seeds every layer's variation
-    /// preset (seeds are kept so the look stays reproducible).
+    /// Energy scales the composition's variation (0 = exact, 0.5 = as
+    /// authored, 1 = doubled) without rewriting any layer's own settings —
+    /// Advanced and Expert edits survive a Quick-mode drag.
     static func apply(energy: Double, to composition: inout Composer2Composition) {
-        composition.master.energy = Composer2Math.clamp01(energy)
-        let preset = variationPreset(forEnergy: energy).value
-        for i in composition.layers.indices {
-            let seed = composition.layers[i].variation.seed
-            composition.layers[i].variation = preset.withSeed(seed)
+        let e = Composer2Math.clamp01(energy)
+        composition.master.energy = e
+        composition.master.variation = e * 2
+    }
+
+    /// The word shown for an energy value.
+    static func energyWord(_ energy: Double) -> String {
+        switch Composer2Math.clamp01(energy) {
+        case ..<0.1: return "Exact"
+        case ..<0.35: return "Calm"
+        case ..<0.65: return "As authored"
+        case ..<0.9: return "Lively"
+        default: return "Wild"
         }
     }
 }

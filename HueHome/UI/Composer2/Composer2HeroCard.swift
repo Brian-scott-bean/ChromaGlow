@@ -65,6 +65,9 @@ struct Composer2HeroCard: View {
                     badge(mode == .streaming ? TransportVocabulary.streamingSubtitle : TransportVocabulary.roomModeSubtitle,
                           symbol: mode == .streaming ? "dot.radiowaves.left.and.right" : "house")
                 }
+                if document.roomContext.layout.whiteOnlyCount > 0 {
+                    badge(Composer2Copy.whiteOnlyNote(document.roomContext.layout.whiteOnlyCount), symbol: "lightbulb")
+                }
                 Spacer(minLength: 0)
             }
         }
@@ -174,6 +177,13 @@ enum Composer2HeroPainter {
                 let sr = r * 0.28
                 ctx.fill(Path(ellipseIn: CGRect(x: px - r * 0.35 - sr, y: py - r * 0.35 - sr, width: sr * 2, height: sr * 2)),
                          with: .color(Color.white.opacity((brightness - 0.6) * 1.8 * dim)))
+            }
+            if !slot.isColour {
+                // A light that follows brightness only: a quiet dashed ring says so.
+                let wr = r * 1.25
+                ctx.stroke(Path(ellipseIn: CGRect(x: px - wr, y: py - wr, width: wr * 2, height: wr * 2)),
+                           with: .color(Color.white.opacity(0.45 * dim)),
+                           style: StrokeStyle(lineWidth: 1, dash: [2, 3]))
             }
             if selected.contains(slot.index) {
                 let ring = r * 1.45
