@@ -155,8 +155,29 @@ enum Composer2Copy {
     static let micWaiting = "waiting for sound"
 
     static let saved = "Saved"
-    static let applied = "Applied — keeps playing after you leave."
-    static let auditionHint = "Live stops when you leave. Apply keeps it playing."
+    static let applied = "Applied — keeps playing after you leave, while ChromaGlow stays open."
+    static let appliedDetail = "Stops when ChromaGlow quits."
+    static let auditionHint = "Live stops when you leave. Apply keeps it playing while the app is open."
+    static let takeoverWaiting = "Waiting for your answer…"
+    static let takeoverDeclined = "Kept the other app's show. Nothing was changed."
+    static let savedLooksTitle = "Your Composer 2 looks"
+    static let openInComposer2 = "Open in Composer 2"
+    static let saveOverwrite = "Save"
+    static let saveAsNew = "Save as new…"
+    static let importLegacyTitle = "Import from Composer"
+    static let importLegacyHint = "Brings an existing Composer look in as one behavior. The original stays as it is."
+    static let importNothing = "No Composer looks to import yet."
+    static let collapseAll = "Collapse all"
+    static let expandAll = "Expand all"
+    static let dragToReorder = "Drag a behavior to reorder"
+
+    static func whiteOnlyNote(_ n: Int) -> String {
+        n == 1 ? "1 light shows brightness only" : "\(n) lights show brightness only"
+    }
+
+    static func playIn(room: String) -> String {
+        "Play in \(room)"
+    }
 
     static func lights(_ n: Int) -> String {
         n == 1 ? "1 light" : "\(n) lights"

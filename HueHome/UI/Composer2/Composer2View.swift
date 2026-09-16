@@ -19,7 +19,9 @@ struct Composer2View: View {
     @State private var output: Composer2LiveOutput
     @State private var feed: Composer2PreviewFeed
     @State private var previewOn = true
-    @State private var showSaveAlert = false
+    @State private var showSaveChoice = false
+    @State private var showSaveAsAlert = false
+    @State private var showImport = false
     @State private var saveName = ""
     @State private var localNotice: String?
     @State private var gateway: Composer2OrchestratorGateway?
@@ -27,18 +29,21 @@ struct Composer2View: View {
 
     private let center = Composer2PlaybackCenter.shared
 
-    init(room: RoomDisplayItem?) {
+    /// - Parameters:
+    ///   - room: the room Studio had selected.
+    ///   - composition: open this saved composition instead of the retained
+    ///     or default one (the entry card's "Open in Composer 2").
+    init(room: RoomDisplayItem?, composition: Composer2Composition? = nil) {
         self.initialRoom = room
         let center = Composer2PlaybackCenter.shared
-        if let retained = center.retainedDocument(for: room?.id), let liveOutput = center.output {
+        if composition == nil, let retained = center.retainedDocument(for: room?.id), let liveOutput = center.output {
             _document = State(initialValue: retained)
             _output = State(initialValue: liveOutput)
             _feed = State(initialValue: Composer2PreviewFeed(output: liveOutput))
         } else {
-            let composition = Composer2PresetLibrary.auroraDrift
-            let doc = Composer2Document(composition: composition,
-                                        roomContext: Composer2RoomContext(room: room))
-            let out = Composer2LiveOutput(composition: composition)
+            let seed = composition ?? Composer2PresetLibrary.auroraDrift
+            let doc = Composer2Document(composition: seed, roomContext: Composer2RoomContext(room: room))
+            let out = Composer2LiveOutput(composition: seed)
             _document = State(initialValue: doc)
             _output = State(initialValue: out)
             _feed = State(initialValue: Composer2PreviewFeed(output: out))
@@ -59,7 +64,7 @@ struct Composer2View: View {
                                       onTapLights: { document.activeEditor = .space })
                     Composer2TitleBlock(document: document)
                     Composer2ModeSelector(selection: $doc.mode)
-                    Composer2ModeContent(document: document, feed: feed)
+                    Composer2ModeContent(document: document, feed: feed, onImport: { showImport = true })
                     Color.clear.frame(height: HueSpacing.xxl)
                 }
                 .padding(.horizontal, HueSpacing.screenH)
@@ -83,14 +88,34 @@ struct Composer2View: View {
             Composer2EditorSheet(document: document, editor: editor, feed: feed)
                 .environment(orchestrator)
         }
-        .alert("Save composition", isPresented: $showSaveAlert) {
-            TextField("Name", text: $saveName)
-            Button("Save") { save() }
+        .sheet(isPresented: $showImport) {
+            Composer2ImportSheet(document: document)
+        }
+        .confirmationDialog("Save composition", isPresented: $showSaveChoice, titleVisibility: .visible) {
+            Button(Composer2Copy.saveOverwrite) { saveOverwrite() }
+            Button(Composer2Copy.saveAsNew) { promptSaveAsNew() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Saved compositions appear in Quick mode and stay separate from your Composer cards.")
+            Text("Save replaces \"\(document.composition.name)\". Save as new keeps both.")
+        }
+        .alert("Save as new", isPresented: $showSaveAsAlert) {
+            TextField("Name", text: $saveName)
+            Button("Save") { saveAsNew() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Saved compositions appear in Quick mode and on the Studio card, separate from your Composer looks.")
+        }
+        .alert(EntertainmentConsentCopy.takeoverTitle, isPresented: Binding(
+            get: { center.takeoverPending },
+            set: { if !$0 { center.answerTakeover(false) } })) {
+            Button(EntertainmentConsentCopy.keepExisting, role: .cancel) { center.answerTakeover(false) }
+            Button(EntertainmentConsentCopy.takeOver) {
+                HapticManager.shared.light()
+                center.answerTakeover(true)
+            }
         }
         .task { await prepare() }
+        .onAppear { center.attachScreen() }
         .onChange(of: previewOn) { _, _ in updateMicLease() }
         .onChange(of: document.usesAudio) { _, _ in updateMicLease() }
         .onChange(of: center.session) { _, _ in updateMicLease() }
@@ -157,6 +182,7 @@ struct Composer2View: View {
 
     private func leave() {
         micLease.release()
+        center.detachScreen()
         if let gw = gateway { center.endAudition(gateway: gw) }
     }
 
@@ -168,7 +194,7 @@ struct Composer2View: View {
     // MARK: Actions
 
     private func toggleLive() {
-        guard let gw = gateway else { return }
+        guard let gw = gateway, !center.isBusy else { return }
         if center.isLive {
             HapticManager.shared.medium()
             Task { await center.stop(gateway: gw) }
@@ -183,7 +209,7 @@ struct Composer2View: View {
     }
 
     private func apply() {
-        guard let gw = gateway else { return }
+        guard let gw = gateway, !center.isBusy else { return }
         HapticManager.shared.medium()
         if center.isLive {
             center.promoteToApplied()
@@ -200,15 +226,30 @@ struct Composer2View: View {
     }
 
     private func promptSave() {
-        saveName = document.composition.name
-        showSaveAlert = true
         HapticManager.shared.light()
+        if document.isSourceUserOwned {
+            showSaveChoice = true
+        } else {
+            promptSaveAsNew()
+        }
     }
 
-    private func save() {
+    private func promptSaveAsNew() {
+        saveName = document.composition.name
+        showSaveAsAlert = true
+    }
+
+    private func saveOverwrite() {
+        let saved = Composer2Store.shared.save(document.composition)
+        document.load(saved, asSource: true)
+        HapticManager.shared.success()
+        withAnimation(reduceMotion ? nil : HueAnimation.fast) { localNotice = "\(Composer2Copy.saved) · \(saved.name)" }
+    }
+
+    private func saveAsNew() {
         let trimmed = saveName.trimmingCharacters(in: .whitespacesAndNewlines)
-        var composition = document.composition
-        if !trimmed.isEmpty { composition.name = trimmed }
+        var composition = document.composition.duplicated(name: trimmed.isEmpty ? document.composition.name : trimmed, at: Date())
+        composition.target = document.composition.target
         let saved = Composer2Store.shared.save(composition)
         document.load(saved, asSource: true)
         HapticManager.shared.success()
@@ -221,17 +262,96 @@ struct Composer2View: View {
 private struct Composer2ModeContent: View {
     let document: Composer2Document
     let feed: Composer2PreviewFeed
+    let onImport: () -> Void
 
     var body: some View {
         switch document.mode {
         case .quick:
-            Composer2QuickPanel(document: document)
+            Composer2QuickPanel(document: document, onImport: onImport)
         case .customize:
             Composer2CustomizeGrid(document: document)
         case .advanced:
             Composer2AdvancedPanel(document: document)
         case .expert:
             Composer2ExpertStack(document: document)
+        }
+    }
+}
+
+// MARK: - Legacy import sheet
+
+struct Composer2ImportSheet: View {
+    let document: Composer2Document
+    @Environment(\.dismiss) private var dismiss
+    @State private var presets: [CompositionPreset] = []
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(Composer2Copy.importLegacyTitle)
+                        .font(HueFont.displaySmall)
+                        .foregroundStyle(Composer2Theme.ink)
+                    Text(Composer2Copy.importLegacyHint)
+                        .font(HueFont.caption)
+                        .foregroundStyle(Composer2Theme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                Button("Done") { dismiss() }
+                    .font(HueFont.bodyMedium)
+                    .foregroundStyle(Composer2Theme.cyan)
+                    .frame(minHeight: 44)
+            }
+            .padding(.horizontal, HueSpacing.screenH)
+            .padding(.top, HueSpacing.lg)
+            .padding(.bottom, HueSpacing.sm)
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: 8) {
+                    if presets.isEmpty {
+                        Text(Composer2Copy.importNothing)
+                            .font(HueFont.body)
+                            .foregroundStyle(Composer2Theme.muted)
+                            .padding(.top, HueSpacing.xl)
+                    }
+                    ForEach(presets) { preset in
+                        Button {
+                            HapticManager.shared.medium()
+                            document.importLegacy(preset)
+                            dismiss()
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: preset.icon)
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundStyle(Composer2Theme.cyan)
+                                    .frame(width: 34, height: 34)
+                                    .background(Circle().fill(Composer2Theme.cyan.opacity(0.12)))
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(preset.name).font(HueFont.bodyMedium).foregroundStyle(Composer2Theme.ink)
+                                    Text(preset.category.rawValue).font(HueFont.stageStatus).foregroundStyle(Composer2Theme.muted)
+                                }
+                                Spacer(minLength: 0)
+                                Image(systemName: "square.and.arrow.down")
+                                    .foregroundStyle(Composer2Theme.muted)
+                            }
+                            .padding(12)
+                            .composer2Glass()
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Import \(preset.name)")
+                    }
+                    Color.clear.frame(height: HueSpacing.xl)
+                }
+                .padding(.horizontal, HueSpacing.screenH)
+            }
+        }
+        .background(Composer2Theme.background.ignoresSafeArea())
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        .presentationBackground(Composer2Theme.background)
+        .preferredColorScheme(.dark)
+        .task {
+            presets = CompositionStore.readPresets(from: CompositionStore.defaultFileURL).presets
         }
     }
 }

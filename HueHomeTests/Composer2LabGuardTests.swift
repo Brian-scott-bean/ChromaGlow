@@ -112,10 +112,17 @@ final class Composer2LabGuardTests: XCTestCase {
 
     func testNoTakeoverQuestionsAskedByTheLab() throws {
         let unattended = ["foreignTakeoverPreflight(", "resolveForeignTakeover(", "resolveStudioHandoff(",
-                          "entertainmentActivity(onBridge:", "studioStopHandler", "addActiveEffect(", "activeEffectEntries"]
+                          "entertainmentActivity(onBridge:", "studioStopHandler", "activeEffectEntries"]
+        // The Now Playing registry is reached only through the gateway adapter.
+        let registryOnlyInGateway = ["addActiveEffect(", "removeActiveEffect(", "composer2StopHandler"]
         for dir in composer2Dirs {
             for file in try swiftFiles(under: dir) {
                 let text = try source(file)
+                if file.lastPathComponent != "Composer2LiveGateway.swift" {
+                    for token in registryOnlyInGateway {
+                        XCTAssertFalse(text.contains(token), "\(file.lastPathComponent) reaches the registry directly: \(token)")
+                    }
+                }
                 for token in unattended where text.contains(token) {
                     XCTFail("\(file.lastPathComponent) reaches into \(token)")
                 }
@@ -144,7 +151,8 @@ final class Composer2LabGuardTests: XCTestCase {
 
     func testTheLabAddsNothingElseToExistingSources() throws {
         // The only pre-existing production files the experiment may touch.
-        let allowed: Set<String> = ["CompositionEngine.swift", "AudioAnalysisEngine.swift", "StudioView.swift"]
+        let allowed: Set<String> = ["CompositionEngine.swift", "AudioAnalysisEngine.swift", "StudioView.swift",
+                                    "UnifiedOrchestrator.swift"]
         for dir in ["HueHome/Core", "HueHome/UI"] {
             for file in try swiftFiles(under: dir) where !file.path.contains("/Composer2/") {
                 let text = try source(file)

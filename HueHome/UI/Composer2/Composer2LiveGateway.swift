@@ -3,8 +3,9 @@
 //
 // The few orchestrator calls the playback center makes, behind a protocol
 // so the lifecycle is testable with a fake. The production adapter reuses
-// the existing composition start/stop, availability and cache accessors —
-// it invents no transport and asks no ownership question of its own.
+// the existing composition start/stop, the attended start (which owns the
+// third-party question), availability, cache accessors and the Now Playing
+// registry — it invents no transport of its own.
 
 import Foundation
 
@@ -29,8 +30,11 @@ enum Composer2PlayMode: Equatable {
 
 enum Composer2StartOutcome: Equatable {
     case started(Composer2PlayMode)
-    /// Another controller owns the lights; nothing was mutated.
+    /// Another controller owns the lights and the user was not asked (a
+    /// controller that appeared mid-start); nothing was mutated.
     case foreignController
+    /// The user chose to keep the other app's show; nothing was mutated.
+    case declined
     case failed(String)
 }
 
@@ -49,9 +53,17 @@ protocol Composer2LiveGateway: AnyObject {
     func lightItems(room: RoomDisplayItem) -> [LightDisplayItem]
     func rooms() -> [RoomDisplayItem]
     func isDemo() -> Bool
-    func start(room: RoomDisplayItem, box: CompositionParamBox, preferStreaming: Bool) async -> Composer2StartOutcome
+    /// Attended start: `askTakeover` is presented as a prompt and answered by a tap.
+    func start(room: RoomDisplayItem, box: CompositionParamBox, preferStreaming: Bool,
+               askTakeover: @escaping @MainActor () async -> Bool) async -> Composer2StartOutcome
     func stop(roomID: String, bridgeID: String?) async
     func isRoomClaimed(roomID: String) -> Bool
+    /// Now Playing registry: the row the Dashboard shows and can stop.
+    func publishNowPlaying(roomID: String, bridgeID: String?, roomName: String,
+                           groupedLightID: String?, compositionName: String)
+    func retireNowPlaying(roomID: String, bridgeID: String?)
+    /// Installs (or clears) the stop route Dashboard taps reach before Studio's.
+    func installStopHandler(_ handler: (@MainActor (_ bridgeID: String?, _ roomID: String) async -> Bool)?)
 }
 
 // MARK: - Production adapter
@@ -109,9 +121,10 @@ final class Composer2OrchestratorGateway: Composer2LiveGateway {
 
     func isDemo() -> Bool { orchestrator.isDemoMode }
 
-    func start(room: RoomDisplayItem, box: CompositionParamBox, preferStreaming: Bool) async -> Composer2StartOutcome {
-        let outcome = await orchestrator.startCompositionMode(
-            room: room, paramBox: box, preferEntertainment: preferStreaming, tier: .runtimeOnly)
+    func start(room: RoomDisplayItem, box: CompositionParamBox, preferStreaming: Bool,
+               askTakeover: @escaping @MainActor () async -> Bool) async -> Composer2StartOutcome {
+        let outcome = await orchestrator.startCompositionModeAttended(
+            room: room, paramBox: box, preferEntertainment: preferStreaming, askTakeover: askTakeover)
         switch outcome {
         case .started(.entertainment):
             return .started(.streaming)
@@ -124,7 +137,7 @@ final class Composer2OrchestratorGateway: Composer2LiveGateway {
         case .needsForeignConsent:
             return .foreignController
         case .failed(let message):
-            return .failed(message)
+            return message == EntertainmentConsentCopy.takeoverDeclined ? .declined : .failed(message)
         }
     }
 
@@ -134,5 +147,31 @@ final class Composer2OrchestratorGateway: Composer2LiveGateway {
 
     func isRoomClaimed(roomID: String) -> Bool {
         orchestrator.compositionTransportByRoom[roomID] != nil
+    }
+
+    func publishNowPlaying(roomID: String, bridgeID: String?, roomName: String,
+                           groupedLightID: String?, compositionName: String) {
+        orchestrator.addActiveEffect(ActiveEffectEntry(
+            liveBridgeID: bridgeID, roomID: roomID, roomName: roomName,
+            groupedLightID: groupedLightID, effectID: "composer2",
+            effectName: compositionName, effectIcon: "sparkles", isAppDriven: true))
+    }
+
+    func retireNowPlaying(roomID: String, bridgeID: String?) {
+        if let bridgeID {
+            orchestrator.removeActiveEffect(bridgeID: bridgeID, roomID: roomID)
+        } else {
+            orchestrator.removeActiveEffect(roomID: roomID)
+        }
+    }
+
+    func installStopHandler(_ handler: (@MainActor (_ bridgeID: String?, _ roomID: String) async -> Bool)?) {
+        if let handler {
+            orchestrator.composer2StopHandler = { target in
+                await handler(target.bridgeID, target.roomID)
+            }
+        } else {
+            orchestrator.composer2StopHandler = nil
+        }
     }
 }

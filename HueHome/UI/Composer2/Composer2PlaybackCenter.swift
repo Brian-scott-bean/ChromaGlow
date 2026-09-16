@@ -1,15 +1,17 @@
 // Composer2PlaybackCenter.swift
 // ChromaGlow — Composer 2 lab (experimental).
 //
-// Owns Composer 2's one live session: start (through the orchestrator's
-// existing composition start), stop, audition-vs-applied, and a heartbeat
-// that notices when something else took the room. Only coarse state is
-// observable; the runtime, the legacy box and the document are runtime
-// plumbing and are never written at frame rate.
+// Owns Composer 2's one live session: attended start through the
+// orchestrator's existing composition path, stop, audition-vs-applied, the
+// Dashboard's Now Playing row and its stop route, and a heartbeat that
+// notices when something else took the room. Every public operation runs
+// on one serial chain, so rapid taps, a room change mid-start or a dismissal
+// while starting cannot interleave. Only coarse state is observable.
 
 import Foundation
 import Observation
 import QuartzCore
+import UIKit
 
 @MainActor
 @Observable
@@ -20,7 +22,9 @@ final class Composer2PlaybackCenter {
         let roomID: String
         let bridgeID: String?
         let roomName: String
+        let groupedLightID: String?
         var compositionName: String
+        var compositionID: UUID
         var playMode: Composer2PlayMode
         /// Audition sessions stop when the screen is dismissed; applied ones stay.
         var isAudition: Bool
@@ -41,18 +45,38 @@ final class Composer2PlaybackCenter {
     private(set) var status: Status = .idle
     /// Several Entertainment Areas cover the room — the orchestrator played Room mode.
     private(set) var severalAreas = false
+    /// A third party holds the bridge and the user must answer the prompt.
+    private(set) var takeoverPending = false
 
     @ObservationIgnored private(set) var document: Composer2Document?
     @ObservationIgnored private(set) var output: Composer2LiveOutput?
     @ObservationIgnored private var box: CompositionParamBox?
+    @ObservationIgnored private var gateway: Composer2LiveGateway?
     @ObservationIgnored private var heartbeatTask: Task<Void, Never>?
-    @ObservationIgnored private var stopTask: Task<Void, Never>?
+    @ObservationIgnored private var retainedTasks: [Task<Void, Never>] = []
+    @ObservationIgnored private var chainTail: Task<Void, Never>?
+    @ObservationIgnored private var takeoverContinuation: CheckedContinuation<Bool, Never>?
+    @ObservationIgnored private var screensAttached = 0
+    @ObservationIgnored private var lastBecameActiveAt: Double = 0
+    @ObservationIgnored private var isApplicationActive = true
+    @ObservationIgnored private var observers: [NSObjectProtocol] = []
     /// Injectable clock for tests.
     @ObservationIgnored var now: () -> Double = { CACurrentMediaTime() }
     /// Injectable heartbeat cadence (seconds); tests drive `tickHeartbeat` directly.
     @ObservationIgnored var heartbeatInterval: Double = 0.5
 
-    init() {}
+    init(observeApplication: Bool = true) {
+        guard observeApplication else { return }
+        let center = NotificationCenter.default
+        observers.append(center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.applicationDidBecomeActive() }
+        })
+        observers.append(center.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.applicationWillResignActive() }
+        })
+    }
+
+    // MARK: Derived state
 
     var isLive: Bool {
         guard session != nil else { return false }
@@ -62,10 +86,17 @@ final class Composer2PlaybackCenter {
         }
     }
 
+    var isBusy: Bool {
+        switch status {
+        case .starting, .stopping: return true
+        default: return false
+        }
+    }
+
     var statusText: String {
         switch status {
         case .idle: return Composer2Copy.previewOnly
-        case .starting: return Composer2Copy.liveStarting
+        case .starting: return takeoverPending ? Composer2Copy.takeoverWaiting : Composer2Copy.liveStarting
         case .live: return session?.playMode.statusText ?? Composer2Copy.previewOnly
         case .reconnecting: return Composer2Copy.liveReconnecting
         case .stopping: return Composer2Copy.liveStopping
@@ -80,11 +111,38 @@ final class Composer2PlaybackCenter {
         return document
     }
 
+    /// A screen is showing (auditions end when the last one goes away).
+    func attachScreen() { screensAttached += 1 }
+    func detachScreen() { screensAttached = max(0, screensAttached - 1) }
+    var hasAttachedScreen: Bool { screensAttached > 0 }
+
+    // MARK: Serial chain
+
+    /// Every lifecycle operation queues behind the previous one. Rapid Live
+    /// presses, a stop during a start, or a dismissal mid-start are ordered,
+    /// never interleaved — and a body never waits on the chain it is on.
+    private func serialized<T>(_ body: @escaping @MainActor () async -> T) async -> T {
+        let previous = chainTail
+        let task = Task<T, Never> { @MainActor in
+            await previous?.value
+            return await body()
+        }
+        chainTail = Task { @MainActor in _ = await task.value }
+        return await task.value
+    }
+
     // MARK: Start
 
     @discardableResult
     func start(document: Composer2Document, output: Composer2LiveOutput, gateway: Composer2LiveGateway,
                audition: Bool) async -> Status {
+        await serialized { [self] in
+            await startCore(document: document, output: output, gateway: gateway, audition: audition)
+        }
+    }
+
+    private func startCore(document: Composer2Document, output: Composer2LiveOutput,
+                           gateway: Composer2LiveGateway, audition: Bool) async -> Status {
         let room = document.roomContext.room
         switch gateway.gate(for: room) {
         case .demo:
@@ -103,15 +161,16 @@ final class Composer2PlaybackCenter {
             status = .failed(Composer2Copy.liveNoRoom)
             return status
         }
-        if let current = session, current.roomID != room.id || current.bridgeID != room.bridgeID {
-            await stop(gateway: gateway)
-        } else if session != nil {
-            // Already live on this room: promote or keep.
-            if !audition { promoteToApplied() }
-            return status
+        if let current = session {
+            if current.roomID == room.id && current.bridgeID == room.bridgeID {
+                if !audition { promoteToApplied() }
+                return status
+            }
+            await stopCore()
         }
 
         status = .starting
+        self.gateway = gateway
         let availability = gateway.streamAvailability(for: room)
         severalAreas = availability.severalAreas
         let lights = gateway.lightItems(room: room)
@@ -129,30 +188,55 @@ final class Composer2PlaybackCenter {
         self.document = document
         document.onEdit = { [weak self] in self?.noteEdit() }
 
-        let outcome = await gateway.start(room: room, box: box, preferStreaming: availability.prefer)
+        let outcome = await gateway.start(room: room, box: box, preferStreaming: availability.prefer,
+                                          askTakeover: { [weak self] in await self?.askTakeover() ?? false })
+        takeoverPending = false
         switch outcome {
         case .started(let mode):
-            if mode == .roomMode, !availability.prefer || streamingFailedSilently(availability) {
+            // The orchestrator's exact slots are the truth for labels and
+            // positions from here on (Composer 2.1).
+            if !box.renderSlots.isEmpty {
+                let areaName: String? = {
+                    if case .streaming(let name) = document.roomContext.layout.source { return name }
+                    return nil
+                }()
+                document.roomContext.layout = Composer2SlotLayout.resolved(
+                    slots: box.renderSlots, lights: lights, areaName: areaName)
+            } else if mode == .roomMode {
                 document.roomContext.layout = gateway.roomLayout(room: room, lights: lights)
-                output.layoutLightIDs = document.roomContext.layout.lightIDs
             }
+            output.layoutLightIDs = document.roomContext.layout.lightIDs
+            let started = now()
             session = Session(roomID: room.id, bridgeID: room.bridgeID, roomName: room.name,
-                              compositionName: document.composition.name, playMode: mode,
-                              isAudition: audition, startedAt: now())
+                              groupedLightID: room.groupedLightID,
+                              compositionName: document.composition.name,
+                              compositionID: document.composition.id,
+                              playMode: mode, isAudition: audition, startedAt: started)
+            lastBecameActiveAt = started
             status = .live
-            startHeartbeat(gateway: gateway)
+            gateway.publishNowPlaying(roomID: room.id, bridgeID: room.bridgeID, roomName: room.name,
+                                      groupedLightID: room.groupedLightID,
+                                      compositionName: document.composition.name)
+            gateway.installStopHandler { [weak self] bridgeID, roomID in
+                await self?.stopIfOwning(bridgeID: bridgeID, roomID: roomID) ?? false
+            }
+            startHeartbeat()
+            // Dismissed while starting: an audition has nobody to audition for.
+            if audition, !hasAttachedScreen {
+                await stopCore()
+                status = .idle
+            }
         case .foreignController:
-            unbind()
+            unbind(releaseSource: true)
             status = .failed(Composer2Copy.liveForeignController)
+        case .declined:
+            unbind(releaseSource: true)
+            status = .failed(Composer2Copy.takeoverDeclined)
         case .failed(let message):
-            unbind()
+            unbind(releaseSource: true)
             status = .failed(message)
         }
         return status
-    }
-
-    private func streamingFailedSilently(_ availability: Composer2StreamAvailability) -> Bool {
-        availability.prefer
     }
 
     /// The legacy box the orchestrator drives: coherent prime colours, no
@@ -179,6 +263,22 @@ final class Composer2PlaybackCenter {
         return box
     }
 
+    // MARK: Attended takeover
+
+    private func askTakeover() async -> Bool {
+        takeoverPending = true
+        return await withCheckedContinuation { continuation in
+            takeoverContinuation = continuation
+        }
+    }
+
+    /// The prompt's answer. Safe to call when nothing is pending.
+    func answerTakeover(_ approve: Bool) {
+        takeoverPending = false
+        takeoverContinuation?.resume(returning: approve)
+        takeoverContinuation = nil
+    }
+
     // MARK: Edits while live
 
     private func noteEdit() {
@@ -186,9 +286,12 @@ final class Composer2PlaybackCenter {
         output.composition = document.composition
         let mirrored = output.mirroredReactionSource()
         if box.reaction.source != mirrored { box.reaction.source = mirrored }
-        if var s = session, s.compositionName != document.composition.name {
+        if var s = session, s.compositionName != document.composition.name || s.compositionID != document.composition.id {
             s.compositionName = document.composition.name
+            s.compositionID = document.composition.id
             session = s
+            gateway?.publishNowPlaying(roomID: s.roomID, bridgeID: s.bridgeID, roomName: s.roomName,
+                                       groupedLightID: s.groupedLightID, compositionName: s.compositionName)
         }
     }
 
@@ -200,16 +303,33 @@ final class Composer2PlaybackCenter {
     // MARK: Stop
 
     func stop(gateway: Composer2LiveGateway) async {
+        self.gateway = gateway
+        await serialized { [self] in await stopCore() }
+    }
+
+    /// The Dashboard's route: stop only when the target is OUR session.
+    func stopIfOwning(bridgeID: String?, roomID: String) async -> Bool {
+        await serialized { [self] in
+            guard let current = session, current.roomID == roomID,
+                  bridgeID == nil || current.bridgeID == bridgeID else { return false }
+            await stopCore()
+            status = .idle
+            return true
+        }
+    }
+
+    private func stopCore() async {
         guard let current = session else {
-            unbind()
             if case .starting = status { status = .idle }
             return
         }
         status = .stopping
         heartbeatTask?.cancel()
         heartbeatTask = nil
-        await gateway.stop(roomID: current.roomID, bridgeID: current.bridgeID)
-        unbind()
+        answerTakeover(false)
+        gateway?.retireNowPlaying(roomID: current.roomID, bridgeID: current.bridgeID)
+        await gateway?.stop(roomID: current.roomID, bridgeID: current.bridgeID)
+        unbind(releaseSource: true)
         session = nil
         status = .idle
     }
@@ -218,12 +338,17 @@ final class Composer2PlaybackCenter {
     /// retained here so a disappearing view cannot cancel it.
     @discardableResult
     func endAudition(gateway: Composer2LiveGateway) -> Task<Void, Never>? {
-        guard session?.isAudition == true else { return nil }
-        let task = Task { [weak self] in
+        guard session?.isAudition == true || (status == .starting && session == nil) else { return nil }
+        self.gateway = gateway
+        let task = Task { @MainActor [weak self] in
             guard let self else { return }
-            await self.stop(gateway: gateway)
+            await self.serialized {
+                guard self.session?.isAudition == true else { return }
+                await self.stopCore()
+            }
         }
-        stopTask = task
+        retainedTasks.append(task)
+        retainedTasks.removeAll { $0.isCancelled }
         return task
     }
 
@@ -240,35 +365,56 @@ final class Composer2PlaybackCenter {
         }
     }
 
-    private func unbind() {
-        box?.frameSource = nil
+    /// `releaseSource: false` keeps the runtime bound to the box: used when
+    /// the orchestrator may still be driving it (a silent-but-claimed room),
+    /// so a live loop never falls back to the legacy math mid-show.
+    private func unbind(releaseSource: Bool) {
+        if releaseSource {
+            box?.frameSource = nil
+            output?.releaseLiveGeometry()
+        }
         box = nil
-        output?.releaseLiveGeometry()
         document?.onEdit = nil
         output = nil
         document = nil
     }
 
+    // MARK: Application lifecycle
+
+    private func applicationDidBecomeActive() { noteApplicationActive(true) }
+    private func applicationWillResignActive() { noteApplicationActive(false) }
+
+    /// Scene-phase input (also driven directly by tests): silence while the
+    /// app is inactive is expected, and the heartbeat re-arms on return.
+    func noteApplicationActive(_ active: Bool) {
+        isApplicationActive = active
+        if active { lastBecameActiveAt = now() }
+    }
+
     // MARK: Heartbeat
 
-    private func startHeartbeat(gateway: Composer2LiveGateway) {
+    private func startHeartbeat() {
         heartbeatTask?.cancel()
         let interval = heartbeatInterval
         heartbeatTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(Int(interval * 1000)))
                 guard !Task.isCancelled, let self else { return }
-                if !self.tickHeartbeat(gateway: gateway) { return }
+                if !self.tickHeartbeat() { return }
             }
         }
     }
 
     /// One heartbeat check. Returns false once the session has ended.
+    /// Silence while the app is inactive is expected and never counted.
     @discardableResult
-    func tickHeartbeat(gateway: Composer2LiveGateway) -> Bool {
-        guard let current = session, let output else { return false }
+    func tickHeartbeat() -> Bool {
+        guard let current = session, let output, let gateway else { return false }
+        guard isApplicationActive else { return true }
         let verdict = Composer2Heartbeat.verdict(
-            lastLiveRenderAt: output.lastLiveRenderAt, startedAt: current.startedAt, now: now(),
+            lastLiveRenderAt: output.lastLiveRenderAt,
+            startedAt: max(current.startedAt, lastBecameActiveAt),
+            now: now(),
             roomStillClaimed: gateway.isRoomClaimed(roomID: current.roomID))
         switch verdict {
         case .alive:
@@ -278,11 +424,13 @@ final class Composer2PlaybackCenter {
             status = .reconnecting
             return true
         case .ended:
-            // Someone else owns the room now — never call stop, that would
-            // tear down THEIR runtime.
+            // Someone else owns the room now — never call stop (that would
+            // tear down THEIR runtime) and never unbind the frame source (if
+            // the loop is somehow still ours it must keep rendering our look).
             heartbeatTask?.cancel()
             heartbeatTask = nil
-            unbind()
+            gateway.retireNowPlaying(roomID: current.roomID, bridgeID: current.bridgeID)
+            unbind(releaseSource: false)
             session = nil
             status = .ended(Composer2Copy.liveEndedElsewhere)
             return false

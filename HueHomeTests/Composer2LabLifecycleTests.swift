@@ -20,6 +20,15 @@ final class Composer2FakeGateway: Composer2LiveGateway {
     var stopCalls: [String] = []
     var boxes: [CompositionParamBox] = []
     var lights: [LightDisplayItem] = Composer2LabFixtures.lights
+    /// When set, `start` asks the takeover question and honours the answer.
+    var foreignControllerPresent = false
+    var takeoverAsked = 0
+    /// Exact slots the orchestrator would publish on the box at start.
+    var renderSlots: [CompositionRenderSlot] = []
+    var publishCalls: [(roomID: String, name: String)] = []
+    var retireCalls: [String] = []
+    var stopHandler: (@MainActor (String?, String) async -> Bool)?
+    var stopHandlerInstalls = 0
 
     func gate(for room: RoomDisplayItem?) -> Composer2LiveGate { gateResult }
     func streamAvailability(for room: RoomDisplayItem) -> Composer2StreamAvailability { availability }
@@ -33,13 +42,29 @@ final class Composer2FakeGateway: Composer2LiveGateway {
     func lightItems(room: RoomDisplayItem) -> [LightDisplayItem] { lights }
     func rooms() -> [RoomDisplayItem] { [Composer2LabFixtures.room("r1"), Composer2LabFixtures.room("r2")] }
     func isDemo() -> Bool { demo }
-    func start(room: RoomDisplayItem, box: CompositionParamBox, preferStreaming: Bool) async -> Composer2StartOutcome {
+    func start(room: RoomDisplayItem, box: CompositionParamBox, preferStreaming: Bool,
+               askTakeover: @escaping @MainActor () async -> Bool) async -> Composer2StartOutcome {
         startCalls.append((room.id, preferStreaming))
         boxes.append(box)
+        if foreignControllerPresent {
+            takeoverAsked += 1
+            let approved = await askTakeover()
+            if !approved { return .declined }
+        }
+        if case .started = startOutcome { box.renderSlots = renderSlots }
         return startOutcome
     }
     func stop(roomID: String, bridgeID: String?) async { stopCalls.append(roomID) }
     func isRoomClaimed(roomID: String) -> Bool { claimed }
+    func publishNowPlaying(roomID: String, bridgeID: String?, roomName: String,
+                           groupedLightID: String?, compositionName: String) {
+        publishCalls.append((roomID, compositionName))
+    }
+    func retireNowPlaying(roomID: String, bridgeID: String?) { retireCalls.append(roomID) }
+    func installStopHandler(_ handler: (@MainActor (String?, String) async -> Bool)?) {
+        stopHandler = handler
+        stopHandlerInstalls += 1
+    }
 }
 
 enum Composer2LabFixtures {
@@ -89,9 +114,11 @@ final class Composer2LabLifecycleTests: XCTestCase {
         return Composer2Document(composition: composition, roomContext: context)
     }
 
+    /// A center with the Composer 2 screen showing (auditions need a viewer).
     private func center(now: Double = 100) -> Composer2PlaybackCenter {
-        let c = Composer2PlaybackCenter()
+        let c = Composer2PlaybackCenter(observeApplication: false)
         c.now = { now }
+        c.attachScreen()
         return c
     }
 
@@ -288,22 +315,23 @@ final class Composer2LabLifecycleTests: XCTestCase {
         _ = await c.start(document: doc, output: out, gateway: gw, audition: false)
         // Silent for 3 s but still claimed: reconnecting.
         c.now = { 103 }
-        XCTAssertTrue(c.tickHeartbeat(gateway: gw))
+        XCTAssertTrue(c.tickHeartbeat())
         XCTAssertEqual(c.status, .reconnecting)
         // The loop renders again: alive.
         let box = gw.boxes[0]
         _ = CompositionEngine.render(time: 3, channelIDs: [0, 1, 2], params: box, hostNow: 103.2)
         c.now = { 103.3 }
-        XCTAssertTrue(c.tickHeartbeat(gateway: gw))
+        XCTAssertTrue(c.tickHeartbeat())
         XCTAssertEqual(c.status, .live)
         // Someone else took the room: ended, and NO stop is sent.
         gw.claimed = false
         c.now = { 105 }
-        XCTAssertFalse(c.tickHeartbeat(gateway: gw))
+        XCTAssertFalse(c.tickHeartbeat())
         XCTAssertEqual(c.status, .ended(Composer2Copy.liveEndedElsewhere))
         XCTAssertNil(c.session)
-        XCTAssertNil(box.frameSource)
+        XCTAssertTrue(box.frameSource === out, "the replacement owns the transport; the old box is not unbound from here")
         XCTAssertTrue(gw.stopCalls.isEmpty)
+        XCTAssertEqual(gw.retireCalls, ["r1"], "the Now Playing row is retired when the session ends")
     }
 
     // MARK: Audition vs applied, room change, promotion
