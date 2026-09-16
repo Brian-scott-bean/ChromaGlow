@@ -22,20 +22,21 @@ struct Composer2LayerCard<Preview: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 ZStack {
                     Circle()
                         .fill(accent.opacity(isOn ? 0.18 : 0.08))
-                        .frame(width: 32, height: 32)
+                        .frame(width: 30, height: 30)
                     Image(systemName: dimension.symbol)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(isOn ? accent : Composer2Theme.muted)
                 }
                 Text(dimension.title)
                     .font(HueFont.stageName)
                     .foregroundStyle(Composer2Theme.ink)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.65)
+                    .minimumScaleFactor(0.55)
+                    .allowsTightening(true)
                     .layoutPriority(1)
                 Spacer(minLength: 2)
                 if showsToggle {

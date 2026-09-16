@@ -4,13 +4,20 @@
 
 ---
 
-## Current Status Snapshot (updated 2026-09-02)
+## Current Status Snapshot (updated 2026-09-15)
 
 ### Pointers
 - Canonical agent context: `AGENTS.md`. Claude Code entry point: `CLAUDE.md` points there.
 - Live shared handoff: append-only entries in this `DEVLOG.md`. Git is the shared memory between tools.
 
 ### iOS — where we are RIGHT NOW
+- **COMPOSER 2 "DREAM STUDIO" PROTOTYPE — ISOLATED EXPERIMENT BRANCH, NOT MERGED (2026-09-15).** Branch
+  `experiment/composer-2-dream-studio` (base `main` @ `c2368c8`, rollback tag `checkpoint/pre-composer2-dream-studio`).
+  A one-shot product prototype of the creative lighting instrument: universal layer model + seeded pure engine +
+  event generator under `HueHome/Core/Composer2/`, the full-screen surface under `HueHome/UI/Composer2/`, five
+  demonstration presets, its own store, and a 12-line `CompositionFrameSource` hook in `CompositionEngine.render` so
+  live output rides the existing transport, gate and stop paths. Suite 2198/2198, guards green, **hardware NOT
+  verified**. Record: `docs/ios/composer2-dream-studio/README.md`. Nothing on `main` changed. Entry below.
 - **`main` is the current production anchor and the branch Brian installs from**
   (Xcode → physical iPhone, scheme **`HueHome 1`**, marketing version **1.0.0**, build **52** per `main`'s pbxproj).
 - **The repository moved out of iCloud (2026-09-02):** canonical path is now
@@ -666,6 +673,60 @@
 ### Gotchas
 - ...
 ```
+
+---
+
+## 2026-09-15 - [Claude] Composer 2 "Dream Studio" — one-shot product prototype on an isolated branch
+
+**Branch:** `experiment/composer-2-dream-studio` (base `main` @ `c2368c8`). **Isolated experiment — no PR, no merge, `main` untouched.**
+**Rollback:** `git switch main`; tag `checkpoint/pre-composer2-dream-studio` at the base.
+**Record:** `docs/ios/composer2-dream-studio/README.md` (+ `screenshots/`).
+
+### Did
+- Built the prototype the brief asked for: a full-screen creative instrument (Studio → composer deck → "Try Composer 2")
+  with a live room hero, Quick / Customize / Advanced / Expert views over ONE document, six dimension cards with
+  mini-previews, seven editors, the "Build Your Own Light Behavior" stack, and Preview · Live · Save · Apply.
+- New universal behavior model under `HueHome/Core/Composer2/`: `Composer2Composition` = master controls + `[Composer2Layer]`;
+  a layer = mask · palette (≤8 stops, OKLab hue-arc/linear/stepped) · motion (still/flow/chase/wave/bounce/scatter/organic)
+  · rhythm (steady/breathe/pulse/heartbeat/flicker/swell/burst, periods floored at `minOnsetLedgerPeriod`) · audio
+  modulation · variation (seeded) · optional event generator (fixed/random interval, probability, bursts, spacing,
+  duration, decay, targeting incl. spatial bias, cooldown, rare major strikes). Pure `Composer2Engine.evaluate`, SplitMix64
+  + stateless hashing (never `Hasher`, never a clock), events draw exactly twice per opportunity so the same seed replays.
+- Five demonstration presets from those primitives only (Aurora Drift, Lava Lamp, Christmas Chase, Haunted House,
+  Thunderstorm with tunable lightning); a separate store (`Documents/composer2-compositions.json`); a legacy-preset importer.
+- **Integration seam (the only edits to existing code):** `protocol CompositionFrameSource` + `CompositionParamBox.frameSource`
+  + an 8-line early return at the top of `CompositionEngine.render` (falls through on a count mismatch). Live output goes
+  through `startCompositionMode`/`stopCompositionMode` with a legacy box whose frame source is the Composer 2 runtime, so
+  DTLS/Room-mode selection, third-party detection, the realized-frame ≤3 Hz gate, failover, SSE suppression and mic
+  demand are inherited. `AudioDemand.composer2Preview` (1 line) for on-screen previews of audio layers. One line in
+  `StudioView.composerGrid` mounts the self-contained entry card. `UnifiedOrchestrator` is NOT edited.
+- Playback center: Live = audition (stops on dismiss/room change/Stop/transport end), Apply = keeps playing (entry card
+  shows "Playing in ‹room› · Stop"); heartbeat marks the session ended when another look takes the room and never calls
+  stop on a runtime it no longer owns; third-party controllers are refused honestly (no takeover question asked —
+  Guard 11(c) stays untouched).
+
+### Validation
+- `xcodebuild … generic/platform=iOS build`: BUILD SUCCEEDED, no Composer2 warnings.
+- `./Scripts/hardening_guards.sh`: all guards passed.
+- Nine `Composer2Lab*` suites: 123 (nine suites: Primitive 23 · Layer 16 · Event 17 · Engine 15 · Persistence 10 · Preset 8 · Lifecycle 16 · Guard 9 · Snapshot 9) tests green (determinism, event ranges/probability, palette/gamut C, motion &
+  brightness bounds, masks, blend, Codable round trips, legacy store untouched, five presets ≤3 Hz, lifecycle against a
+  fake gateway, source guards, snapshot renders).
+- Full registered suite via `./run_tests.sh`: **2198 passed / 0 failed / 0 skipped** (`xcresulttool`, `-maximum-parallel-testing-workers 2`; a three-worker run was killed by memory pressure at 1170/0 and rerun).
+- **Hardware: NOT verified.** Real Streaming/Room-mode output, the gate on a bridge, replacement while applied, mic layers
+  live, multi-bridge rooms — all unproven; nothing here claims hardware behavior.
+
+### Left / limitations
+- Now Playing bar does not know about Composer 2 playback (by design — Studio's stop handler has no row for it).
+- Takeover is refused, not prompted; several Entertainment Areas ⇒ Room mode with an explanation.
+- Streaming slot labels come from the cached area selection; Room-mode positions are estimated and labelled.
+- Composer 2 documents do not export back to legacy presets.
+
+### Gotchas
+- The Phase-1 `Composer2*` guard tests scan EVERY production file for specific substrings (`Composer2Transport`,
+  `Composer2Producer`, `Composer2Resolver`, `Composer2Flag`, …) including comments — the lab's names avoid them and
+  `Composer2LabGuardTests` pins that.
+- Cycling palettes space stops at i/n (the last stop sat on the wrap point at i/(n−1) and was never shown).
+- Both convergence slices (PR #64, PR #65) are on `main` — the older snapshot text calling Slice 3 unmerged is stale.
 
 ---
 

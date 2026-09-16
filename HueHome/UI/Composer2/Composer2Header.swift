@@ -26,9 +26,15 @@ struct Composer2Header: View {
                 Text(Composer2Copy.tagline)
                     .font(HueFont.subheadline)
                     .foregroundStyle(Composer2Theme.muted)
-                HStack(spacing: 8) {
-                    roomMenu
-                    stateChip
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) {
+                        roomMenu
+                        stateChip
+                    }
+                    VStack(alignment: .leading, spacing: 6) {
+                        roomMenu
+                        stateChip
+                    }
                 }
                 .padding(.top, 2)
             }
@@ -72,6 +78,8 @@ struct Composer2Header: View {
                 Text(Composer2Copy.lights(document.roomContext.lightCount))
                     .font(HueFont.stageChip)
                     .foregroundStyle(Composer2Theme.muted)
+                    .lineLimit(1)
+                    .fixedSize()
                 Image(systemName: "chevron.down")
                     .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(Composer2Theme.muted)
