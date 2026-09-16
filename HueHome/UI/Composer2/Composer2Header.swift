@@ -65,6 +65,8 @@ struct Composer2Header: View {
                 Text(document.roomContext.roomName)
                     .font(HueFont.stageChip)
                     .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                    .layoutPriority(2)
                 Text("·")
                     .foregroundStyle(Composer2Theme.muted)
                 Text(Composer2Copy.lights(document.roomContext.lightCount))
@@ -93,6 +95,7 @@ struct Composer2Header: View {
                 .font(HueFont.stageStatus)
                 .foregroundStyle(Composer2Theme.ink.opacity(0.8))
                 .lineLimit(1)
+                .minimumScaleFactor(0.8)
         }
         .padding(.horizontal, 10)
         .frame(minHeight: 34)

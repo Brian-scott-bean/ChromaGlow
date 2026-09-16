@@ -34,7 +34,10 @@ struct Composer2LayerCard<Preview: View>: View {
                 Text(dimension.title)
                     .font(HueFont.stageName)
                     .foregroundStyle(Composer2Theme.ink)
-                Spacer(minLength: 0)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.65)
+                    .layoutPriority(1)
+                Spacer(minLength: 2)
                 if showsToggle {
                     Toggle("", isOn: Binding(get: { isOn }, set: { newValue in
                         HapticManager.shared.selection()
@@ -42,8 +45,8 @@ struct Composer2LayerCard<Preview: View>: View {
                     }))
                     .labelsHidden()
                     .tint(accent)
-                    .scaleEffect(0.8)
-                    .frame(width: 44, height: 30)
+                    .scaleEffect(0.72)
+                    .frame(width: 40, height: 28)
                     .accessibilityLabel("\(dimension.title) enabled")
                 } else if !isOn {
                     StageBadge(text: "OFF", style: .muted)
@@ -67,7 +70,7 @@ struct Composer2LayerCard<Preview: View>: View {
                     .foregroundStyle(Composer2Theme.muted)
             }
         }
-        .padding(14)
+        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .composer2Glass(accent: accent, selected: isOn)
         .opacity(isOn ? 1 : 0.7)
