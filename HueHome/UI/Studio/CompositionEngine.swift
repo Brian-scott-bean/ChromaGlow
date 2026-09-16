@@ -13,6 +13,22 @@
 import SwiftUI
 import Observation
 
+// MARK: - CompositionFrameSource (Composer 2 lab seam)
+
+/// An external per-frame renderer consulted before the four-layer math.
+///
+/// Experimental Composer 2 seam: the runtime that owns a multi-layer
+/// composition conforms, and a `CompositionParamBox` carrying it streams
+/// those frames through every transport, safety gate and lifecycle path
+/// above `render` unchanged. Deliberately nonisolated — `render` is a
+/// nonisolated static — and main-actor confined by the same convention as
+/// the box (audit I-10). A frame count that does not match `channelIDs`
+/// falls through to the built-in renderer, never to a partial stream.
+protocol CompositionFrameSource: AnyObject {
+    func renderFrames(time: Double, channelIDs: [Int], params: CompositionParamBox,
+                      features: AudioFeatures, beat: BeatSnapshot, hostNow: Double) -> [LightFrame]
+}
+
 // MARK: - CompositionParamBox
 
 /// Mutable reference container for live composition params.
@@ -34,6 +50,9 @@ final class CompositionParamBox: @unchecked Sendable {
     /// UI-driven short burst window to bypass REST low-power skipping
     /// so direct user edits flush to the bridge immediately.
     @ObservationIgnored var forceRESTBurstUntil: TimeInterval = 0
+    /// Composer 2 lab seam: when set, `render` asks this object for the frame
+    /// instead of running the four-layer math. Runtime plumbing, never observed.
+    @ObservationIgnored var frameSource: (any CompositionFrameSource)? = nil
 
     // ── Spatial Motion ────────────────────────────────────────
     /// Pre-computed normalized spatial positions (0–1) for each channel.
@@ -321,6 +340,14 @@ enum CompositionEngine {
         beat: BeatSnapshot = .none,
         hostNow: Double = 0
     ) -> [LightFrame] {
+        // Composer 2 lab seam — see `CompositionFrameSource`. Everything the
+        // caller does with the result (gamut clamp, flash gate, wire mapping)
+        // is identical for either renderer.
+        if let source = params.frameSource {
+            let external = source.renderFrames(time: time, channelIDs: channelIDs, params: params,
+                                               features: features, beat: beat, hostNow: hostNow)
+            if external.count == channelIDs.count { return external }
+        }
         let total = channelIDs.count
         let palette = params.palette
         let motion = params.motion
