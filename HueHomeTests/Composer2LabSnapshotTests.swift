@@ -182,4 +182,87 @@ final class Composer2LabSnapshotTests: XCTestCase {
         .preferredColorScheme(.dark)
         render(card, size: CGSize(width: 393, height: 220), named: "composer2-studio-entry-card")
     }
+
+    // MARK: v2.1 states
+
+    func testEntryCardRendersSavedLooksAndPlayingPill() async {
+        let store = Composer2Store.shared
+        let mine = store.save(Composer2PresetLibrary.lavaLamp.duplicated(name: "Snapshot Look", at: Date(timeIntervalSince1970: 1)))
+        defer { store.delete(id: mine.id) }
+        let center = Composer2PlaybackCenter.shared
+        let gateway = Composer2FakeGateway()
+        let doc = demoDocument(mine)
+        _ = await center.start(document: doc, output: Composer2LiveOutput(composition: mine), gateway: gateway, audition: false)
+        XCTAssertTrue(center.isLive)
+        let card = ZStack {
+            HuePalette.Noir.background.ignoresSafeArea()
+            Composer2EntryCard(selectedRoom: DemoDataProvider.rooms[0])
+                .padding(HueSpacing.screenH)
+        }
+        .environment(UnifiedOrchestrator())
+        .preferredColorScheme(.dark)
+        render(card, size: CGSize(width: 393, height: 300), named: "composer2-studio-entry-card-playing-saved-looks")
+        await center.stop(gateway: gateway)
+        XCTAssertFalse(center.isLive)
+    }
+
+    func testTakeoverWaitingStateRenders() async {
+        let doc = demoDocument(Composer2PresetLibrary.auroraDrift)
+        let center = Composer2PlaybackCenter(observeApplication: false)
+        let gateway = Composer2FakeGateway()
+        gateway.foreignControllerPresent = true
+        let task = Task { await center.start(document: doc, output: Composer2LiveOutput(composition: doc.composition), gateway: gateway, audition: true) }
+        var spins = 0
+        while !center.takeoverPending && spins < 20_000 { await Task.yield(); spins += 1 }
+        XCTAssertTrue(center.takeoverPending)
+        XCTAssertEqual(center.statusText, Composer2Copy.takeoverWaiting)
+        render(screen(doc, center: center) { Composer2CustomizeGrid(document: doc) },
+               size: CGSize(width: 393, height: 1500), named: "composer2-takeover-waiting")
+        center.answerTakeover(false)
+        let declined = await task.value
+        XCTAssertEqual(declined, .failed(Composer2Copy.takeoverDeclined))
+    }
+
+    func testAppliedAndDeclinedNoticesRender() {
+        let notices = VStack(spacing: 12) {
+            Composer2NoticeBanner(text: Composer2Copy.applied, onDismiss: {})
+            Composer2NoticeBanner(text: Composer2Copy.takeoverDeclined, onDismiss: {})
+            Composer2NoticeBanner(text: Composer2Copy.liveEndedElsewhere, onDismiss: {})
+        }
+        .padding(HueSpacing.screenH)
+        .background(Composer2Theme.backgroundGradient)
+        .preferredColorScheme(.dark)
+        render(notices, size: CGSize(width: 393, height: 260), named: "composer2-notices")
+    }
+
+    func testImportSheetRenders() {
+        let doc = demoDocument(Composer2PresetLibrary.auroraDrift)
+        let sheet = Composer2ImportSheet(document: doc)
+            .environment(UnifiedOrchestrator())
+        render(sheet, size: CGSize(width: 393, height: 700), named: "composer2-import-legacy")
+    }
+
+    func testAccessibilitySizeLayoutsRender() {
+        let doc = demoDocument(Composer2PresetLibrary.hauntedHouse)
+        render(screen(doc, center: Composer2PlaybackCenter(observeApplication: false)) { Composer2CustomizeGrid(document: doc) }
+                   .environment(\.dynamicTypeSize, .accessibility2),
+               size: CGSize(width: 393, height: 2600), named: "composer2-customize-accessibility2")
+        doc.mode = .quick
+        render(screen(doc, center: Composer2PlaybackCenter(observeApplication: false)) { Composer2QuickPanel(document: doc) }
+                   .environment(\.dynamicTypeSize, .accessibility2),
+               size: CGSize(width: 393, height: 2600), named: "composer2-quick-accessibility2")
+        doc.mode = .expert
+        render(screen(doc, center: Composer2PlaybackCenter(observeApplication: false)) { Composer2ExpertStack(document: doc) }
+                   .environment(\.dynamicTypeSize, .accessibility2),
+               size: CGSize(width: 393, height: 2600), named: "composer2-expert-accessibility2")
+    }
+
+    func testHarmonyAndAudioEditorsRenderTheirNewRows() {
+        let doc = demoDocument(Composer2PresetLibrary.christmasChase)
+        doc.editSelectedLayer { $0.audio.source = .bass; $0.audio.targets = [.brightness] }
+        render(editorFrame(Composer2Editor.palette.title) { Composer2EditorContent(document: doc, editor: .palette) },
+               size: CGSize(width: 393, height: 1500), named: "composer2-editor-palette-harmony")
+        render(editorFrame(Composer2Editor.audio.title) { Composer2EditorContent(document: doc, editor: .audio) },
+               size: CGSize(width: 393, height: 1400), named: "composer2-editor-audio-punch")
+    }
 }

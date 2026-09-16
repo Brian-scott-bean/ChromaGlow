@@ -105,6 +105,10 @@ TEST_FILES = {
   'HueHomeTests/Composer2LabLifecycleTests.swift'   => ['HueHomeTests'],
   'HueHomeTests/Composer2LabGuardTests.swift'       => ['HueHomeTests'],
   'HueHomeTests/Composer2LabSnapshotTests.swift'    => ['HueHomeTests'],
+  'HueHomeTests/Composer2LabSlotTests.swift'        => ['HueHomeTests'],
+  'HueHomeTests/Composer2LabIntegrationTests.swift' => ['HueHomeTests'],
+  'HueHomeTests/Composer2LabRecoveryTests.swift'    => ['HueHomeTests'],
+  'HueHomeTests/Composer2LabPerformanceTests.swift' => ['HueHomeTests'],
 }
 
 existing = existing_paths(project)
