@@ -53,6 +53,10 @@ final class CompositionParamBox: @unchecked Sendable {
     /// Composer 2 lab seam: when set, `render` asks this object for the frame
     /// instead of running the four-layer math. Runtime plumbing, never observed.
     @ObservationIgnored var frameSource: (any CompositionFrameSource)? = nil
+    /// Composer 2.1: the exact slots the orchestrator drives, in render order
+    /// (`renderSlots[k]` describes `channelIDs[k]`). Published at start on both
+    /// transports; empty when unknown. Runtime plumbing, never observed.
+    @ObservationIgnored var renderSlots: [CompositionRenderSlot] = []
 
     // ── Spatial Motion ────────────────────────────────────────
     /// Pre-computed normalized spatial positions (0–1) for each channel.
@@ -133,6 +137,110 @@ struct LightFrame {
     let x: Double       // CIE 1931 x
     let y: Double       // CIE 1931 y
     let brightness: Double  // 0.0–1.0
+}
+
+// MARK: - CompositionRenderSlot (Composer 2.1 exact slot identity)
+
+/// What a light can reproduce, as the orchestrator resolved it at start.
+enum CompositionSlotCapability: String, Sendable, Equatable {
+    case color
+    case tunableWhite
+    case dimmable
+}
+
+struct CompositionSlotPosition: Equatable, Sendable {
+    let x: Double
+    let y: Double
+    let z: Double
+}
+
+/// One render slot exactly as the orchestrator will drive it: which bridge,
+/// which light, which segment of that light, which DTLS channel, and the
+/// real position when the bridge exposed one. Positional with the loops'
+/// `channelIDs`, so a frame source never has to reconstruct the order.
+struct CompositionRenderSlot: Equatable, Sendable, Identifiable {
+    let index: Int
+    let bridgeID: String?
+    let lightID: String?
+    /// The DTLS channel id when streaming; nil in Room mode.
+    let channelID: Int?
+    /// Segment within a multi-channel light (0 for a single-channel light).
+    let segmentIndex: Int
+    let segmentCount: Int
+    /// Real Entertainment position when available — never invented.
+    let position: CompositionSlotPosition?
+    let capability: CompositionSlotCapability
+    /// The light's reported white range, for tunable-white slots.
+    let mirekRange: ClosedRange<Int>?
+
+    var id: Int { index }
+    var isSegment: Bool { segmentCount > 1 }
+
+    static func capability(of light: HueLight?) -> CompositionSlotCapability {
+        guard let light else { return .color }
+        if light.color != nil { return .color }
+        if light.color_temperature != nil { return .tunableWhite }
+        return .dimmable
+    }
+
+    static func mirekRange(of light: HueLight?) -> ClosedRange<Int>? {
+        guard let schema = light?.color_temperature?.mirek_schema,
+              schema.mirek_minimum <= schema.mirek_maximum else { return nil }
+        return schema.mirek_minimum...schema.mirek_maximum
+    }
+
+    /// Streaming order: one slot per channel, in the plan's channel order.
+    /// `membership` maps entertainment-service rids to light ids.
+    static func streaming(channels: [EntertainmentChannel], membership: [String: String],
+                          bridgeID: String?, lights: [HueLight]) -> [CompositionRenderSlot] {
+        let byID = Dictionary(lights.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let lightIDs: [String?] = channels.map { ch in ch.lightServiceIDs.compactMap { membership[$0] }.first }
+        var totals: [String: Int] = [:]
+        for case let id? in lightIDs { totals[id, default: 0] += 1 }
+        var seen: [String: Int] = [:]
+        var out: [CompositionRenderSlot] = []
+        out.reserveCapacity(channels.count)
+        for (i, ch) in channels.enumerated() {
+            let lightID = lightIDs[i]
+            var segment = 0
+            var count = 1
+            if let lightID {
+                count = totals[lightID] ?? 1
+                segment = seen[lightID, default: 0]
+                seen[lightID] = segment + 1
+            }
+            let light = lightID.flatMap { byID[$0] }
+            out.append(CompositionRenderSlot(
+                index: i, bridgeID: bridgeID, lightID: lightID, channelID: ch.id,
+                segmentIndex: segment, segmentCount: count,
+                position: CompositionSlotPosition(x: ch.position.x, y: ch.position.y, z: ch.position.z),
+                capability: capability(of: light), mirekRange: mirekRange(of: light)))
+        }
+        return out
+    }
+
+    /// Room-mode order: the resolver's light order with gradient strips
+    /// expanded to their render channels. Positions come from the room's
+    /// Entertainment map when it has one; a strip's segments share the light's
+    /// position because Hue exposes no per-segment geometry outside an area.
+    static func roomMode(lightIDs: [String], gradientMap: GradientChannelMap?,
+                         lightPositions: [String: (x: Double, z: Double)],
+                         bridgeID: String?, lights: [HueLight]) -> [CompositionRenderSlot] {
+        let byID = Dictionary(lights.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        var out: [CompositionRenderSlot] = []
+        for lightID in lightIDs {
+            let count = max(1, gradientMap?.entries.first { $0.lightID == lightID }?.channelCount ?? 1)
+            let light = byID[lightID]
+            let position = lightPositions[lightID].map { CompositionSlotPosition(x: $0.x, y: 0, z: $0.z) }
+            for segment in 0..<count {
+                out.append(CompositionRenderSlot(
+                    index: out.count, bridgeID: bridgeID, lightID: lightID, channelID: nil,
+                    segmentIndex: segment, segmentCount: count, position: position,
+                    capability: capability(of: light), mirekRange: mirekRange(of: light)))
+            }
+        }
+        return out
+    }
 }
 
 // MARK: - CompositionEngine

@@ -793,6 +793,12 @@ final class UnifiedOrchestrator {
     /// surface would leave the loop running underneath. @ObservationIgnored:
     /// installed once from StudioViewModel.configure, never read by views.
     @ObservationIgnored var studioStopHandler: (@MainActor (LiveEffectStopTarget) async -> Void)?
+    /// Composer 2.1: a second, opt-in owner of live Now Playing rows,
+    /// consulted BEFORE Studio's handler. Returns true when it stopped its own
+    /// session for exactly this target — so Studio never receives a stop for
+    /// a row it did not install, and a Composer 2 stop never reaches a Studio
+    /// look that replaced it. Runtime plumbing, never observed.
+    @ObservationIgnored var composer2StopHandler: (@MainActor (LiveEffectStopTarget) async -> Bool)?
 
     /// Studio mirrors the reconciled bridge-stored registry into
     /// `runningEffects` for rooms that resolve. Installed once from
@@ -906,6 +912,11 @@ final class UnifiedOrchestrator {
     /// leaves lights at their current state (Siri's "stop the lights"
     /// promises exactly that).
     func requestNowPlayingStop(bridgeID: String, roomID: String, turnOffLights: Bool = true) async {
+        if let composer2StopHandler,
+           await composer2StopHandler(LiveEffectStopTarget(
+               bridgeID: bridgeID, roomID: roomID, turnOffLights: turnOffLights)) {
+            return
+        }
         if let studioStopHandler {
             await studioStopHandler(LiveEffectStopTarget(
                 bridgeID: bridgeID, roomID: roomID, turnOffLights: turnOffLights))
@@ -920,6 +931,11 @@ final class UnifiedOrchestrator {
     /// id and fails closed on a collision; still the ONLY sanctioned
     /// non-Studio stop path besides the exact overloads above.
     func requestNowPlayingStop(roomID: String, turnOffLights: Bool = true) async {
+        if let composer2StopHandler,
+           await composer2StopHandler(LiveEffectStopTarget(
+               bridgeID: nil, roomID: roomID, turnOffLights: turnOffLights)) {
+            return
+        }
         if let studioStopHandler {
             await studioStopHandler(LiveEffectStopTarget(
                 bridgeID: nil, roomID: roomID, turnOffLights: turnOffLights))
@@ -5770,6 +5786,55 @@ final class UnifiedOrchestrator {
         await AudioAnalysisEngine.shared.setDemand(.composerReaction, active: needed)
     }
 
+    /// Composer 2.1: an ATTENDED start for a composition owner outside Studio.
+    ///
+    /// Runs the same third-party preflight Studio runs, asks `askTakeover`
+    /// (a prompt the caller presents, answered by an explicit tap) before
+    /// replacing exactly one foreign session, and only then starts. Never
+    /// silent: a declined prompt starts nothing and mutates nothing. It lives
+    /// here because Guard 11(c) keeps the ownership question inside the
+    /// orchestrator and Studio.
+    func startCompositionModeAttended(
+        room: RoomDisplayItem,
+        paramBox: CompositionParamBox,
+        preferEntertainment: Bool,
+        askTakeover: @MainActor () async -> Bool
+    ) async -> PlaybackStartOutcome {
+        switch await foreignTakeoverPreflight(for: room, requestsEntertainment: preferEntertainment) {
+        case .clear(let plan):
+            return await startCompositionMode(room: room, paramBox: paramBox,
+                                              preferEntertainment: true, capturedPlan: plan)
+        case .conflict(let plan, let foreignConfigID):
+            guard await askTakeover() else {
+                return .failed(message: EntertainmentConsentCopy.takeoverDeclined)
+            }
+            switch await resolveForeignTakeover(requestID: UUID(), plan: plan, room: room,
+                                                foreignConfigID: foreignConfigID) {
+            case .resolved(let consent):
+                return await startCompositionMode(room: room, paramBox: paramBox,
+                                                  preferEntertainment: true,
+                                                  capturedPlan: plan, consent: consent)
+            case .changedOwner:
+                return .failed(message: EntertainmentConsentCopy.takeoverFailed)
+            case .failed(let message):
+                return .failed(message: message)
+            }
+        case .notRequested, .noStreamableArea:
+            return await startCompositionMode(room: room, paramBox: paramBox, preferEntertainment: false)
+        case .choiceRequired:
+            // Several areas cover the room: the start below lands on Room
+            // mode rather than guessing an area (the chooser is Studio's).
+            return await startCompositionMode(room: room, paramBox: paramBox,
+                                              preferEntertainment: preferEntertainment)
+        case .ambiguous:
+            return .failed(message: EntertainmentConsentCopy.takeoverFailed)
+        case .unreadable:
+            return .failed(message: EntertainmentConsentCopy.bridgeUnreadable)
+        case .staleSelection:
+            return .failed(message: EntertainmentAvailabilityCopy.couldNotStart)
+        }
+    }
+
     /// Start a composition render loop for the given room.
     /// Transport priority:
     ///   1. Bridge-stored (v1 rules chain) — if preset is eligible, upload to bridge. Close app, lights keep going.
@@ -5991,6 +6056,13 @@ final class UnifiedOrchestrator {
                 let entGeometry = CompositionEngine.computeRadialAngular(channels: entConfig.channels)
                 paramBox.radialPositions = entGeometry.radial
                 paramBox.angularPositions = entGeometry.angular
+                // Composer 2.1: the exact slots this loop drives — channel
+                // order, membership-resolved light ids, real positions.
+                paramBox.renderSlots = CompositionRenderSlot.streaming(
+                    channels: entConfig.channels,
+                    membership: entertainmentMembershipByBridge[bridgeID] ?? [:],
+                    bridgeID: room.bridgeID,
+                    lights: cachedRawLights(for: room.bridgeID) ?? [])
                 compositionEntRoomByBridge[bridgeID] = roomID
                 // A composition now owns this bridge's session, so no
                 // app-driven look does. `commitEntertainment` above overwrote
@@ -6130,12 +6202,14 @@ final class UnifiedOrchestrator {
         // for the REST tier. One full-lights fetch at start only; nil map =
         // no strip in the room = existing flat path.
         var compositionGradientMap: GradientChannelMap? = nil
+        var compositionSlotLights: [HueLight] = []
         if !compositionLightIDs.isEmpty,
            let allLights = try? await api.fetchLights() {
             let idSet = Set(compositionLightIDs)
+            compositionSlotLights = allLights.filter { idSet.contains($0.id) }
             compositionGradientMap = GradientChannelMap.build(
                 orderedLightIDs: compositionLightIDs,
-                lights: allLights.filter { idSet.contains($0.id) }
+                lights: compositionSlotLights
             )
             if let map = compositionGradientMap {
                 debugLog("[Composer][Gradient] 🌈 \(map.entries.filter(\.isGradient).count) strip(s) → \(map.totalChannels) channels")
@@ -6158,6 +6232,15 @@ final class UnifiedOrchestrator {
                     paramBox.angularPositions, map: map)
             }
         }
+
+        // Composer 2.1: the exact Room-mode slots — resolver order, strips
+        // expanded, positions from the area map when the room has one.
+        paramBox.renderSlots = CompositionRenderSlot.roomMode(
+            lightIDs: compositionLightIDs,
+            gradientMap: compositionGradientMap,
+            lightPositions: entConfig.map { resolveEntertainmentLightPositions(config: $0, bridgeID: room.bridgeID) } ?? [:],
+            bridgeID: room.bridgeID,
+            lights: compositionSlotLights.isEmpty ? (cachedRawLights(for: room.bridgeID) ?? []) : compositionSlotLights)
 
         setCompositionTransportClaim(.rest, for: playbackKey)
         compositionRuntimes[playbackKey] = CompositionRuntime(
@@ -7131,8 +7214,15 @@ final class UnifiedOrchestrator {
         frames: [LightFrame],
         api: HueAPIClient,
         gamut: HueColorUtils.Gamut,
-        sentX: Double, sentY: Double, sentBri: Double
+        sentX: Double, sentY: Double, sentBri: Double,
+        slots: [CompositionRenderSlot] = []
     ) -> RestSender.Work {
+        // Composer 2.1 capability honesty: a tunable-white light gets the
+        // frame's colour as a white point, a dimmable-only light gets
+        // brightness alone — never a colour body it cannot reproduce.
+        let slotByLight = Dictionary(
+            slots.compactMap { s -> (String, CompositionRenderSlot)? in s.lightID.map { ($0, s) } },
+            uniquingKeysWith: { a, _ in a })
         return { [weak self] stillCurrent in
             self?.composerWorkStarted(token)
             // The realized-frame gate, at dispatch (safety round 2).
@@ -7190,15 +7280,38 @@ final class UnifiedOrchestrator {
                             x: frame.x, y: frame.y, gamut: gamut
                         )
                         let bri = max(1, frame.brightness * 100.0)
+                        let slot = slotByLight[lightID]
                         group.addTask {
                             do {
-                                try await api.setLightEffect(
-                                    id: lightID, on: true,
-                                    brightness: bri,
-                                    xy: (xy.x, xy.y),
-                                    mirek: nil,
-                                    duration: 200
-                                )
+                                switch slot?.capability ?? .color {
+                                case .color:
+                                    try await api.setLightEffect(
+                                        id: lightID, on: true,
+                                        brightness: bri,
+                                        xy: (xy.x, xy.y),
+                                        mirek: nil,
+                                        duration: 200
+                                    )
+                                case .tunableWhite:
+                                    let range = slot?.mirekRange ?? 153...500
+                                    let mirek = HueColorUtils.mirek(
+                                        fromX: xy.x, y: xy.y, min: range.lowerBound, max: range.upperBound)
+                                    try await api.setLightEffect(
+                                        id: lightID, on: true,
+                                        brightness: bri,
+                                        xy: nil,
+                                        mirek: mirek,
+                                        duration: 200
+                                    )
+                                case .dimmable:
+                                    try await api.setLightEffect(
+                                        id: lightID, on: true,
+                                        brightness: bri,
+                                        xy: nil,
+                                        mirek: nil,
+                                        duration: 200
+                                    )
+                                }
                                 return (frameIndex, true)
                             } catch {
                                 return (frameIndex, false)
@@ -7639,6 +7752,7 @@ final class UnifiedOrchestrator {
             // Capture values for the closure
             let capturedAPI = runtime.api
             let capturedGamut = runtime.gamut
+            let capturedSlots = runtime.paramBox.renderSlots
             let sentX = firstXY.x
             let sentY = firstXY.y
             let sentBri = firstBri
@@ -7690,7 +7804,8 @@ final class UnifiedOrchestrator {
                     makeComposerPerLightWork(
                         token: token, targets: subset, frames: frames,
                         api: capturedAPI, gamut: capturedGamut,
-                        sentX: sentX, sentY: sentY, sentBri: sentBri)
+                        sentX: sentX, sentY: sentY, sentBri: sentBri,
+                        slots: capturedSlots)
                 }
             } else {
                 // ── GROUPED FALLBACK ──
@@ -10813,6 +10928,8 @@ enum EntertainmentConsentCopy {
     /// their lights answering to something else — without naming an app the
     /// bridge never identified.
     static let controllerResumed = "Another app is controlling these lights again."
+    /// The user chose Keep Existing: nothing started, nothing was touched.
+    static let takeoverDeclined = "Kept the other app's show. Nothing was changed."
 }
 
 /// User-facing copy for ChromaGlow's own looks trading places on a bridge.

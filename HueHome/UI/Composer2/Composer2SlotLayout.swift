@@ -18,9 +18,21 @@ struct Composer2SlotLayout: Equatable {
         /// Position in the unit square (0…1), or nil when unknown.
         let x: Double?
         let z: Double?
+        /// What the light can reproduce (nil = not resolved).
+        var capability: CompositionSlotCapability? = nil
+        /// Segment within a multi-channel light, 1-based, with its count.
+        var segment: (index: Int, count: Int)? = nil
 
         var id: Int { index }
         var hasPosition: Bool { x != nil && z != nil }
+        var isColour: Bool { capability == nil || capability == .color }
+
+        static func == (lhs: Slot, rhs: Slot) -> Bool {
+            lhs.index == rhs.index && lhs.lightID == rhs.lightID && lhs.name == rhs.name
+                && lhs.archetype == rhs.archetype && lhs.x == rhs.x && lhs.z == rhs.z
+                && lhs.capability == rhs.capability
+                && lhs.segment?.index == rhs.segment?.index && lhs.segment?.count == rhs.segment?.count
+        }
     }
 
     enum Source: Equatable {
@@ -66,7 +78,55 @@ struct Composer2SlotLayout: Equatable {
         return .linear(count: slots.count, lightIDs: lightIDs)
     }
 
+    /// Lights that cannot show colour (they follow brightness, and warmth where they can).
+    var whiteOnlyCount: Int {
+        var seen = Set<String>()
+        var count = 0
+        for s in slots where !s.isColour {
+            if let id = s.lightID { if seen.insert(id).inserted { count += 1 } } else { count += 1 }
+        }
+        return count
+    }
+
     // MARK: Builders
+
+    /// Composer 2.1: the layout from the orchestrator's exact slots — the
+    /// truth for labels, segments and positions once a session is live.
+    static func resolved(slots: [CompositionRenderSlot], lights: [LightDisplayItem],
+                         areaName: String?) -> Composer2SlotLayout {
+        guard !slots.isEmpty else { return .empty }
+        let byID = Dictionary(lights.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let streaming = slots.contains { $0.channelID != nil }
+        let allPositioned = slots.allSatisfy { $0.position != nil }
+        let estimated = semanticPositions(count: slots.count, archetypes: slots.map { $0.lightID.flatMap { byID[$0]?.archetype } })
+        // Room-mode segments share one position; fan them a little so nodes
+        // stay tappable. That fan is presentation, so the layout stays honest
+        // by reporting positions as estimated whenever it applies.
+        let fannedSegments = !streaming && slots.contains { $0.isSegment }
+        var out: [Slot] = []
+        for s in slots {
+            var name = s.lightID.flatMap { byID[$0]?.name } ?? "Light \(s.index + 1)"
+            if s.isSegment { name += " · \(s.segmentIndex + 1)/\(s.segmentCount)" }
+            let x: Double?, z: Double?
+            if let p = s.position {
+                var px = Composer2Math.clamp01((p.x + 1) / 2)
+                let pz = Composer2Math.clamp01((1 - p.z) / 2)
+                if fannedSegments, s.isSegment {
+                    px = Composer2Math.clamp01(px + (Double(s.segmentIndex) - Double(s.segmentCount - 1) / 2) * 0.03)
+                }
+                x = px; z = pz
+            } else {
+                x = estimated[s.index].x; z = estimated[s.index].z
+            }
+            out.append(Slot(index: s.index, lightID: s.lightID, name: name,
+                            archetype: s.lightID.flatMap { byID[$0]?.archetype }, x: x, z: z,
+                            capability: s.capability,
+                            segment: s.isSegment ? (s.segmentIndex + 1, s.segmentCount) : nil))
+        }
+        let source: Source = streaming ? .streaming(areaName: areaName ?? "Entertainment Area") : .roomMode
+        return Composer2SlotLayout(slots: out, source: source,
+                                   positionsAreEstimated: !allPositioned || fannedSegments)
+    }
 
     /// Streaming order: one slot per Entertainment channel, in the bridge's
     /// channel order, with the channel's real position.
@@ -91,7 +151,8 @@ struct Composer2SlotLayout: Equatable {
             slots.append(Slot(index: i, lightID: r.lightID, name: name,
                               archetype: r.lightID.flatMap { byID[$0]?.archetype },
                               x: Composer2Math.clamp01((r.x + 1) / 2),
-                              z: Composer2Math.clamp01((1 - r.z) / 2)))
+                              z: Composer2Math.clamp01((1 - r.z) / 2),
+                              capability: r.lightID.flatMap { byID[$0] }.map(Self.capability)))
         }
         return Composer2SlotLayout(slots: slots, source: .streaming(areaName: config.name), positionsAreEstimated: false)
     }
@@ -119,7 +180,8 @@ struct Composer2SlotLayout: Equatable {
         let estimated = semanticPositions(count: names.count, archetypes: names.map(\.archetype))
         let slots = names.enumerated().map { i, n in
             Slot(index: i, lightID: n.lightID, name: n.name, archetype: n.archetype,
-                 x: estimated[i].x, z: estimated[i].z)
+                 x: estimated[i].x, z: estimated[i].z,
+                 capability: byID[n.lightID].map(Self.capability))
         }
         return Composer2SlotLayout(slots: slots, source: .roomMode, positionsAreEstimated: true)
     }
@@ -131,9 +193,16 @@ struct Composer2SlotLayout: Equatable {
         let positions = semanticPositions(count: lights.count, archetypes: lights.map(\.archetype))
         let slots = lights.enumerated().map { i, l in
             Slot(index: i, lightID: l.id, name: l.name, archetype: l.archetype,
-                 x: positions[i].x, z: positions[i].z)
+                 x: positions[i].x, z: positions[i].z, capability: capability(l))
         }
         return Composer2SlotLayout(slots: slots, source: .estimated, positionsAreEstimated: true)
+    }
+
+    /// Capability from the UI light model (colour → tunable white → dimmable).
+    static func capability(_ light: LightDisplayItem) -> CompositionSlotCapability {
+        if light.supportsColor { return .color }
+        if light.supportsColorTemp { return .tunableWhite }
+        return .dimmable
     }
 
     // MARK: Semantic layout

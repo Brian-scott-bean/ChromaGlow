@@ -36,6 +36,9 @@ final class Composer2LiveOutput: CompositionFrameSource, @unchecked Sendable {
     /// Host time when the LIVE loop last asked for a frame (0 = never).
     private(set) var lastLiveRenderAt: Double = 0
 
+    /// The exact slots the live loop is driving (Composer 2.1), empty otherwise.
+    private(set) var liveSlots: [CompositionRenderSlot] = []
+
     private var plans: [Composer2LayerPlan] = []
     private var plansDirty = true
     private var frameBuffer: [Composer2Frame] = []
@@ -72,6 +75,7 @@ final class Composer2LiveOutput: CompositionFrameSource, @unchecked Sendable {
         geometryFromBox = false
         cachedRadial = []
         cachedAngular = []
+        liveSlots = []
         lastLiveRenderAt = 0
     }
 
@@ -80,7 +84,8 @@ final class Composer2LiveOutput: CompositionFrameSource, @unchecked Sendable {
     func renderFrames(time: Double, channelIDs: [Int], params: CompositionParamBox,
                       features: AudioFeatures, beat: BeatSnapshot, hostNow: Double) -> [LightFrame] {
         lastLiveRenderAt = hostNow
-        installGeometry(count: channelIDs.count, radial: params.radialPositions, angular: params.angularPositions)
+        installGeometry(count: channelIDs.count, radial: params.radialPositions,
+                        angular: params.angularPositions, slots: params.renderSlots)
         let frames = evaluate(time: time, features: features, beat: beat, hostNow: hostNow)
         guard frames.count == channelIDs.count else { return [] }
         var out: [LightFrame] = []
@@ -116,7 +121,30 @@ final class Composer2LiveOutput: CompositionFrameSource, @unchecked Sendable {
         return frameBuffer
     }
 
-    private func installGeometry(count: Int, radial: [Double], angular: [Double]) {
+    private func installGeometry(count: Int, radial: [Double], angular: [Double],
+                                 slots: [CompositionRenderSlot]) {
+        // Composer 2.1: exact slots win. The orchestrator's own order carries
+        // light identity, segments and real positions; nothing is reconstructed.
+        if slots.count == count, count > 0 {
+            if geometryFromBox, liveSlots == slots, geometry.count == count { return }
+            liveSlots = slots
+            let ids = slots.map { $0.lightID ?? "slot-\($0.index)" }
+            if slots.allSatisfy({ $0.position != nil }) {
+                geometry = Composer2SlotGeometry(
+                    points: slots.map { (x: $0.position?.x ?? 0.5, z: $0.position?.z ?? 0.5) },
+                    lightIDs: ids)
+            } else if radial.count == count, angular.count == count {
+                geometry = Composer2SlotGeometry(radial: radial, angular: angular, lightIDs: ids)
+            } else {
+                geometry = .linear(count: count, lightIDs: ids)
+            }
+            cachedRadial = radial
+            cachedAngular = angular
+            geometryFromBox = true
+            plansDirty = true
+            return
+        }
+        liveSlots = []
         let usable = radial.count == count && angular.count == count && count > 0
         if usable {
             if geometryFromBox, cachedRadial == radial, cachedAngular == angular, geometry.count == count { return }
