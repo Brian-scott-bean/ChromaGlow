@@ -2372,7 +2372,8 @@ private struct BridgeSaveResultSheet: ViewModifier {
                         factRow("Playing now", result.isRunningOnBridge
                                 ? "Yes, on the bridge" : "Not confirmed")
                         factRow("Local copy", result.createdLocalPreset
-                                ? "In My Creations" : "None")
+                                ? "In My Creations"
+                                : (result.alreadyInLibrary ? "Already in your library" : "None"))
                         factRow("After you reopen ChromaGlow",
                                 result.succeeded
                                 ? (result.stopSurvivesRelaunch
@@ -2385,7 +2386,7 @@ private struct BridgeSaveResultSheet: ViewModifier {
                                    ? "ChromaGlow will offer to remove it again"
                                    : "It may not be findable — remove it now"))
 
-                        if !result.createdLocalPreset {
+                        if !result.createdLocalPreset && !result.alreadyInLibrary {
                             Text(BridgeSaveCopy.noLocalPreset)
                                 .font(.system(size: 12))
                                 .foregroundStyle(.white.opacity(0.6))
