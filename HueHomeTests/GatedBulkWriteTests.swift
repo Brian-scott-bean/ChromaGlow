@@ -373,6 +373,31 @@ final class GatedBulkWriteTests: XCTestCase {
                        slots, "under the 64 cap every slot is kept as-is")
     }
 
+    /// A tapped automation is buffered for the cold-start drain; an entry
+    /// that sat undrained (e.g. while the drain was gated off) must expire,
+    /// not replay "Sleep" at 7 am on some later launch.
+    func testPendingAutomationTapExpiresInsteadOfReplayingLater() throws {
+        let suite = "test.pendingAutomation.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let key = PendingAutomation.presetKey
+        let tappedAt = Date(timeIntervalSince1970: 1_000_000)
+
+        PendingAutomation.store("sleep", forKey: key, now: tappedAt, defaults: defaults)
+        XCTAssertEqual(PendingAutomation.take(forKey: key, now: tappedAt.addingTimeInterval(30),
+                                              defaults: defaults), "sleep")
+        XCTAssertNil(PendingAutomation.take(forKey: key, now: tappedAt.addingTimeInterval(31),
+                                            defaults: defaults), "taken exactly once")
+
+        PendingAutomation.store("sleep", forKey: key, now: tappedAt, defaults: defaults)
+        XCTAssertNil(PendingAutomation.take(forKey: key, now: tappedAt.addingTimeInterval(9 * 3600),
+                                            defaults: defaults), "a stale tap is discarded")
+        XCTAssertNil(defaults.string(forKey: key), "…and removed, so it can never replay")
+
+        defaults.set("relax", forKey: key)   // unstamped entry from an older build
+        XCTAssertNil(PendingAutomation.take(forKey: key, now: tappedAt, defaults: defaults))
+    }
+
     // ──────────────────────────────────────────────
     // MARK: - M-14: same-color frames collapse to one grouped_light PUT
     // ──────────────────────────────────────────────

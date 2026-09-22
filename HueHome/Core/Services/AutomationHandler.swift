@@ -123,7 +123,7 @@ extension AppDelegate {
         if actionType == "effect", !effectID.isEmpty {
             switch delivery {
             case .tapped:
-                UserDefaults.standard.set(effectID, forKey: "pendingAutomationEffectID")
+                PendingAutomation.store(effectID, forKey: PendingAutomation.effectKey)
             case .foreground:
                 DispatchQueue.main.async {
                     NotificationCenter.default.post(
@@ -136,7 +136,7 @@ extension AppDelegate {
         } else if !presetID.isEmpty {
             switch delivery {
             case .tapped:
-                UserDefaults.standard.set(presetID, forKey: "pendingAutomationPresetID")
+                PendingAutomation.store(presetID, forKey: PendingAutomation.presetKey)
             case .foreground:
                 DispatchQueue.main.async {
                     NotificationCenter.default.post(
@@ -149,6 +149,45 @@ extension AppDelegate {
         } else {
             log.warning("handle(userInfo:): no valid preset or effect ID found — skipping")
         }
+    }
+}
+
+// MARK: - Pending (tapped) automation buffer
+
+/// Cold-start buffer for a TAPPED automation notification: `didReceive`
+/// stores it, AppRootView's cold-start / scenePhase drains apply it once the
+/// orchestrator is ready.
+///
+/// Entries are timestamped and expire: an unstamped key used to survive until
+/// ANY later launch drained it (e.g. the tap landed while the drain was
+/// gated off in demo), replaying "Sleep" at 7 am.
+enum PendingAutomation {
+    static let presetKey = "pendingAutomationPresetID"
+    static let effectKey = "pendingAutomationEffectID"
+    /// A tap is honoured for this long; older entries are discarded unapplied.
+    static let maxAge: TimeInterval = 10 * 60
+
+    private static func stampKey(_ key: String) -> String { key + ".queuedAt" }
+
+    static func store(_ id: String, forKey key: String,
+                      now: Date = Date(), defaults: UserDefaults = .standard) {
+        defaults.set(id, forKey: key)
+        defaults.set(now, forKey: stampKey(key))
+    }
+
+    /// Removes the entry and returns its id only if it was queued within
+    /// `maxAge` (a clock that moved backwards counts as stale). Unstamped
+    /// entries from older builds are discarded.
+    static func take(forKey key: String,
+                     now: Date = Date(), defaults: UserDefaults = .standard) -> String? {
+        let id = defaults.string(forKey: key)
+        let queuedAt = defaults.object(forKey: stampKey(key)) as? Date
+        defaults.removeObject(forKey: key)
+        defaults.removeObject(forKey: stampKey(key))
+        guard let id, !id.isEmpty, let queuedAt else { return nil }
+        let age = now.timeIntervalSince(queuedAt)
+        guard age >= 0, age <= maxAge else { return nil }
+        return id
     }
 }
 
