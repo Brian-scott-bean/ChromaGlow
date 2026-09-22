@@ -739,6 +739,9 @@ actor HueEntertainmentClient {
                 // the handshake timeout) never read as a loss.
                 guard !gate.isResumed else {
                     if let reason = Self.postHandshakeLossReason(newState) {
+                        // A failed connection must be cancelled to release it
+                        // (idempotent for one the actor already cancelled).
+                        if case .failed = newState { conn.cancel() }
                         Task { await self.handleConnectionLost(conn, reason: reason) }
                     }
                     return
@@ -758,6 +761,12 @@ actor HueEntertainmentClient {
                     }
 
                 case .failed(let error):
+                    // Cancel whether or not this branch wins the gate: a
+                    // `.failed` NWConnection holds its resources — and this
+                    // handler, which captures it — until it is cancelled, so
+                    // every failed handshake used to leak one for the life of
+                    // the process.
+                    conn.cancel()
                     guard gate.tryResume() else { return }
                     Task { await self.setError("DTLS failed: \(error.localizedDescription)") }
                     continuation.resume(throwing: EntertainmentError.dtlsFailed(error))
