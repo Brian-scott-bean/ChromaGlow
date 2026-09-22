@@ -163,7 +163,16 @@ final class Composer2PlaybackCenter {
         }
         if let current = session {
             if current.roomID == room.id && current.bridgeID == room.bridgeID {
-                if !audition { promoteToApplied() }
+                if document === self.document {
+                    if !audition { promoteToApplied() }
+                } else {
+                    // A DIFFERENT look for the room that is already playing
+                    // (a saved look tapped on the Studio card, or a look
+                    // opened in Composer 2 and sent Live): hand the running
+                    // transport the new composition. Returning early here
+                    // used to leave the old look playing and say nothing.
+                    adopt(document: document, output: output, audition: audition)
+                }
                 return status
             }
             await stopCore()
@@ -261,6 +270,33 @@ final class Composer2PlaybackCenter {
         let box = CompositionParamBox(palette: palette, motion: motion, envelope: envelope, reaction: reaction)
         box.frameSource = output
         return box
+    }
+
+    /// Swap the look on the session that is already live in this room. The
+    /// transport, its exact slots and its Now Playing row stay; only the
+    /// frame source, the document and the audition flag change. The newest
+    /// request decides audition-vs-applied, exactly as a fresh start would.
+    private func adopt(document new: Composer2Document, output newOutput: Composer2LiveOutput, audition: Bool) {
+        guard let box, var s = session else { return }
+        if let previous = self.document {
+            previous.onEdit = nil
+            // The running transport's layout is the truth for the new look too.
+            new.roomContext.layout = previous.roomContext.layout
+            new.roomContext.lights = previous.roomContext.lights
+        }
+        if let previousOutput = self.output, previousOutput !== newOutput {
+            previousOutput.releaseLiveGeometry()
+        }
+        newOutput.layoutLightIDs = new.roomContext.layout.lightIDs
+        box.frameSource = newOutput
+        self.output = newOutput
+        self.document = new
+        new.onEdit = { [weak self] in self?.noteEdit() }
+        s.isAudition = audition
+        session = s
+        // The new runtime has not rendered yet; do not read that as silence.
+        lastBecameActiveAt = now()
+        noteEdit()
     }
 
     // MARK: Attended takeover

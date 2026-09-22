@@ -408,6 +408,44 @@ final class Composer2LabRecoveryTests: XCTestCase {
         XCTAssertNil(c.session)
     }
 
+    /// Tapping a second saved look while the first plays in the same room
+    /// must switch looks — it used to return early and keep the old one.
+    func testSecondSavedLookInTheSameRoomReplacesThePlayingOneWithoutRestarting() async {
+        let gw = Composer2FakeGateway()
+        let c = center()
+        let first = Composer2PresetLibrary.lavaLamp.duplicated(name: "First", at: Date(timeIntervalSince1970: 1))
+        let second = Composer2PresetLibrary.thunderstorm.duplicated(name: "Second", at: Date(timeIntervalSince1970: 2))
+        let doc1 = document(composition: first)
+        let out1 = Composer2LiveOutput(composition: first)
+        _ = await c.start(document: doc1, output: out1, gateway: gw, audition: false)
+        let box = gw.boxes.first
+        XCTAssertTrue(box?.frameSource === out1)
+
+        let doc2 = document(composition: second)
+        let out2 = Composer2LiveOutput(composition: second)
+        let status = await c.start(document: doc2, output: out2, gateway: gw, audition: false)
+        XCTAssertEqual(status, .live)
+        XCTAssertEqual(gw.startCalls.count, 1, "the running transport is reused, not restarted")
+        XCTAssertEqual(gw.stopCalls, [], "no stop between the two looks")
+        XCTAssertEqual(c.session?.compositionID, second.id)
+        XCTAssertEqual(c.session?.compositionName, "Second")
+        XCTAssertEqual(gw.publishCalls.last?.name, "Second", "the Now Playing row follows the new look")
+        XCTAssertTrue(box?.frameSource === out2, "the lights now render the second look")
+        XCTAssertTrue(c.output === out2)
+        XCTAssertTrue(c.retainedDocument(for: "r1") === doc2)
+
+        // Edits to the first document no longer reach the runtime.
+        doc1.rename("Stale")
+        XCTAssertEqual(c.session?.compositionName, "Second")
+        // Edits to the second one do.
+        doc2.rename("Second, edited")
+        XCTAssertEqual(c.session?.compositionName, "Second, edited")
+
+        await c.stop(gateway: gw)
+        XCTAssertEqual(gw.stopCalls, ["r1"])
+        XCTAssertNil(box?.frameSource)
+    }
+
     func testDocumentSaveOwnershipAndLegacyImport() throws {
         let url = tempDir.appendingPathComponent("composer2-compositions.json")
         let store = Composer2Store(fileURL: url)
