@@ -727,7 +727,22 @@ actor HueEntertainmentClient {
             let gate = ContinuationGate()
 
             conn.stateUpdateHandler = { [weak self] newState in
-                guard let self, !gate.isResumed else { return }
+                guard let self else { return }
+                // Once the handshake has been decided the continuation is
+                // spent — but the connection can still die. A post-ready
+                // `.failed`/`.cancelled` used to be dropped right here, so a
+                // session the bridge had ended looked alive until (if ever) a
+                // send reported an error. Route it into the same bounded
+                // reconnect → terminal-failure path a send error takes. The
+                // actor ignores it unless `conn` is still the INSTALLED
+                // connection, so our own cancels (stop, send-error teardown,
+                // the handshake timeout) never read as a loss.
+                guard !gate.isResumed else {
+                    if let reason = Self.postHandshakeLossReason(newState) {
+                        Task { await self.handleConnectionLost(conn, reason: reason) }
+                    }
+                    return
+                }
                 switch newState {
                 case .ready:
                     guard gate.tryResume() else { return }
@@ -795,11 +810,54 @@ actor HueEntertainmentClient {
         // no-oped and the lights froze on their last frame for the rest of
         // the session. Cancel the dead connection and drive a bounded
         // reconnect; frames resume automatically once streaming again.
-        state = .error("Send failed")
+        dropConnectionAndReconnect(reason: "Send failed")
+    }
+
+    /// Which post-handshake connection states mean the session is gone.
+    /// Pure so the routing rule is testable without a live DTLS socket.
+    nonisolated static func postHandshakeLossReason(_ state: NWConnection.State) -> String? {
+        switch state {
+        case .failed(let error): return "DTLS failed: \(error.localizedDescription)"
+        case .cancelled:         return "DTLS cancelled"
+        default:                 return nil
+        }
+    }
+
+    /// The installed connection reported its own death after the handshake.
+    ///
+    /// Same recovery as a send error. Only the INSTALLED connection counts:
+    /// every place this actor cancels a connection drops it from `connection`
+    /// in the same actor turn, so a late `.cancelled` for a connection we
+    /// retired — or one that never finished its handshake — is ignored here.
+    ///
+    /// Deliberately DTLS-only, like every reconnect: re-sending REST
+    /// `action=start` from inside the client would re-activate the area without
+    /// passing the orchestrator's foreign-consent choke point
+    /// (`acquireEntertainment`). When another controller took the area, the
+    /// handshake fails, the budget runs out, and `isTerminallyFailed` hands the
+    /// owner its designed failover / session-lost path.
+    func handleConnectionLost(_ lost: NWConnection, reason: String) {
+        guard let current = connection, current === lost else { return }
+        log.error("Entertainment connection lost after handshake: \(reason)")
+        dropConnectionAndReconnect(reason: "Connection lost")
+    }
+
+    private func dropConnectionAndReconnect(reason: String) {
+        state = .error(reason)
         connection?.cancel()
         connection = nil
         scheduleReconnect()
     }
+
+    #if DEBUG
+    /// TEST SEAM: install a connection as the live one without a handshake, so
+    /// the post-handshake loss routing is testable. The connection is never
+    /// started.
+    func testInstallConnection(_ conn: NWConnection) {
+        connection = conn
+        state = .streaming
+    }
+    #endif
 
     // MARK: - Reconnect (M-10)
 
