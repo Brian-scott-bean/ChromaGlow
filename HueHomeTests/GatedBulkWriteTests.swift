@@ -238,6 +238,25 @@ final class GatedBulkWriteTests: XCTestCase {
             "still suspended after teardown — only the next configure lifts it")
     }
 
+    /// Family Sharing: presets/effects set level + CT, so a power-only guest
+    /// grant must exclude them — only All Off (power) may reach that bridge.
+    func testPowerOnlyGuestGrantBlocksPresetsAndEffectsButNotAllOff() async {
+        let (orchestrator, client) = makeBulkSUT(roomCount: 2)
+        orchestrator.testSetGuestGrants(["bridge-1": GuestGrantSnapshot(
+            allowedGroupIDs: ["room-1", "room-2"], features: [GuestFeature.onOff],
+            profileName: "Alex")])
+
+        await orchestrator.applyAutomationPreset(id: "relax")
+        await orchestrator.applyAutomationEffect(id: "winddown")
+        await orchestrator.applyAutomationEffect(id: "candle")
+        XCTAssertTrue(client.attemptsByID.isEmpty,
+            "a power-only grant must not receive preset/effect writes")
+
+        await orchestrator.turnAllOff()
+        XCTAssertEqual(Set(client.attemptsByID.keys), ["gl-1", "gl-2"],
+            "All Off only needs power — it still reaches the granted rooms")
+    }
+
     // ──────────────────────────────────────────────
     // MARK: - Effect automations apply the effect's OWN look
     // ──────────────────────────────────────────────

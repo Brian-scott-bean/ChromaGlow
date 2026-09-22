@@ -87,7 +87,8 @@ struct ToggleRoomIntent: AppIntent {
         let store = WidgetDataStore.shared
         guard let group = store.groups.first(where: { $0.id == roomID }),
               let creds = store.credentials(for: group.bridgeID),
-              let glID  = group.groupedLightId else {
+              let glID  = group.groupedLightId,
+              store.features(for: group.bridgeID).canPower else {   // Family Sharing grant
             return .result()
         }
         let newState = !currentlyOn
@@ -128,7 +129,8 @@ struct SetRoomPowerIntent: SetValueIntent {
         let store = WidgetDataStore.shared
         guard let group = store.groups.first(where: { $0.id == roomID }),
               let creds = store.credentials(for: group.bridgeID),
-              let glID  = group.groupedLightId else {
+              let glID  = group.groupedLightId,
+              store.features(for: group.bridgeID).canPower else {   // Family Sharing grant
             return .result()
         }
         let ok = await BridgeWriter.patchGroupedLight(
@@ -166,7 +168,9 @@ struct AdjustBrightnessIntent: AppIntent {
         let store = WidgetDataStore.shared
         guard let group = store.groups.first(where: { $0.id == roomID }),
               let creds = store.credentials(for: group.bridgeID),
-              let glID  = group.groupedLightId else {
+              let glID  = group.groupedLightId,
+              // Family Sharing: this write sets the level AND turns it on.
+              store.features(for: group.bridgeID).canPowerAndAdjust else {
             return .result()
         }
         let target = min(100, max(1, group.brightness + Double(delta)))
@@ -203,7 +207,8 @@ struct ActivateSceneIntent: AppIntent {
 
     func perform() async throws -> some IntentResult {
         let store = WidgetDataStore.shared
-        guard let creds = store.credentials(for: bridgeID.isEmpty ? nil : bridgeID) else {
+        guard let creds = store.credentials(for: bridgeID.isEmpty ? nil : bridgeID),
+              store.features(for: bridgeID.isEmpty ? nil : bridgeID).canRecallScenes else {
             return .result()
         }
         let ok = await BridgeWriter.recallScene(id: sceneID, ip: creds.ip, token: creds.token)
@@ -242,7 +247,12 @@ struct ApplyPresetIntent: AppIntent {
     func perform() async throws -> some IntentResult {
         let store = WidgetDataStore.shared
         guard let preset = LightingPreset.find(presetID) else { return .result() }
-        let targets = store.groups.filter { groupID == nil || $0.id == groupID }
+        // Family Sharing: a preset turns lights on AND sets their level.
+        let features = store.guestFeatures
+        let targets = store.groups.filter {
+            (groupID == nil || $0.id == groupID)
+                && WidgetDataStore.features(for: $0.bridgeID, in: features).canPowerAndAdjust
+        }
 
         await withTaskGroup(of: Void.self) { group in
             for item in targets {
@@ -348,8 +358,13 @@ struct AllOffIntent: AppIntent {
 
     func perform() async throws -> some IntentResult {
         let store = WidgetDataStore.shared
+        // Family Sharing: only groups whose grant includes power.
+        let features = store.guestFeatures
+        let targets = store.groups.filter {
+            WidgetDataStore.features(for: $0.bridgeID, in: features).canPower
+        }
         await withTaskGroup(of: Void.self) { group in
-            for item in store.groups {
+            for item in targets {
                 guard let glID = item.groupedLightId,
                       let creds = store.credentials(for: item.bridgeID) else { continue }
                 let capturedID = glID
@@ -360,7 +375,7 @@ struct AllOffIntent: AppIntent {
                 }
             }
         }
-        store.markAllGroups(on: false)
+        store.markAllGroups(on: false, onlyGroupIDs: Set(targets.map(\.id)))
         WidgetCenter.shared.reloadAllTimelines()
         return .result()
     }
@@ -397,8 +412,16 @@ struct SetAllLightsPowerIntent: SetValueIntent {
                "dynamics":          ["duration": 800]]
             : ["on": ["on": false]]
 
+        // Family Sharing: "on" is the welcome-home level + warmth (power AND
+        // adjust); "off" needs only power.
+        let features = store.guestFeatures
+        let turningOn = value
+        let targets = store.groups.filter {
+            let f = WidgetDataStore.features(for: $0.bridgeID, in: features)
+            return turningOn ? f.canPowerAndAdjust : f.canPower
+        }
         await withTaskGroup(of: Void.self) { group in
-            for item in store.groups {
+            for item in targets {
                 guard let glID = item.groupedLightId,
                       let creds = store.credentials(for: item.bridgeID) else { continue }
                 let capturedID = glID
@@ -409,7 +432,8 @@ struct SetAllLightsPowerIntent: SetValueIntent {
                 }
             }
         }
-        store.markAllGroups(on: value, brightness: value ? welcome.brightness : nil)
+        store.markAllGroups(on: value, brightness: value ? welcome.brightness : nil,
+                            onlyGroupIDs: Set(targets.map(\.id)))
         WidgetCenter.shared.reloadAllTimelines()
         return .result()
     }

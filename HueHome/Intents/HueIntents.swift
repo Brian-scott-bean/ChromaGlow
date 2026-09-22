@@ -60,6 +60,9 @@ struct GroupPowerIntent: AppIntent {
         guard let glId = group.groupedLightId else {
             throw IntentError.noGroupedLight(group.name)
         }
+        guard WidgetDataStore.shared.features(for: group.bridgeID).canPower else {
+            throw IntentError.notPermitted(group.name)
+        }
         do {
             try await HueIntentAPIClient.setGroupedLight(
                 id: glId, on: power.isOn, ip: creds.ip, token: creds.token
@@ -100,6 +103,10 @@ struct GroupBrightnessIntent: AppIntent {
         guard let glId = group.groupedLightId else {
             throw IntentError.noGroupedLight(group.name)
         }
+        // The brightness write also turns the group on.
+        guard WidgetDataStore.shared.features(for: group.bridgeID).canPowerAndAdjust else {
+            throw IntentError.notPermitted(group.name)
+        }
         do {
             try await HueIntentAPIClient.setGroupedLight(
                 id: glId, brightness: Double(brightness), ip: creds.ip, token: creds.token
@@ -128,6 +135,9 @@ struct RecallSceneIntent: AppIntent {
     func perform() async throws -> some IntentResult & ProvidesDialog {
         guard let creds = WidgetDataStore.shared.credentials(for: scene.bridgeID) else {
             throw IntentError.noBridgeConnection
+        }
+        guard WidgetDataStore.shared.features(for: scene.bridgeID).canRecallScenes else {
+            throw IntentError.notPermitted(scene.name)
         }
         do {
             try await HueIntentAPIClient.recallScene(
@@ -166,6 +176,10 @@ struct GroupColorIntent: AppIntent {
         }
         guard let glId = group.groupedLightId else {
             throw IntentError.noGroupedLight(group.name)
+        }
+        // The colour write also turns the group on.
+        guard WidgetDataStore.shared.features(for: group.bridgeID).canPowerAndAdjust else {
+            throw IntentError.notPermitted(group.name)
         }
         do {
             switch SiriColorTable.payload(for: color) {
@@ -232,10 +246,15 @@ struct LightingPresetIntent: AppIntent {
         let store = WidgetDataStore.shared
         let scoped = Self.presetTargets(groups: store.groups, scopeID: group?.id)
         // Whole-home only: drop zones that would double-hit room lights.
-        let targets = group == nil ? Self.dedupedWholeHomeTargets(scoped) : scoped
-        guard !targets.isEmpty else {
+        let candidates = group == nil ? Self.dedupedWholeHomeTargets(scoped) : scoped
+        guard !candidates.isEmpty else {
             throw group == nil ? IntentError.noBridgeConnection
                                : IntentError.unknownEntity("room")
+        }
+        // Family Sharing: a preset turns lights on AND sets their level.
+        let targets = Self.permitted(candidates, features: store.guestFeatures) { $0.canPowerAndAdjust }
+        guard !targets.isEmpty else {
+            throw IntentError.notPermitted(group?.name ?? "your lights")
         }
 
         let outcomes = await Self.fanOut(to: targets, store: store) { glId, creds in
@@ -285,7 +304,13 @@ struct AllLightsIntent: AppIntent {
         guard !store.groups.isEmpty else { throw IntentError.noBridgeConnection }
 
         let isOn = power.isOn
-        let targets = Self.dedupedWholeHomeTargets(store.groups)
+        // Family Sharing: "on" is the welcome-home preset (level + warmth);
+        // "off" needs only power.
+        let targets = Self.permitted(Self.dedupedWholeHomeTargets(store.groups),
+                                     features: store.guestFeatures) {
+            isOn ? $0.canPowerAndAdjust : $0.canPower
+        }
+        guard !targets.isEmpty else { throw IntentError.notPermitted("your lights") }
         let outcomes = await Self.fanOut(to: targets, store: store) { glId, creds in
             if isOn {
                 try await HueIntentAPIClient.applyPreset(Self.welcomeHome, to: glId, ip: creds.ip, token: creds.token)
@@ -335,7 +360,10 @@ struct StopLightEffectsIntent: AppIntent {
         // design — kill them from here. Per-group failures are tolerated:
         // some firmware 400s no_effect when nothing is running.
         let store = WidgetDataStore.shared
-        _ = await Self.fanOut(to: Self.dedupedWholeHomeTargets(store.groups),
+        // Family Sharing: clearing an effect changes light state ("adjust").
+        let targets = Self.permitted(Self.dedupedWholeHomeTargets(store.groups),
+                                     features: store.guestFeatures) { $0.canAdjust }
+        _ = await Self.fanOut(to: targets,
                               store: store) { glId, creds in
             try await HueIntentAPIClient.stopNativeEffects(id: glId, ip: creds.ip, token: creds.token)
         }
@@ -355,6 +383,16 @@ extension AppIntent {
     static func dedupedWholeHomeTargets(_ groups: [WidgetRoomSnapshot]) -> [WidgetRoomSnapshot] {
         let rooms = groups.filter { !$0.isZone }
         return rooms.isEmpty ? groups : rooms
+    }
+
+    /// Family Sharing: keep only the groups whose bridge's guest grant allows
+    /// this write (owned bridges and nil ids are unrestricted). Pure.
+    static func permitted(
+        _ groups: [WidgetRoomSnapshot],
+        features: [String: WidgetGuestFeatures],
+        _ allows: (WidgetGuestFeatures) -> Bool
+    ) -> [WidgetRoomSnapshot] {
+        groups.filter { allows(WidgetDataStore.features(for: $0.bridgeID, in: features)) }
     }
 
     /// Write to many groups, collecting per-group outcomes for honest
@@ -417,6 +455,8 @@ enum IntentError: Swift.Error, CustomLocalizedStringResourceConvertible {
     case staleSnapshot
     case unknownEntity(String)
     case partialFailure(String, [String])
+    /// Family Sharing: the guest grant for this bridge doesn't include it.
+    case notPermitted(String)
 
     var localizedStringResource: LocalizedStringResource {
         switch self {
@@ -432,6 +472,8 @@ enum IntentError: Swift.Error, CustomLocalizedStringResourceConvertible {
             return "That \(kind) no longer exists. Open ChromaGlow to see what's available."
         case .partialFailure(let operation, let failedNames):
             return "\(operation) mostly worked, but \(failedNames.joined(separator: ", ")) didn't respond."
+        case .notPermitted(let name):
+            return "Your shared access to \(name) doesn't include that."
         }
     }
 }

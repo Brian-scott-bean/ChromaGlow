@@ -39,6 +39,21 @@ struct WatchBridgeCredentials: Codable {
     let token: String
 }
 
+/// Family Sharing: what a guest grant allows on one bridge (mirror of the
+/// phone's WidgetGuestFeatures — same JSON keys). Only GRANTED bridges have
+/// an entry; a missing entry (an owned bridge, or a context from a phone
+/// build that predates this) is unrestricted.
+struct WatchGuestFeatures: Codable, Equatable {
+    let canPower: Bool
+    let canAdjust: Bool
+    let canRecallScenes: Bool
+
+    static let unrestricted = WatchGuestFeatures(canPower: true, canAdjust: true, canRecallScenes: true)
+
+    /// Preset / level writes turn lights on AND set their state.
+    var canPowerAndAdjust: Bool { canPower && canAdjust }
+}
+
 // MARK: - Scene Model
 
 struct WatchScene: Identifiable, Codable {
@@ -112,6 +127,7 @@ final class WatchStore: NSObject, ObservableObject {
         static let bridges  = "wc_bridges_v1"   // Keychain account (was a UserDefaults key pre-D-018)
         static let bridgeIP = "wc_bridge_ip"
         static let token    = "wc_token"        // Keychain account (was a UserDefaults key pre-D-018)
+        static let features = "wc_features_v1"  // [bridgeID: WatchGuestFeatures] — non-secret
     }
 
     // App Group shared with complication extension (watch-side container).
@@ -120,6 +136,19 @@ final class WatchStore: NSObject, ObservableObject {
 
     private var bridgeIP: String? { UserDefaults.standard.string(forKey: CacheKey.bridgeIP) }
     private var token:    String? { SharedKeychainStore.loadString(account: CacheKey.token) }
+    /// Family Sharing feature limits per granted bridge (from the phone).
+    private var guestFeatures: [String: WatchGuestFeatures] {
+        guard let data = UserDefaults.standard.data(forKey: CacheKey.features),
+              let decoded = try? JSONDecoder().decode([String: WatchGuestFeatures].self, from: data)
+        else { return [:] }
+        return decoded
+    }
+
+    private func features(for bridgeID: String?) -> WatchGuestFeatures {
+        guard let bridgeID, let features = guestFeatures[bridgeID] else { return .unrestricted }
+        return features
+    }
+
     private var bridges: [String: WatchBridgeCredentials] {
         guard let data = SharedKeychainStore.load(account: CacheKey.bridges),
               let decoded = try? JSONDecoder().decode([String: WatchBridgeCredentials].self, from: data)
@@ -225,7 +254,8 @@ final class WatchStore: NSObject, ObservableObject {
 
     func toggleRoom(_ room: WatchRoom) async {
         guard let glID = room.groupedLightId,
-              let creds = credentials(for: room.bridgeID) else { return }
+              let creds = credentials(for: room.bridgeID),
+              features(for: room.bridgeID).canPower else { return }
         let newState = !room.isOn
         // Update whichever list owns this group (room OR zone).
         if let idx = rooms.firstIndex(where: { $0.id == room.id }) { rooms[idx].isOn = newState }
@@ -258,7 +288,8 @@ final class WatchStore: NSObject, ObservableObject {
     /// coalescing writer. Deliberately synchronous: callers must not await a PUT.
     func setBrightness(_ brightness: Double, for room: WatchRoom) {
         guard let glID  = room.groupedLightId,
-              let creds = credentials(for: room.bridgeID) else { return }
+              let creds = credentials(for: room.bridgeID),
+              features(for: room.bridgeID).canPowerAndAdjust else { return }
         let clamped = min(100, max(1, brightness.rounded()))
 
         applyLocalBrightness(clamped, groupID: room.id)
@@ -304,14 +335,23 @@ final class WatchStore: NSObject, ObservableObject {
 
     /// Whole-home apply — the home screen's chips.
     func applyPreset(_ preset: WatchPreset) async {
-        for i in rooms.indices { rooms[i].isOn = true; rooms[i].brightness = preset.brightness }
-        for i in zones.indices { zones[i].isOn = true; zones[i].brightness = preset.brightness }
-        await sendPreset(preset, to: allGroups)
+        // Family Sharing: only groups whose grant allows power AND adjust —
+        // and only those are painted optimistically.
+        let targets = allGroups.filter { features(for: $0.bridgeID).canPowerAndAdjust }
+        let ids = Set(targets.map(\.id))
+        for i in rooms.indices where ids.contains(rooms[i].id) {
+            rooms[i].isOn = true; rooms[i].brightness = preset.brightness
+        }
+        for i in zones.indices where ids.contains(zones[i].id) {
+            zones[i].isOn = true; zones[i].brightness = preset.brightness
+        }
+        await sendPreset(preset, to: targets)
     }
 
     /// Room-scoped apply — the chips INSIDE a room detail. Pressing Energize
     /// while looking at the Kitchen lights the Kitchen, not the whole house.
     func applyPreset(_ preset: WatchPreset, to group: WatchRoom) async {
+        guard features(for: group.bridgeID).canPowerAndAdjust else { return }
         if let idx = rooms.firstIndex(where: { $0.id == group.id }) {
             rooms[idx].isOn = true; rooms[idx].brightness = preset.brightness
         }
@@ -344,11 +384,13 @@ final class WatchStore: NSObject, ObservableObject {
     // MARK: - All Off
 
     func allOff() async {
-        for i in rooms.indices { rooms[i].isOn = false }
-        for i in zones.indices { zones[i].isOn = false }
+        let targets = allGroups.filter { features(for: $0.bridgeID).canPower }
+        let ids = Set(targets.map(\.id))
+        for i in rooms.indices where ids.contains(rooms[i].id) { rooms[i].isOn = false }
+        for i in zones.indices where ids.contains(zones[i].id) { zones[i].isOn = false }
         let body: [String: Any] = ["on": ["on": false]]
         await withTaskGroup(of: Void.self) { group in
-            for item in allGroups {
+            for item in targets {
                 guard let glID = item.groupedLightId,
                       let creds = credentials(for: item.bridgeID) else { continue }
                 let gid = glID
@@ -363,7 +405,8 @@ final class WatchStore: NSObject, ObservableObject {
     // MARK: - Recall Scene
 
     func recallScene(_ scene: WatchScene) async {
-        guard let creds = credentials(for: scene.bridgeID) else { return }
+        guard let creds = credentials(for: scene.bridgeID),
+              features(for: scene.bridgeID).canRecallScenes else { return }
         // Optimistically mark the owning group on — reverted if the write dies.
         let prevRoomOn = rooms.first(where: { $0.id == scene.ownerGroupID })?.isOn
         let prevZoneOn = zones.first(where: { $0.id == scene.ownerGroupID })?.isOn
@@ -550,6 +593,13 @@ extension WatchStore: WCSessionDelegate {
         if let scenesData = applicationContext["wc_scenes_v1"] as? Data {
             UserDefaults.standard.set(scenesData, forKey: "wc_scenes_v1")
         }
+        // Family Sharing feature limits: replaced wholesale on every push; a
+        // context without the key (older phone build) means no limits.
+        if let featuresData = applicationContext[CacheKey.features] as? Data {
+            UserDefaults.standard.set(featuresData, forKey: CacheKey.features)
+        } else {
+            UserDefaults.standard.removeObject(forKey: CacheKey.features)
+        }
         // Never clobber stored credentials with an empty/undecodable map.
         if let bridgesData, let bridgeMap, !bridgeMap.isEmpty {
             SharedKeychainStore.save(bridgesData, account: CacheKey.bridges)
@@ -597,6 +647,7 @@ extension WatchStore: WCSessionDelegate {
         ud.removeObject(forKey: CacheKey.bridgeIP)
         ud.removeObject(forKey: CacheKey.token)
         ud.removeObject(forKey: CacheKey.bridges)
+        ud.removeObject(forKey: CacheKey.features)
         BridgePinStore.shared.removeAll()
         let group = UserDefaults(suiteName: "group.com.huehome.pro")
         for key in ["hue_widget_rooms_v1", "hue_widget_zones_v1", "hue_widget_scenes_v1",

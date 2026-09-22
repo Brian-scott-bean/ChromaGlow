@@ -2311,12 +2311,25 @@ final class UnifiedOrchestrator {
         log.info("Automation preset '\(preset.id)' applied to \(self.allRooms.count) rooms")
     }
 
+    /// Which guest features a bulk fan-out needs on a granted bridge.
+    enum BulkWriteRequirement {
+        /// On/off only (All Off).
+        case power
+        /// Turns lights on AND sets brightness / CT / colour / an effect
+        /// (automation presets and effects).
+        case powerAndAdjust
+    }
+
     /// M-08 shared scaffold: one gated grouped_light command per room across
     /// every bridge, failures collected and surfaced — never silent partial
     /// application. All bulk paths (All Off, automation preset/effect) share
     /// this so a fix here fixes all of them.
+    ///
+    /// `requires` defaults to the STRICTER requirement: a new bulk path must
+    /// opt into power-only explicitly, never inherit it by accident.
     private func gatedBulkWrite(
         operation: String,
+        requires requirement: BulkWriteRequirement = .powerAndAdjust,
         perRoom: @escaping @Sendable (_ client: BridgeAPIClient, _ groupedLightID: String) async throws -> Void
     ) async {
         // Demo never writes to a bridge. `clients` survives entering demo
@@ -2329,8 +2342,13 @@ final class UnifiedOrchestrator {
                 guard let client = clients[bridgeID] else { continue }
                 // Family Sharing: a granted bridge without the onOff feature
                 // is excluded from bulk power writes (All Off, automation
-                // fan-outs) — visible is not the same as controllable.
-                guard guestFeatures(for: bridgeID).canPower else { continue }
+                // fan-outs) — visible is not the same as controllable. Presets
+                // and effects also set brightness/CT/effects, so they need the
+                // brightness ("adjust") grant too; checking only onOff let an
+                // automation restyle a guest's power-only rooms.
+                let features = guestFeatures(for: bridgeID)
+                guard features.canPower,
+                      requirement == .power || features.canAdjust else { continue }
                 let gate = commandGate(for: bridgeID)
                 for room in roomItems {
                     guard let glID = room.groupedLightID else { continue }
@@ -2422,7 +2440,7 @@ final class UnifiedOrchestrator {
         log.info("All Off: optimistic update applied, firing API calls…")
         // M-08: paced per-bridge with failure surfacing — All Off must reach
         // EVERY room; a silently dropped PUT left lights on with the card off.
-        await gatedBulkWrite(operation: "All Off") { client, glID in
+        await gatedBulkWrite(operation: "All Off", requires: .power) { client, glID in
             try await client.setGroupedLight(id: glID, on: false)
         }
         log.info("All Off fired across \(self.clients.count) bridge(s)")
@@ -3115,6 +3133,12 @@ final class UnifiedOrchestrator {
                 live:      self.globalScenes,
                 stored:    WidgetDataStore.shared.scenes
             )
+            // Family Sharing: the grant's FEATURE limits ride along (granted
+            // bridges only) so widgets, Control Center, Siri and the watch can
+            // honour them — the room allowlist alone already reaches them via
+            // the pruned dictionaries. Written BEFORE the rooms.
+            let featureSnaps = Self.widgetGuestFeatures(from: self.guestGrantsByBridge)
+            let featuresChanged = WidgetDataStore.shared.write(guestFeatures: featureSnaps)
             let outcome = WidgetDataStore.shared.write(rooms: roomSnaps, zones: zoneSnaps,
                                                        scenes: sceneSnaps,
                                                        reloadOnStructureChange: true)
@@ -3122,17 +3146,31 @@ final class UnifiedOrchestrator {
             // are pure waste (SSE quiet-gaps during a bridge-side dynamic
             // scene scheduled them for hours). The store already stamped
             // freshness; nothing downstream can have changed.
-            guard outcome.contentChanged else { return }
+            guard outcome.contentChanged || featuresChanged else { return }
             WatchSessionManager.shared.push(
                 rooms: roomSnaps,
                 zones: zoneSnaps,
                 scenes: sceneSnaps,
-                bridges: WidgetDataStore.shared.bridges
+                bridges: WidgetDataStore.shared.bridges,
+                guestFeatures: featureSnaps
             )
             // Room/zone/scene names just changed — re-donate so Siri's
             // parameterized phrases recognize them (rides this task's
             // existing 500ms debounce).
-            HueAppShortcuts.updateAppShortcutParameters()
+            if outcome.contentChanged { HueAppShortcuts.updateAppShortcutParameters() }
+        }
+    }
+
+    /// Grant snapshots → the per-bridge feature limits the out-of-app
+    /// surfaces enforce (same fail-closed reading as `guestFeatures(for:)`).
+    nonisolated static func widgetGuestFeatures(
+        from grants: [String: GuestGrantSnapshot]
+    ) -> [String: WidgetGuestFeatures] {
+        grants.mapValues { grant in
+            let features = GuestFeatureSet(features: grant.features)
+            return WidgetGuestFeatures(canPower: features.canPower,
+                                       canAdjust: features.canAdjust,
+                                       canRecallScenes: features.canRecallScenes)
         }
     }
 

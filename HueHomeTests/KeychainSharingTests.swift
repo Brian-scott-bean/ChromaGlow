@@ -240,7 +240,10 @@ final class KeychainSharingTests: XCTestCase {
         store.write(rooms: [WidgetRoomSnapshot(id: "r1", name: "Test Room", archetype: nil,
                                                isOn: true, brightness: 50, lightCount: 1,
                                                groupedLightId: "gl1", bridgeID: "test-bridge")])
+        store.write(guestFeatures: ["test-bridge": WidgetGuestFeatures(
+            canPower: true, canAdjust: false, canRecallScenes: false)])
         XCTAssertNotNil(store.credentials(for: "test-bridge"))
+        XCTAssertFalse(store.features(for: "test-bridge").canAdjust)
 
         store.clearAll()
 
@@ -250,6 +253,7 @@ final class KeychainSharingTests: XCTestCase {
         XCTAssertTrue(store.rooms.isEmpty)
         XCTAssertTrue(store.routing.isEmpty)
         XCTAssertFalse(store.isPaired)
+        XCTAssertTrue(store.guestFeatures.isEmpty, "guest feature limits are wiped too")
         XCTAssertNil(SharedKeychainStore.load(account: SharedKeychainStore.bridgeCredentialsAccount))
     }
 
