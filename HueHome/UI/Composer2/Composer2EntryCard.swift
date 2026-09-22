@@ -17,6 +17,8 @@ struct Composer2EntryCard: View {
     @State private var openComposition: Composer2Composition?
     @State private var renameTarget: Composer2Composition?
     @State private var renameText = ""
+    /// The last one-tap result that needs words (demo, no room, declined…).
+    @State private var cardNotice: String?
     private let center = Composer2PlaybackCenter.shared
     private let store = Composer2Store.shared
 
@@ -28,6 +30,28 @@ struct Composer2EntryCard: View {
             }
             if !store.compositions.isEmpty {
                 savedLooks
+            }
+            if let cardNotice {
+                Text(cardNotice)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.6))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 4)
+                    .transition(.opacity)
+                    .accessibilityAddTraits(.updatesFrequently)
+            }
+        }
+        // A one-tap start that meets another app's show asks HERE: the
+        // Composer 2 screen's prompt is the only other answer, and it is not
+        // on screen — the question used to wait forever and hold every stop.
+        .alert(EntertainmentConsentCopy.takeoverTitle, isPresented: Binding(
+            get: { center.takeoverPending && !center.hasAttachedScreen },
+            set: { if !$0, center.takeoverPending { center.answerTakeover(false) } })) {
+            Button(EntertainmentConsentCopy.keepExisting, role: .cancel) { center.answerTakeover(false) }
+            Button(EntertainmentConsentCopy.takeOver) {
+                HapticManager.shared.light()
+                center.answerTakeover(true)
             }
         }
         .fullScreenCover(isPresented: $isPresented) {
@@ -41,9 +65,19 @@ struct Composer2EntryCard: View {
         .alert("Rename", isPresented: Binding(get: { renameTarget != nil }, set: { if !$0 { renameTarget = nil } })) {
             TextField("Name", text: $renameText)
             Button("Save") {
-                if var target = renameTarget {
+                if let stale = renameTarget {
                     let trimmed = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !trimmed.isEmpty { target.name = trimmed; store.save(target) }
+                    // Rename the CURRENT saved copy, not the snapshot taken
+                    // when the menu opened (a save in between would revert).
+                    if !trimmed.isEmpty, var target = store.composition(id: stale.id) {
+                        target.name = trimmed
+                        store.save(target)
+                        if let open = center.retainedDocument(for: center.session?.roomID),
+                           open.sourceID == target.id, !open.isDirty {
+                            open.rename(trimmed)
+                            open.isDirty = false
+                        }
+                    }
                 }
                 renameTarget = nil
             }
@@ -191,15 +225,26 @@ struct Composer2EntryCard: View {
     /// playing while ChromaGlow is open). Same owner, same seam as the screen.
     private func play(_ composition: Composer2Composition) {
         HapticManager.shared.medium()
+        withAnimation { cardNotice = nil }
         let gateway = Composer2OrchestratorGateway(orchestrator: orchestrator)
-        if center.isLive, center.session?.compositionID == composition.id {
+        // The toggle is room-scoped: the playing look stops only when it is
+        // playing in the room Studio has selected; otherwise the tap plays
+        // it here (the VoiceOver hint says "Play in ‹room›").
+        if center.isLive, center.session?.compositionID == composition.id,
+           center.session?.roomID == selectedRoom?.id {
             Task { await center.stop(gateway: gateway) }
             return
         }
         let document = Composer2Document(composition: composition, roomContext: Composer2RoomContext(room: selectedRoom))
         let output = Composer2LiveOutput(composition: composition)
         Task {
-            _ = await center.start(document: document, output: output, gateway: gateway, audition: false)
+            let status = await center.start(document: document, output: output, gateway: gateway, audition: false)
+            if case .failed(let message) = status {
+                HapticManager.shared.warning()
+                withAnimation { cardNotice = message }
+                // Answered here; the next Composer 2 screen must not show it.
+                center.clearNotice()
+            }
         }
     }
 }

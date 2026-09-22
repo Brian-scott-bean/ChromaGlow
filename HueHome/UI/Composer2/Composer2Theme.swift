@@ -149,6 +149,7 @@ enum Composer2Copy {
     static let liveNoRoom = "Choose a room to send this composition to."
     static let liveForeignController = "Another app is controlling these lights. Take over from Studio, then try Live again."
     static let liveEndedElsewhere = "Stopped — another look took over this room."
+    static let liveEndedLost = "Stopped — the lights stopped answering. Try Live again."
     static let liveSeveralAreas = "Several Entertainment Areas cover this room. Choose one in Studio to stream; playing in Room mode."
     static let micDenied = "Microphone access is off, so audio reactions are paused."
     static let micListening = "Listening…"

@@ -89,16 +89,28 @@ final class Composer2PreviewFeed {
 // MARK: - Heartbeat
 
 /// Pure verdict on whether a live session is still being driven.
+///
+/// Two facts decide it, besides silence: whether the orchestrator still
+/// renders OUR box (`drivingOurs`), and whether anything claims the room.
+///  • Our box, rendering — alive. Our box, silent — reconnecting, then lost.
+///  • Not our box, room claimed, silent — another look REPLACED ours: let go
+///    at once, never stop it.
+///  • Not our box, room unclaimed — a DTLS→REST failover drops the claim
+///    before its awaits and re-claims when Room mode starts, so this is
+///    "reconnecting" for the whole reconnect window; only after it is the
+///    session LOST. (Ending it after one silent second let the failover
+///    finish afterwards and play our look with no owner and no Stop.)
 enum Composer2Heartbeat {
-    enum Verdict: Equatable { case alive, reconnecting, ended }
+    enum Verdict: Equatable { case alive, reconnecting, replaced, lost }
 
     static let silenceTolerance: Double = 1.0
     static let reconnectTolerance: Double = 8.0
 
-    static func verdict(lastLiveRenderAt: Double, startedAt: Double, now: Double, roomStillClaimed: Bool) -> Verdict {
+    static func verdict(lastLiveRenderAt: Double, startedAt: Double, now: Double,
+                        roomStillClaimed: Bool, drivingOurs: Bool = true) -> Verdict {
         let silent = now - max(lastLiveRenderAt, startedAt)
         if silent < silenceTolerance { return .alive }
-        if !roomStillClaimed { return .ended }
-        return silent < reconnectTolerance ? .reconnecting : .ended
+        if !drivingOurs && roomStillClaimed { return .replaced }
+        return silent < reconnectTolerance ? .reconnecting : .lost
     }
 }

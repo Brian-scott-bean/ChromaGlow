@@ -701,6 +701,24 @@ final class UnifiedOrchestrator {
         }
     }
 
+    /// Exact live-row removal that also names WHOSE row it is (Composer 2,
+    /// v2.2): removes only rows for exactly this bridge + room that were
+    /// published with `effectID`. A look that replaced the publisher's look
+    /// shares the room's presentation key, and its row must survive the
+    /// publisher's retirement.
+    func removeActiveEffect(bridgeID: String?, roomID: String, onlyEffectID effectID: String,
+                            context: StopAuditContext = .unattributed) {
+        let beforeCount = activeEffectEntries.count
+        activeEffectEntries.removeAll {
+            $0.recovered == nil && $0.roomID == roomID && $0.bridgeID == bridgeID && $0.effectID == effectID
+        }
+        if activeEffectEntries.count != beforeCount {
+            recordStopAudit(context, operation: .nowPlayingRemoved,
+                            bridgeID: bridgeID, roomID: roomID,
+                            cardOrEffectID: effectID, outcomeReason: "publisherScoped")
+        }
+    }
+
     /// Removes one entry by its exact presentation key. The only way to clear a
     /// recovered bridge-stored row.
     func removeActiveEffect(id: String, context: StopAuditContext = .unattributed) {
@@ -799,6 +817,17 @@ final class UnifiedOrchestrator {
     /// a row it did not install, and a Composer 2 stop never reaches a Studio
     /// look that replaced it. Runtime plumbing, never observed.
     @ObservationIgnored var composer2StopHandler: (@MainActor (LiveEffectStopTarget) async -> Bool)?
+
+    /// Composer 2 (v2.2): is `box` still the param box a composition runtime
+    /// renders — the REST scheduler's or a bridge's Entertainment loop's?
+    /// "My session names this room" is not ownership: a Studio look that
+    /// replaced a Composer 2 look keeps the room claimed and takes over its
+    /// Now Playing key, and Composer 2 must neither stop it nor retire its
+    /// row. Identity of the box is the one thing a replacement cannot share.
+    func isDrivingComposition(box: CompositionParamBox) -> Bool {
+        compositionRuntimes.values.contains { $0.paramBox === box }
+            || compositionEntParamBoxes.values.contains { $0 === box }
+    }
 
     /// Studio mirrors the reconciled bridge-stored registry into
     /// `runningEffects` for rooms that resolve. Installed once from

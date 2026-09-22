@@ -97,7 +97,7 @@ struct Composer2Header: View {
     private var stateChip: some View {
         HStack(spacing: 6) {
             Circle()
-                .fill(center.isLive ? Composer2Theme.live : Composer2Theme.muted)
+                .fill(center.isPlaying(document: document) ? Composer2Theme.live : Composer2Theme.muted)
                 .frame(width: 6, height: 6)
             Text(chipText)
                 .font(HueFont.stageStatus)
@@ -113,7 +113,7 @@ struct Composer2Header: View {
     }
 
     private var chipText: String {
-        if center.isLive { return center.statusText }
+        if center.isPlaying(document: document) { return center.statusText }
         if document.roomContext.isDemo { return Composer2Copy.demoHome }
         return document.roomContext.connectionText.isEmpty ? Composer2Copy.previewOnly : document.roomContext.connectionText
     }

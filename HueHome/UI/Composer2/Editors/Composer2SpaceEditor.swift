@@ -95,7 +95,9 @@ struct Composer2LightPicker: View {
         GeometryReader { proxy in
             let size = proxy.size
             let points = nodePoints(in: size)
-            let weights = document.selectedLayer.mask.weights(geometry: layout.geometry, seed: 0x5A)
+            let weights = document.selectedLayer.mask.weights(
+                geometry: layout.geometry,
+                seed: Composer2Engine.maskSeed(composition: document.composition, layer: document.selectedLayer))
             ZStack {
                 Canvas { ctx, _ in
                     ctx.fill(Path(roundedRect: CGRect(origin: .zero, size: size), cornerRadius: 12),

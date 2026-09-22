@@ -288,9 +288,11 @@ final class Composer2LabRecoveryTests: XCTestCase {
         XCTAssertEqual(c.status, .reconnecting)
         c.now = { 209 }
         XCTAssertFalse(c.tickHeartbeat())
-        XCTAssertEqual(c.status, .ended(Composer2Copy.liveEndedElsewhere))
-        XCTAssertTrue(gw.stopCalls.isEmpty)
+        XCTAssertEqual(c.status, .ended(Composer2Copy.liveEndedLost))
         XCTAssertEqual(gw.retireCalls, ["r1"])
+        // A lost session is fenced with a stop, so a late re-entry of our
+        // look can never play on with no owner.
+        await settle { gw.stopCalls == ["r1"] }
     }
 
     // MARK: Dashboard / Now Playing stop
@@ -337,13 +339,26 @@ final class Composer2LabRecoveryTests: XCTestCase {
         // A Studio look replaced us in r1 (our session ended); its Stop must not
         // be answered by us.
         _ = await c.start(document: doc, output: out, gateway: gw, audition: false)
-        gw.claimed = false
+        gw.driving = false
         c.now = { 200 }
         XCTAssertFalse(c.tickHeartbeat())
         XCTAssertNil(c.session)
         let owned4 = await c.stopIfOwning(bridgeID: "b1", roomID: "r1")
         XCTAssertFalse(owned4, "not ours any more")
         XCTAssertEqual(gw.stopCalls, ["r1"], "the replacement was left alone")
+
+        // Replaced but the heartbeat has not noticed yet: the Dashboard's Stop
+        // is still not ours — the box identity says so.
+        gw.driving = true
+        _ = await c.start(document: doc, output: out, gateway: gw, audition: false)
+        gw.driving = false
+        let owned4b = await c.stopIfOwning(bridgeID: "b1", roomID: "r1")
+        XCTAssertFalse(owned4b, "a replacement's row is never stopped by room alone")
+        XCTAssertEqual(gw.stopCalls, ["r1"])
+        await c.stop(gateway: gw)
+        XCTAssertEqual(gw.stopCalls, ["r1"], "our own Stop never reaches a transport that plays another look")
+        XCTAssertNil(c.session)
+        gw.driving = true
 
         // Our session in r1, a Stop for r2 or another bridge is not ours.
         _ = await c.start(document: doc, output: out, gateway: gw, audition: false)
@@ -368,7 +383,7 @@ final class Composer2LabRecoveryTests: XCTestCase {
         XCTAssertFalse(owned8)
     }
 
-    func testEndedSessionKeepsTheRuntimeBoundUntilAnExplicitStop() async {
+    func testLostSessionLetsGoAndIsFencedWithAStop() async {
         let gw = Composer2FakeGateway()
         let c = center(now: 100)
         let doc = document()
@@ -376,10 +391,15 @@ final class Composer2LabRecoveryTests: XCTestCase {
         _ = await c.start(document: doc, output: out, gateway: gw, audition: false)
         let box = gw.boxes[0]
         gw.claimed = false
+        gw.driving = false
         c.now = { 120 }
         XCTAssertFalse(c.tickHeartbeat())
-        XCTAssertTrue(box.frameSource === out, "a loop that is somehow still ours keeps rendering our look")
+        XCTAssertEqual(c.status, .ended(Composer2Copy.liveEndedLost))
+        XCTAssertNil(box.frameSource)
         XCTAssertNil(c.output)
+        await settle { gw.stopCalls == ["r1"] }
+        gw.claimed = true
+        gw.driving = true
         // A fresh start on the same room binds a NEW box; the old one is inert.
         _ = await c.start(document: doc, output: out, gateway: gw, audition: true)
         XCTAssertTrue(gw.boxes[1].frameSource === out)
@@ -444,6 +464,44 @@ final class Composer2LabRecoveryTests: XCTestCase {
         await c.stop(gateway: gw)
         XCTAssertEqual(gw.stopCalls, ["r1"])
         XCTAssertNil(box?.frameSource)
+    }
+
+    /// A takeover question nobody can see must not hold the chain forever:
+    /// the Dashboard's Stop for ANY room waited behind it.
+    func testUnansweredTakeoverIsDeclinedAndNeverBlocksAStrangersStop() async {
+        let gw = Composer2FakeGateway()
+        gw.foreignControllerPresent = true
+        let c = center()
+        c.takeoverTimeout = 0.05
+        let doc = document()
+        let out = Composer2LiveOutput(composition: doc.composition)
+        let start = Task { await c.start(document: doc, output: out, gateway: gw, audition: false) }
+        await settle { c.takeoverPending }
+        // A Stop for a room we do not own answers at once, pending question or not.
+        let answered = await c.stopIfOwning(bridgeID: "b1", roomID: "r9")
+        XCTAssertFalse(answered)
+        let status = await start.value
+        XCTAssertEqual(status, .failed(Composer2Copy.takeoverDeclined), "the silence was read as Keep existing")
+        XCTAssertFalse(c.takeoverPending)
+        XCTAssertNil(c.session)
+    }
+
+    /// Picking another room while a start is in flight must not leave the
+    /// first room playing under a screen that now describes the second.
+    func testRoomChangedDuringStartStopsTheStaleSession() async {
+        let gw = Composer2FakeGateway()
+        gw.foreignControllerPresent = true
+        let c = center()
+        let doc = document()
+        let out = Composer2LiveOutput(composition: doc.composition)
+        let start = Task { await c.start(document: doc, output: out, gateway: gw, audition: true) }
+        await settle { c.takeoverPending }
+        doc.roomContext = Composer2RoomContext(room: Composer2LabFixtures.room("r2"))
+        c.answerTakeover(true)
+        _ = await start.value
+        XCTAssertNil(c.session)
+        XCTAssertEqual(c.status, .idle)
+        XCTAssertEqual(gw.stopCalls, ["r1"])
     }
 
     func testDocumentSaveOwnershipAndLegacyImport() throws {

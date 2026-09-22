@@ -137,10 +137,13 @@ struct Composer2SpacePreview: View {
     let motion: Composer2Motion
     let layout: Composer2SlotLayout
     let accent: Color
+    /// The engine's own mask seed for this layer, so a random subset shows
+    /// the lights that actually play.
+    var maskSeed: UInt64 = 0
 
     var body: some View {
         let geometry = layout.geometry
-        let weights = mask.weights(geometry: geometry, seed: 0x5A)
+        let weights = mask.weights(geometry: geometry, seed: maskSeed)
         Canvas { ctx, size in
             let count = layout.count
             if count == 0 {

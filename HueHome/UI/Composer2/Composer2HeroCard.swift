@@ -19,8 +19,10 @@ struct Composer2HeroCard: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.isTabActive) private var isTabActive
 
+    private var isLiveHere: Bool { center.isPlaying(document: document) }
+
     private var isTicking: Bool {
-        (previewOn || center.isLive) && isTabActive && !KeyboardState.shared.isKeyboardUp
+        (previewOn || isLiveHere) && isTabActive && !KeyboardState.shared.isKeyboardUp
     }
 
     var body: some View {
@@ -37,8 +39,8 @@ struct Composer2HeroCard: View {
                         .lineLimit(1)
                 }
                 Spacer(minLength: 0)
-                StageBadge(text: center.isLive ? "LIVE" : (previewOn ? "PREVIEW" : "PAUSED"),
-                           style: center.isLive ? .live : .muted)
+                StageBadge(text: isLiveHere ? "LIVE" : (previewOn ? "PREVIEW" : "PAUSED"),
+                           style: isLiveHere ? .live : .muted)
             }
 
             Composer2HeroCanvas(layout: document.roomContext.layout,
@@ -61,7 +63,7 @@ struct Composer2HeroCard: View {
             HStack(spacing: 8) {
                 badge(document.roomContext.layout.positionsAreEstimated ? Composer2Copy.positionsEstimated : Composer2Copy.positionsReal,
                       symbol: document.roomContext.layout.positionsAreEstimated ? "questionmark.circle" : "scope")
-                if let mode = center.session?.playMode {
+                if isLiveHere, let mode = center.session?.playMode {
                     badge(mode == .streaming ? TransportVocabulary.streamingSubtitle : TransportVocabulary.roomModeSubtitle,
                           symbol: mode == .streaming ? "dot.radiowaves.left.and.right" : "house")
                 }
@@ -72,7 +74,7 @@ struct Composer2HeroCard: View {
             }
         }
         .padding(HueSpacing.lg)
-        .composer2Glass(accent: Composer2Theme.cyan, selected: center.isLive)
+        .composer2Glass(accent: Composer2Theme.cyan, selected: isLiveHere)
     }
 
     private func badge(_ text: String, symbol: String) -> some View {
@@ -87,7 +89,7 @@ struct Composer2HeroCard: View {
     }
 
     private var accessibilitySummary: String {
-        let state = center.isLive ? "live" : (previewOn ? "previewing" : "paused")
+        let state = isLiveHere ? "live" : (previewOn ? "previewing" : "paused")
         let positions = document.roomContext.layout.positionsAreEstimated ? "positions estimated" : "positions from your Entertainment Area"
         return "Room preview, \(Composer2Copy.lights(document.roomContext.lightCount)), \(document.roomContext.roomName), \(state), \(positions)"
     }
@@ -109,7 +111,9 @@ struct Composer2HeroCanvas: View {
             Canvas(rendersAsynchronously: false) { context, size in
                 feed.timeScale = reduceMotion ? 0.5 : 1
                 let now = CACurrentMediaTime()
-                let frames = feed.displayFrames(hostNow: now)
+                let frames = feed.displayFrames(hostNow: now,
+                                                features: AudioAnalysisEngine.latestFeatures(),
+                                                beat: BeatClock.snapshot())
                 Composer2HeroPainter.draw(in: &context, size: size, layout: layout, frames: frames,
                                           selected: selected, motion: motion, geometry: geometry,
                                           time: now, showTrace: !reduceMotion && motion.kind != .static)

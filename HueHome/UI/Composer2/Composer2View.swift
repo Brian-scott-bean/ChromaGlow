@@ -6,6 +6,7 @@
 // its own view. Editors open as sheets over the cover.
 
 import SwiftUI
+import MediaAccessibility
 import QuartzCore
 
 struct Composer2View: View {
@@ -26,6 +27,10 @@ struct Composer2View: View {
     @State private var localNotice: String?
     @State private var gateway: Composer2OrchestratorGateway?
     @State private var micLease = Composer2PreviewMicLease()
+    @State private var showDiscardOnClose = false
+    /// Increments per room request; a slower, older request never overwrites
+    /// a newer one's context.
+    @State private var roomRequest = 0
 
     private let center = Composer2PlaybackCenter.shared
 
@@ -59,7 +64,7 @@ struct Composer2View: View {
                 VStack(spacing: HueSpacing.lg) {
                     Composer2Header(document: document, center: center, rooms: gateway?.rooms() ?? [],
                                     onSelectRoom: { room in Task { await selectRoom(room) } },
-                                    onClose: { dismiss() })
+                                    onClose: requestClose)
                     Composer2HeroCard(document: document, center: center, feed: feed, previewOn: previewOn,
                                       onTapLights: { document.activeEditor = .space })
                     Composer2TitleBlock(document: document)
@@ -105,6 +110,21 @@ struct Composer2View: View {
         } message: {
             Text("Saved compositions appear in Quick mode and on the Studio card, separate from your Composer looks.")
         }
+        .confirmationDialog("Discard your changes?", isPresented: $showDiscardOnClose, titleVisibility: .visible) {
+            Button("Discard changes", role: .destructive) { dismiss() }
+            Button(Composer2Copy.saveAsNew) { promptSaveAsNew() }
+            Button("Keep editing", role: .cancel) {}
+        } message: {
+            Text("\"\(document.composition.name)\" has changes you haven't saved.")
+        }
+        .confirmationDialog("Replace your changes?", isPresented: Binding(
+            get: { document.pendingReplacement != nil },
+            set: { if !$0 { document.pendingReplacement = nil } }), titleVisibility: .visible) {
+            Button("Replace", role: .destructive) { document.confirmPendingReplacement() }
+            Button("Keep editing", role: .cancel) { document.pendingReplacement = nil }
+        } message: {
+            Text("\"\(document.composition.name)\" has changes you haven't saved. Opening another look replaces them.")
+        }
         .alert(EntertainmentConsentCopy.takeoverTitle, isPresented: Binding(
             get: { center.takeoverPending },
             set: { if !$0 { center.answerTakeover(false) } })) {
@@ -116,6 +136,16 @@ struct Composer2View: View {
         }
         .task { await prepare() }
         .onAppear { center.attachScreen() }
+        // The preview plays what the document holds, always — edits, mood
+        // changes and imports included. It used to follow the document only
+        // while a live session was bound, so the hero kept drawing the look
+        // the screen opened with.
+        .onChange(of: document.composition, initial: true) { _, composition in
+            if output.composition != composition { output.composition = composition }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: kMADimFlashingLightsChangedNotification as NSNotification.Name)) { _ in
+            output.eventCap = Composer2LiveOutput.accessibilityEventCap()
+        }
         .onChange(of: previewOn) { _, _ in updateMicLease() }
         .onChange(of: document.usesAudio) { _, _ in updateMicLease() }
         .onChange(of: center.session) { _, _ in updateMicLease() }
@@ -139,13 +169,17 @@ struct Composer2View: View {
     }
 
     private func refreshRoomContext(_ room: RoomDisplayItem?, gateway gw: Composer2OrchestratorGateway) async {
+        roomRequest += 1
+        let request = roomRequest
         var context = Composer2RoomContext(room: room)
         context.isDemo = gw.isDemo()
         if let room {
             await gw.warm(room: room)
+            // A newer room request superseded this one while it warmed.
+            guard request == roomRequest else { return }
             let lights = gw.lightItems(room: room)
             context.lights = lights
-            if let live = center.session, live.roomID == room.id, !document.roomContext.layout.isEmpty {
+            if isLiveHere, let live = center.session, live.roomID == room.id, !document.roomContext.layout.isEmpty {
                 context.layout = document.roomContext.layout
             } else if gw.gate(for: room) == .ready, let streaming = gw.streamingLayout(room: room, lights: lights) {
                 context.layout = streaming
@@ -164,15 +198,28 @@ struct Composer2View: View {
             }
         }
         document.roomContext = context
-        if !center.isLive || center.session?.roomID != room?.id {
+        if !(isLiveHere && center.session?.roomID == room?.id) {
+            // Not this screen's live session: whatever geometry a past live
+            // run installed (an ended session keeps it) must give way to the
+            // room the screen now shows.
+            output.releaseLiveGeometry()
             output.setPreviewGeometry(context.layout.geometry)
             output.layoutLightIDs = context.layout.lightIDs
         }
     }
 
+    /// The lights are playing THIS document. `center.isLive` alone is true
+    /// for a look applied to another room from the Studio card, and the
+    /// screen used to take that session for its own (Stop stopped it,
+    /// Apply claimed it, the hero said LIVE).
+    private var isLiveHere: Bool { center.isPlaying(document: document) }
+
     private func selectRoom(_ room: RoomDisplayItem) async {
         guard let gw = gateway else { return }
-        if center.isLive, center.session?.roomID != room.id {
+        // Only this screen's own session follows the room picker; a start
+        // still in flight is stopped too, so it can never land in the old
+        // room while the screen shows the new one.
+        if (isLiveHere && center.session?.roomID != room.id) || (center.isBusy && center.document === document) {
             await center.stop(gateway: gw)
         }
         document.selectedSlots = []
@@ -187,15 +234,24 @@ struct Composer2View: View {
     }
 
     private func updateMicLease() {
-        let needed = previewOn && document.usesAudio && !center.isLive
+        let needed = previewOn && document.usesAudio && !isLiveHere
         micLease.update(needed: needed)
+    }
+
+    private func requestClose() {
+        if document.isDirty {
+            HapticManager.shared.warning()
+            showDiscardOnClose = true
+        } else {
+            dismiss()
+        }
     }
 
     // MARK: Actions
 
     private func toggleLive() {
         guard let gw = gateway, !center.isBusy else { return }
-        if center.isLive {
+        if isLiveHere {
             HapticManager.shared.medium()
             Task { await center.stop(gateway: gw) }
         } else {
@@ -211,7 +267,7 @@ struct Composer2View: View {
     private func apply() {
         guard let gw = gateway, !center.isBusy else { return }
         HapticManager.shared.medium()
-        if center.isLive {
+        if isLiveHere {
             center.promoteToApplied()
             withAnimation(reduceMotion ? nil : HueAnimation.fast) { localNotice = Composer2Copy.applied }
         } else {
@@ -241,7 +297,7 @@ struct Composer2View: View {
 
     private func saveOverwrite() {
         let saved = Composer2Store.shared.save(document.composition)
-        document.load(saved, asSource: true)
+        document.adoptSaved(saved)
         HapticManager.shared.success()
         withAnimation(reduceMotion ? nil : HueAnimation.fast) { localNotice = "\(Composer2Copy.saved) · \(saved.name)" }
     }
@@ -251,7 +307,7 @@ struct Composer2View: View {
         var composition = document.composition.duplicated(name: trimmed.isEmpty ? document.composition.name : trimmed, at: Date())
         composition.target = document.composition.target
         let saved = Composer2Store.shared.save(composition)
-        document.load(saved, asSource: true)
+        document.adoptSaved(saved)
         HapticManager.shared.success()
         withAnimation(reduceMotion ? nil : HueAnimation.fast) { localNotice = "\(Composer2Copy.saved) · \(saved.name)" }
     }
@@ -284,6 +340,7 @@ struct Composer2ImportSheet: View {
     let document: Composer2Document
     @Environment(\.dismiss) private var dismiss
     @State private var presets: [CompositionPreset] = []
+    @State private var pendingImport: CompositionPreset?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -317,8 +374,12 @@ struct Composer2ImportSheet: View {
                     ForEach(presets) { preset in
                         Button {
                             HapticManager.shared.medium()
-                            document.importLegacy(preset)
-                            dismiss()
+                            if document.isDirty {
+                                pendingImport = preset
+                            } else {
+                                document.importLegacy(preset)
+                                dismiss()
+                            }
                         } label: {
                             HStack(spacing: 12) {
                                 Image(systemName: preset.icon)
@@ -350,6 +411,17 @@ struct Composer2ImportSheet: View {
         .presentationDragIndicator(.visible)
         .presentationBackground(Composer2Theme.background)
         .preferredColorScheme(.dark)
+        .confirmationDialog("Replace your changes?", isPresented: Binding(
+            get: { pendingImport != nil }, set: { if !$0 { pendingImport = nil } }), titleVisibility: .visible) {
+            Button("Import and replace", role: .destructive) {
+                if let preset = pendingImport { document.importLegacy(preset) }
+                pendingImport = nil
+                dismiss()
+            }
+            Button("Keep editing", role: .cancel) { pendingImport = nil }
+        } message: {
+            Text("\"\(document.composition.name)\" has changes you haven't saved.")
+        }
         .task {
             presets = CompositionStore.readPresets(from: CompositionStore.defaultFileURL).presets
         }

@@ -76,9 +76,35 @@ final class Composer2Document {
     var isDirty = false
     /// The stored composition this document was opened from (nil = unsaved).
     var sourceID: UUID?
+    /// A look waiting for the user's OK to replace unsaved changes (a mood
+    /// chip tapped with edits pending). Nothing is discarded silently.
+    var pendingReplacement: Composer2Composition?
 
     /// Fired after every edit; the playback center hooks it to flush Room-mode writes.
     @ObservationIgnored var onEdit: (() -> Void)?
+
+    /// What a dimension held when it was switched off, per behavior, so
+    /// switching it back on restores it (a Chase came back as Flow, Bass as
+    /// Amplitude, tuned variation as "Organic", lightning as the default
+    /// event spec). Session memory only — never saved.
+    struct DimensionStash {
+        var motionKind: Composer2Motion.Kind?
+        var rhythmShape: Composer2Rhythm.Shape?
+        var audioSource: Composer2AudioModulation.Source?
+        var variationAmount: Double?
+        var events: Composer2EventSpec?
+    }
+    @ObservationIgnored var dimensionStash: [UUID: DimensionStash] = [:]
+
+    /// Events on/off for the selected behavior, restoring the spec it had.
+    func setEvents(enabled: Bool, default fallback: Composer2EventSpec) {
+        let id = selectedLayer.id
+        if !enabled, let current = selectedLayer.events {
+            dimensionStash[id, default: DimensionStash()].events = current
+        }
+        let restored = dimensionStash[id]?.events ?? fallback
+        editSelectedLayer { $0.events = enabled ? restored : nil }
+    }
 
     init(composition: Composer2Composition, roomContext: Composer2RoomContext = .none) {
         self.composition = composition
@@ -151,6 +177,41 @@ final class Composer2Document {
         syncSelectionToSelectedLayer()
         isDirty = false
         if asSource { sourceID = new.id }
+        onEdit?()
+    }
+
+    /// Open another look. With unsaved edits it waits in
+    /// `pendingReplacement` for a confirmation instead of discarding them.
+    func requestReplacement(_ next: Composer2Composition) {
+        var incoming = next
+        incoming.target = composition.target
+        if isDirty {
+            pendingReplacement = incoming
+        } else {
+            load(incoming)
+        }
+    }
+
+    func confirmPendingReplacement() {
+        guard let next = pendingReplacement else { return }
+        pendingReplacement = nil
+        load(next)
+    }
+
+    /// After a save: the document now IS the saved composition — clean, and
+    /// owned — but the user keeps their place. Reloading moved the selection
+    /// back to the first behavior, so the open editor silently switched layers.
+    func adoptSaved(_ saved: Composer2Composition) {
+        let index = selectedLayerIndex
+        composition = saved
+        sourceID = saved.id
+        isDirty = false
+        if saved.layers.indices.contains(index) {
+            selectedLayerID = saved.layers[index].id
+        } else {
+            selectedLayerID = saved.layers.first?.id ?? UUID()
+        }
+        syncSelectionToSelectedLayer()
         onEdit?()
     }
 

@@ -18,6 +18,10 @@ struct Composer2PerformanceBar: View {
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
+    /// This document is what the lights play (not merely "something is live").
+    private var isLiveHere: Bool { center.isPlaying(document: document) }
+    private var ownSession: Composer2PlaybackCenter.Session? { isLiveHere ? center.session : nil }
+
     var body: some View {
         VStack(spacing: 8) {
             statusLine
@@ -47,9 +51,9 @@ struct Composer2PerformanceBar: View {
             HapticManager.shared.light()
             previewOn.toggle()
         }
-        Composer2BarButton(title: center.isLive ? "Stop" : "Live", symbol: center.isLive ? "stop.fill" : "dot.radiowaves.left.and.right",
-                           accent: Composer2Theme.live, active: center.isLive,
-                           accessibilityLabel: center.isLive
+        Composer2BarButton(title: isLiveHere ? "Stop" : "Live", symbol: isLiveHere ? "stop.fill" : "dot.radiowaves.left.and.right",
+                           accent: Composer2Theme.live, active: isLiveHere,
+                           accessibilityLabel: isLiveHere
                                ? "Stop live output to \(document.roomContext.roomName)"
                                : "Start live output to \(document.roomContext.roomName)") {
             onLive()
@@ -59,7 +63,7 @@ struct Composer2PerformanceBar: View {
             onSave()
         }
         Composer2BarButton(title: "Apply", symbol: "checkmark.circle", accent: Composer2Theme.magenta,
-                           active: center.session?.isAudition == false,
+                           active: ownSession?.isAudition == false,
                            accessibilityLabel: "Apply composition to \(document.roomContext.roomName)") {
             onApply()
         }
@@ -68,9 +72,9 @@ struct Composer2PerformanceBar: View {
     private var statusLine: some View {
         HStack(spacing: 8) {
             Circle()
-                .fill(center.isLive ? Composer2Theme.live : (previewOn ? Composer2Theme.cyan : Composer2Theme.muted))
+                .fill(isLiveHere ? Composer2Theme.live : (previewOn ? Composer2Theme.cyan : Composer2Theme.muted))
                 .frame(width: 7, height: 7)
-                .shadow(color: center.isLive ? Composer2Theme.live.opacity(0.8) : .clear, radius: 5)
+                .shadow(color: isLiveHere ? Composer2Theme.live.opacity(0.8) : .clear, radius: 5)
             Text(statusText)
                 .font(HueFont.stageStatus)
                 .foregroundStyle(Composer2Theme.ink.opacity(0.85))
@@ -102,14 +106,19 @@ struct Composer2PerformanceBar: View {
     }
 
     private var statusText: String {
+        if center.isLive, !isLiveHere {
+            // Something else is playing (a look applied from the Studio card);
+            // this screen is only previewing.
+            return previewOn ? Composer2Copy.previewOnly : "Paused"
+        }
         switch center.status {
         case .idle:
             if previewOn { return document.roomContext.isDemo ? "Preview · \(Composer2Copy.demoHome)" : Composer2Copy.previewOnly }
             return document.roomContext.isDemo ? Composer2Copy.demoHome : "Paused"
         case .live:
             var text = center.statusText
-            if center.session?.isAudition == true { text += " · " + Composer2Copy.auditionHint }
-            if center.severalAreas, center.session?.playMode == .roomMode { text = Composer2Copy.liveSeveralAreas }
+            if ownSession?.isAudition == true { text += " · " + Composer2Copy.auditionHint }
+            if center.severalAreas, ownSession?.playMode == .roomMode { text = Composer2Copy.liveSeveralAreas }
             return text
         default:
             return center.statusText

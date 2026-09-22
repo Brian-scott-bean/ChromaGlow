@@ -81,6 +81,21 @@ final class Composer2LabIntegrationTests: XCTestCase {
         XCTAssertTrue(orchestrator.activeEffectEntries.isEmpty, "retiring twice is harmless")
     }
 
+    /// A Studio look that replaced ours publishes under the same room key;
+    /// retiring OUR row must leave THEIRS on the Dashboard.
+    func testRetiringNeverRemovesTheReplacementsRow() async {
+        let orchestrator = UnifiedOrchestrator()
+        let gateway = Composer2OrchestratorGateway(orchestrator: orchestrator)
+        gateway.publishNowPlaying(roomID: "r1", bridgeID: "b1", roomName: "Living", groupedLightID: "g1",
+                                  compositionName: "Aurora Drift")
+        orchestrator.addActiveEffect(ActiveEffectEntry(
+            liveBridgeID: "b1", roomID: "r1", roomName: "Living", groupedLightID: "g1",
+            effectID: "party", effectName: "Party", effectIcon: "sparkles", isAppDriven: true))
+        XCTAssertEqual(orchestrator.activeEffectEntries.map(\.effectID), ["party"], "same key: the replacement's row won")
+        gateway.retireNowPlaying(roomID: "r1", bridgeID: "b1")
+        XCTAssertEqual(orchestrator.activeEffectEntries.map(\.effectID), ["party"], "and it survives our retirement")
+    }
+
     func testGatewayInstallsAndClearsTheStopHandler() async {
         let orchestrator = UnifiedOrchestrator()
         let gateway = Composer2OrchestratorGateway(orchestrator: orchestrator)

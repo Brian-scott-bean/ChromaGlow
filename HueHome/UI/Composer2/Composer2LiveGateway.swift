@@ -57,10 +57,19 @@ protocol Composer2LiveGateway: AnyObject {
     func start(room: RoomDisplayItem, box: CompositionParamBox, preferStreaming: Bool,
                askTakeover: @escaping @MainActor () async -> Bool) async -> Composer2StartOutcome
     func stop(roomID: String, bridgeID: String?) async
-    func isRoomClaimed(roomID: String) -> Bool
+    /// Exact bridge+room: does any composition claim this room right now?
+    func isRoomClaimed(roomID: String, bridgeID: String?) -> Bool
+    /// Is the orchestrator still rendering THIS box? A replacement look keeps
+    /// the room claimed; only box identity tells the two apart.
+    func isDriving(box: CompositionParamBox) -> Bool
+    /// The transport the room's composition runs on now (it changes when a
+    /// stream fails over to Room mode).
+    func transport(roomID: String, bridgeID: String?) -> Composer2PlayMode?
     /// Now Playing registry: the row the Dashboard shows and can stop.
     func publishNowPlaying(roomID: String, bridgeID: String?, roomName: String,
                            groupedLightID: String?, compositionName: String)
+    /// Removes the row only while it is still Composer 2's own — a look that
+    /// replaced ours publishes under the same key, and its row must survive.
     func retireNowPlaying(roomID: String, bridgeID: String?)
     /// Installs (or clears) the stop route Dashboard taps reach before Studio's.
     func installStopHandler(_ handler: (@MainActor (_ bridgeID: String?, _ roomID: String) async -> Bool)?)
@@ -145,25 +154,36 @@ final class Composer2OrchestratorGateway: Composer2LiveGateway {
         await orchestrator.stopCompositionMode(roomID: roomID, bridgeID: bridgeID)
     }
 
-    func isRoomClaimed(roomID: String) -> Bool {
-        orchestrator.compositionTransportByRoom[roomID] != nil
+    func isRoomClaimed(roomID: String, bridgeID: String?) -> Bool {
+        orchestrator.compositionTransport(bridgeID: bridgeID, roomID: roomID) != nil
+    }
+
+    func isDriving(box: CompositionParamBox) -> Bool {
+        orchestrator.isDrivingComposition(box: box)
+    }
+
+    func transport(roomID: String, bridgeID: String?) -> Composer2PlayMode? {
+        switch orchestrator.compositionTransport(bridgeID: bridgeID, roomID: roomID) {
+        case .entertainment: return .streaming
+        case .rest: return .roomMode
+        case .bridgeStored, .none: return nil
+        }
     }
 
     func publishNowPlaying(roomID: String, bridgeID: String?, roomName: String,
                            groupedLightID: String?, compositionName: String) {
         orchestrator.addActiveEffect(ActiveEffectEntry(
             liveBridgeID: bridgeID, roomID: roomID, roomName: roomName,
-            groupedLightID: groupedLightID, effectID: "composer2",
+            groupedLightID: groupedLightID, effectID: Composer2OrchestratorGateway.nowPlayingEffectID,
             effectName: compositionName, effectIcon: "sparkles", isAppDriven: true))
     }
 
     func retireNowPlaying(roomID: String, bridgeID: String?) {
-        if let bridgeID {
-            orchestrator.removeActiveEffect(bridgeID: bridgeID, roomID: roomID)
-        } else {
-            orchestrator.removeActiveEffect(roomID: roomID)
-        }
+        orchestrator.removeActiveEffect(bridgeID: bridgeID, roomID: roomID,
+                                        onlyEffectID: Composer2OrchestratorGateway.nowPlayingEffectID)
     }
+
+    static let nowPlayingEffectID = "composer2"
 
     func installStopHandler(_ handler: (@MainActor (_ bridgeID: String?, _ roomID: String) async -> Bool)?) {
         if let handler {

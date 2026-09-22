@@ -19,9 +19,7 @@ struct Composer2EventsEditorContent: View {
                     get: { events != nil },
                     set: { on in
                         HapticManager.shared.selection()
-                        document.editSelectedLayer { layer in
-                            layer.events = on ? Composer2EventsEditorContent.defaultSpec : nil
-                        }
+                        document.setEvents(enabled: on, default: Composer2EventsEditorContent.defaultSpec)
                     }))
                 if let spec = events {
                     Text(Composer2Copy.summary(events: spec))

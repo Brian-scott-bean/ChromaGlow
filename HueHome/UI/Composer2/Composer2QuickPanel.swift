@@ -55,9 +55,7 @@ struct Composer2QuickPanel: View {
                     let selected = document.sourceID == composition.id
                     Button {
                         HapticManager.shared.selection()
-                        var next = composition
-                        next.target = document.composition.target
-                        document.load(next)
+                        document.requestReplacement(composition)
                     } label: {
                         VStack(spacing: 6) {
                             Image(systemName: Composer2PresetLibrary.symbol(for: composition.id))

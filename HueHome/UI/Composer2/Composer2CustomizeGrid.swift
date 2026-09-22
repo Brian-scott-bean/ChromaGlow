@@ -57,7 +57,8 @@ struct Composer2CustomizeGrid: View {
                                isOn: true, showsToggle: false,
                                onOpen: { document.activeEditor = .space }, onToggle: { _ in }) {
                 Composer2SpacePreview(mask: layer.mask, motion: layer.motion, layout: document.roomContext.layout,
-                                      accent: Composer2Theme.accent(for: .space))
+                                      accent: Composer2Theme.accent(for: .space),
+                                      maskSeed: Composer2Engine.maskSeed(composition: document.composition, layer: layer))
             }
         case .audio:
             Composer2LayerCard(dimension: .audio, valueText: Composer2Copy.summary(audio: layer.audio),
@@ -132,35 +133,48 @@ extension Composer2Document {
     /// Turn a dimension off without losing its settings, and back on with a
     /// sensible restore (the last kind is kept in the value itself where possible).
     func setDimension(_ dimension: Composer2Dimension, on: Bool) {
+        let id = selectedLayer.id
+        var stash = dimensionStash[id] ?? DimensionStash()
         editSelectedLayer { layer in
             switch dimension {
             case .palette, .space:
                 break
             case .motion:
                 if on {
-                    if layer.motion.kind == .static { layer.motion.kind = .flow }
+                    if layer.motion.kind == .static { layer.motion.kind = stash.motionKind ?? .flow }
                 } else {
+                    if layer.motion.kind != .static { stash.motionKind = layer.motion.kind }
                     layer.motion.kind = .static
                 }
             case .rhythm:
                 if on {
-                    if layer.rhythm.shape == .steady { layer.rhythm.shape = .breathe }
+                    if layer.rhythm.shape == .steady { layer.rhythm.shape = stash.rhythmShape ?? .breathe }
                 } else {
+                    if layer.rhythm.shape != .steady { stash.rhythmShape = layer.rhythm.shape }
                     layer.rhythm.shape = .steady
                 }
             case .audio:
                 if on {
-                    if !layer.audio.isActive { layer.audio.source = .amplitude }
+                    if !layer.audio.isActive { layer.audio.source = stash.audioSource ?? .amplitude }
                 } else {
+                    if layer.audio.isActive { stash.audioSource = layer.audio.source }
                     layer.audio.source = .off
                 }
             case .variation:
                 if on {
-                    if layer.variation.amount <= 0 { layer.variation = .organic }
+                    if layer.variation.amount <= 0 {
+                        if let amount = stash.variationAmount {
+                            layer.variation.amount = amount   // the rest of it was never touched
+                        } else {
+                            layer.variation = Composer2Variation.organic.withSeed(layer.variation.seed)
+                        }
+                    }
                 } else {
+                    if layer.variation.amount > 0 { stash.variationAmount = layer.variation.amount }
                     layer.variation.amount = 0
                 }
             }
         }
+        dimensionStash[id] = stash
     }
 }

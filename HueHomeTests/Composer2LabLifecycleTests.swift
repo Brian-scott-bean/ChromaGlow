@@ -15,6 +15,9 @@ final class Composer2FakeGateway: Composer2LiveGateway {
     var availability = Composer2StreamAvailability(prefer: true, severalAreas: false)
     var startOutcome: Composer2StartOutcome = .started(.streaming)
     var claimed = true
+    /// Whether the orchestrator still renders the box it was given.
+    var driving = true
+    var transportMode: Composer2PlayMode? = nil
     var demo = false
     var startCalls: [(roomID: String, preferStreaming: Bool)] = []
     var stopCalls: [String] = []
@@ -55,7 +58,9 @@ final class Composer2FakeGateway: Composer2LiveGateway {
         return startOutcome
     }
     func stop(roomID: String, bridgeID: String?) async { stopCalls.append(roomID) }
-    func isRoomClaimed(roomID: String) -> Bool { claimed }
+    func isRoomClaimed(roomID: String, bridgeID: String?) -> Bool { claimed }
+    func isDriving(box: CompositionParamBox) -> Bool { driving }
+    func transport(roomID: String, bridgeID: String?) -> Composer2PlayMode? { transportMode }
     func publishNowPlaying(roomID: String, bridgeID: String?, roomName: String,
                            groupedLightID: String?, compositionName: String) {
         publishCalls.append((roomID, compositionName))
@@ -336,8 +341,17 @@ final class Composer2LabLifecycleTests: XCTestCase {
         XCTAssertEqual(H.verdict(lastLiveRenderAt: 100, startedAt: 90, now: 100.5, roomStillClaimed: true), .alive)
         XCTAssertEqual(H.verdict(lastLiveRenderAt: 0, startedAt: 100, now: 100.9, roomStillClaimed: true), .alive)
         XCTAssertEqual(H.verdict(lastLiveRenderAt: 100, startedAt: 90, now: 103, roomStillClaimed: true), .reconnecting)
-        XCTAssertEqual(H.verdict(lastLiveRenderAt: 100, startedAt: 90, now: 103, roomStillClaimed: false), .ended)
-        XCTAssertEqual(H.verdict(lastLiveRenderAt: 100, startedAt: 90, now: 109, roomStillClaimed: true), .ended)
+        // Our box, silent past the window: lost — claimed or not.
+        XCTAssertEqual(H.verdict(lastLiveRenderAt: 100, startedAt: 90, now: 109, roomStillClaimed: true), .lost)
+        // Unclaimed and not ours: a failover in flight is still "reconnecting"…
+        XCTAssertEqual(H.verdict(lastLiveRenderAt: 100, startedAt: 90, now: 103, roomStillClaimed: false,
+                                 drivingOurs: false), .reconnecting)
+        // …until the whole window has passed.
+        XCTAssertEqual(H.verdict(lastLiveRenderAt: 100, startedAt: 90, now: 109, roomStillClaimed: false,
+                                 drivingOurs: false), .lost)
+        // Claimed by a box that is not ours: replaced, at once.
+        XCTAssertEqual(H.verdict(lastLiveRenderAt: 100, startedAt: 90, now: 101.2, roomStillClaimed: true,
+                                 drivingOurs: false), .replaced)
     }
 
     func testHeartbeatEndedNeverCallsStopAndReleasesTheRuntime() async {
@@ -356,15 +370,60 @@ final class Composer2LabLifecycleTests: XCTestCase {
         c.now = { 103.3 }
         XCTAssertTrue(c.tickHeartbeat())
         XCTAssertEqual(c.status, .live)
-        // Someone else took the room: ended, and NO stop is sent.
-        gw.claimed = false
+        // Another look took the room (it is claimed, but not by our box):
+        // replaced, and NO stop is sent.
+        gw.driving = false
         c.now = { 105 }
         XCTAssertFalse(c.tickHeartbeat())
         XCTAssertEqual(c.status, .ended(Composer2Copy.liveEndedElsewhere))
         XCTAssertNil(c.session)
-        XCTAssertTrue(box.frameSource === out, "the replacement owns the transport; the old box is not unbound from here")
+        XCTAssertNil(box.frameSource, "nothing renders our box any more, so it lets go")
+        XCTAssertTrue(gw.stopCalls.isEmpty, "the replacement is never stopped")
+        XCTAssertEqual(gw.retireCalls, ["r1"], "retire is asked; it removes only a row that is still ours")
+        XCTAssertNil(gw.stopHandler, "the Dashboard route is uninstalled with the session")
+    }
+
+    /// A DTLS→REST failover drops the room's claim before its awaits. The
+    /// session must ride through it (and learn it is in Room mode now),
+    /// not end after one silent second and orphan the re-entered look.
+    func testFailoverToRoomModeIsReconnectingThenLiveInRoomMode() async {
+        let gw = Composer2FakeGateway()
+        let c = center(now: 100)
+        let doc = document()
+        let out = Composer2LiveOutput(composition: doc.composition)
+        _ = await c.start(document: doc, output: out, gateway: gw, audition: false)
+        XCTAssertEqual(c.session?.playMode, .streaming)
+        gw.claimed = false
+        gw.driving = false
+        c.now = { 104 }
+        XCTAssertTrue(c.tickHeartbeat())
+        XCTAssertEqual(c.status, .reconnecting)
+        XCTAssertNotNil(c.session)
+        // Room mode picked our box up again.
+        gw.claimed = true
+        gw.driving = true
+        gw.transportMode = .roomMode
+        _ = CompositionEngine.render(time: 4, channelIDs: [0, 1, 2], params: gw.boxes[0], hostNow: 104.1)
+        c.now = { 104.2 }
+        XCTAssertTrue(c.tickHeartbeat())
+        XCTAssertEqual(c.status, .live)
+        XCTAssertEqual(c.session?.playMode, .roomMode, "the status says Room mode after a failover")
         XCTAssertTrue(gw.stopCalls.isEmpty)
-        XCTAssertEqual(gw.retireCalls, ["r1"], "the Now Playing row is retired when the session ends")
+    }
+
+    /// The runtime plays what the document holds when Live is pressed — the
+    /// screen's output used to keep the composition it was created with, so
+    /// a mood picked before Live never reached the lights.
+    func testStartPlaysTheDocumentsCurrentComposition() async {
+        let gw = Composer2FakeGateway()
+        let c = center()
+        let doc = document(Composer2PresetLibrary.auroraDrift)
+        let out = Composer2LiveOutput(composition: Composer2PresetLibrary.auroraDrift)
+        doc.load(Composer2PresetLibrary.thunderstorm)
+        XCTAssertNotEqual(out.composition, doc.composition)
+        _ = await c.start(document: doc, output: out, gateway: gw, audition: true)
+        XCTAssertEqual(out.composition, doc.composition)
+        XCTAssertEqual(c.session?.compositionName, "Thunderstorm")
     }
 
     // MARK: Audition vs applied, room change, promotion
