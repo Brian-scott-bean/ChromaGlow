@@ -659,7 +659,18 @@ struct SettingsView: View {
     // ──────────────────────────────────────────────
 
     private func loadCredentials() {
-        let raw      = (try? KeychainManager.shared.loadAPIToken()) ?? ""
+        // The key lives per bridge (Stage 2A). The legacy single-bridge
+        // `hue_api_token` slot is deleted by the migration, so reading it
+        // showed "Not saved" to every migrated or newly paired user. Show the
+        // first active bridge's key (sort order), legacy slot as a fallback.
+        let ordered = bridges.sorted {
+            if $0.isActive != $1.isActive { return $0.isActive }
+            return $0.sortOrder < $1.sortOrder
+        }
+        let perBridge = ordered.lazy
+            .compactMap { try? KeychainManager.shared.loadCredentials(for: $0.id).token }
+            .first { !$0.isEmpty }
+        let raw      = perBridge ?? (try? KeychainManager.shared.loadAPIToken()) ?? ""
         tokenPreview = raw.isEmpty ? "Not saved"
                      : String(raw.prefix(6)) + "••••••" + String(raw.suffix(4))
     }
