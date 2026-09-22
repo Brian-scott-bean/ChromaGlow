@@ -57,6 +57,8 @@ struct SceneColorBuilderView: View {
     @State private var isSaving = false
     @State private var errorMessage: String?
     @State private var displayBrightness: Double = 100  // % label value
+    /// Pad brightness the slider just wrote — its onChange echo is skipped.
+    @State private var sliderBrightnessEcho: Double?
 
     // Debounce
     @State private var previewTask: Task<Void, Never>?
@@ -403,12 +405,20 @@ struct SceneColorBuilderView: View {
     /// Sync the color pad & brightness slider to a specific light's state.
     private func syncPadToLight(_ light: LightDisplayItem) {
         if let x = light.colorX, let y = light.colorY {
-            let (h, s, b) = HueColorUtils.hsb(fromX: x, y: y, brightness: light.brightness)
+            let (h, s, _) = HueColorUtils.hsb(fromX: x, y: y, brightness: light.brightness)
             currentHue = h
             currentSaturation = s
-            currentBrightness = max(0.1, b)
+            currentBrightness = Self.padBrightness(percent: light.brightness)
         }
         displayBrightness = light.brightness
+    }
+
+    /// The pad's Y axis for a light: its REAL brightness. `hsb(fromX:)`'s
+    /// `b` is the normalised RGB peak — ~1.0 for any saturated color at any
+    /// dimming — and the pad's live sync wrote it back to the bulb, so merely
+    /// tapping a light chip jumped it to 100%.
+    nonisolated static func padBrightness(percent: Double) -> Double {
+        min(1, max(0.01, percent / 100))
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -450,6 +460,13 @@ struct SceneColorBuilderView: View {
             updateLightChipsLive(hue: currentHue, saturation: newSat, brightness: currentBrightness)
         }
         .onChange(of: currentBrightness) { _, newBri in
+            // The brightness slider moved the pad to match — it already
+            // applied brightness alone; a live sync here would also repaint
+            // every selected light the pad's color.
+            if let echo = sliderBrightnessEcho {
+                sliderBrightnessEcho = nil
+                if echo == newBri { return }
+            }
             updateLightChipsLive(hue: currentHue, saturation: currentSaturation, brightness: newBri)
         }
         .onChange(of: currentHue) { _, newHue in
@@ -576,6 +593,13 @@ struct SceneColorBuilderView: View {
                     }
                     .onEnded { _ in
                         HapticManager.shared.heavy()
+                        // Keep the pad's Y axis in step, or the next pad/hue
+                        // move re-sends the OLD brightness and undoes this.
+                        let padValue = Self.padBrightness(percent: displayBrightness)
+                        if padValue != currentBrightness {
+                            sliderBrightnessEcho = padValue
+                            currentBrightness = padValue
+                        }
                         applyBrightnessToSelected(percent: displayBrightness)
                     }
             )
@@ -650,10 +674,10 @@ struct SceneColorBuilderView: View {
     private func seedPad(from seedLights: [LightDisplayItem]) {
         // Seed color from first light
         if let first = seedLights.first, let x = first.colorX, let y = first.colorY {
-            let (h, s, b) = HueColorUtils.hsb(fromX: x, y: y, brightness: first.brightness)
+            let (h, s, _) = HueColorUtils.hsb(fromX: x, y: y, brightness: first.brightness)
             currentHue = h
             currentSaturation = s
-            currentBrightness = max(0.1, b)
+            currentBrightness = Self.padBrightness(percent: first.brightness)
         }
         if let first = seedLights.first, let mirek = first.colorTempMirek {
             currentMirek = mirek

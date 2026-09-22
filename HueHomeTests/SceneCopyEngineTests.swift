@@ -268,6 +268,20 @@ final class SceneCopyEngineTests: XCTestCase {
         XCTAssertEqual(seeded[2].brightness, 70)
     }
 
+    /// Tapping a saturated light chip must put the pad at the light's REAL
+    /// brightness — hsb's `b` is the RGB peak (~1.0), which the pad's live
+    /// sync used to write back to the bulb as 100%.
+    func testBuilderPadBrightnessIsTheLightsBrightnessNotTheHSBPeak() {
+        let (_, _, hsbPeak) = HueColorUtils.hsb(fromX: 0.675, y: 0.322, brightness: 40)
+        XCTAssertGreaterThan(hsbPeak, 0.95, "precondition: the HSB peak ignores dimming")
+
+        XCTAssertEqual(SceneColorBuilderView.padBrightness(percent: 40), 0.4, accuracy: 0.0001)
+        XCTAssertEqual(SceneColorBuilderView.padBrightness(percent: 100), 1.0)
+        XCTAssertEqual(SceneColorBuilderView.padBrightness(percent: 0), 0.01,
+                       "clamped so the round trip never sends 0%")
+        XCTAssertEqual(SceneColorBuilderView.padBrightness(percent: 140), 1.0)
+    }
+
     func testBuilderEditSeedHonoursStoredOff() {
         let seeded = SceneColorBuilderView.seeded(
             [liveLight("l1", on: true)],
