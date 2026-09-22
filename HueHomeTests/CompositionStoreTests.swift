@@ -111,4 +111,42 @@ final class CompositionStoreTests: XCTestCase {
 
         XCTAssertFalse(store.presets.contains { $0.id == mine.id })
     }
+
+    // MARK: - Built-in edits survive the seed migrator (audit #2)
+
+    /// Perform's "save sequence" wrote a sequence onto an untouched built-in
+    /// without bumping `updatedAt`, so `BuiltInSeedMigrator.isUnedited` still
+    /// said "never touched" and the next launch refreshed it back to the
+    /// catalog — the saved sequence silently vanished.
+    func testADesignChangeSavedOntoAnUntouchedBuiltInSurvivesTheNextLaunch() throws {
+        let store = makeStore()
+        var builtIn = try XCTUnwrap(store.presets.first(where: { BuiltInSeedMigrator.isUnedited($0) }))
+        builtIn.sequence = CompositionSequence(steps: [
+            .init(name: "Intro", bars: 4), .init(name: "Drop", bars: 8)])
+        store.save(builtIn)   // deliberately NO caller-side stamp
+
+        let saved = try XCTUnwrap(store.presets.first(where: { $0.id == builtIn.id }))
+        XCTAssertFalse(BuiltInSeedMigrator.isUnedited(saved),
+                       "a built-in whose design departs from the catalog is edited")
+
+        let relaunched = CompositionStore(fileURL: fileURL, loadsSynchronously: true)
+        let after = try XCTUnwrap(relaunched.presets.first(where: { $0.id == builtIn.id }))
+        XCTAssertEqual(after.sequence, builtIn.sequence,
+                       "the migrator must not revert a saved edit on the next launch")
+    }
+
+    /// The stamp must not fire for a reset: `delete` saves the catalog copy,
+    /// and a reset built-in has to stay eligible for future refreshes.
+    func testAResetBuiltInStaysUnedited() throws {
+        let store = makeStore()
+        var builtIn = try XCTUnwrap(store.presets.first(where: { BuiltInSeedMigrator.isUnedited($0) }))
+        builtIn.motion.speed = min(100, builtIn.motion.speed + 11)
+        store.save(builtIn)
+
+        store.delete(builtIn)
+
+        let after = try XCTUnwrap(store.presets.first(where: { $0.id == builtIn.id }))
+        XCTAssertTrue(BuiltInSeedMigrator.isUnedited(after),
+                      "a reset restores the shipped form, timestamps included")
+    }
 }

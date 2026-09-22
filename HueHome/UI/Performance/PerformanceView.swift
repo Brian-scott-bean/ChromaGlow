@@ -204,6 +204,10 @@ final class PerformanceViewModel: Identifiable {
               let store = compositionStore,
               var preset = store.presets.first(where: { $0.id == presetID }) else { return false }
         preset.sequence = sequence.steps.isEmpty ? nil : sequence
+        // An edit like any other: without the stamp, a sequence saved onto an
+        // untouched built-in read as "never edited" and the seed migrator
+        // reverted it on the next launch.
+        preset.updatedAt = Date()
         store.save(preset)
         HapticManager.shared.medium()
         return true

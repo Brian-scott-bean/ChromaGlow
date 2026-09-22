@@ -59,6 +59,19 @@ final class CompositionStore: @unchecked Sendable {
 
     func save(_ preset: CompositionPreset) {
         ensureLoadedForMutation()
+        var preset = preset
+        // A built-in whose design departs from the shipped one IS edited,
+        // whatever its caller remembered to stamp. `BuiltInSeedMigrator`
+        // treats `updatedAt <= createdAt` as "never touched" and refreshes it
+        // to the catalog on the next launch — so an unstamped save (Perform's
+        // sequence save did exactly this) was silently reverted. Comparing to
+        // the SHIPPED design keeps a reset (which saves the catalog copy) and
+        // an unchanged save eligible for future refreshes.
+        if BuiltInSeedMigrator.isUnedited(preset),
+           let shipped = Self.builtInPresets.first(where: { $0.id == preset.id }),
+           !BuiltInSeedMigrator.designMatches(preset, shipped) {
+            preset.updatedAt = max(Date(), preset.createdAt.addingTimeInterval(1))
+        }
         if let index = presets.firstIndex(where: { $0.id == preset.id }) {
             presets[index] = preset
         } else {
