@@ -14,6 +14,7 @@
 //   4. UserDefaults acts as the cold-start buffer (app was killed, user taps notif,
 //      app relaunches → AppRootView reads pending action after loadAll()).
 
+import SwiftUI
 import UIKit
 import UserNotifications
 import OSLog
@@ -167,5 +168,150 @@ struct AutomationPreset {
 
     static func find(_ id: String) -> AutomationPreset? {
         all.first { $0.id == id }
+    }
+}
+
+// MARK: - Effect plans (shared, used by orchestrator)
+
+/// One grouped_light write of a scheduled effect automation.
+struct AutomationGroupWrite: Equatable, Sendable {
+    let on: Bool
+    let brightness: Double?
+    let mirek: Int?
+    let xy: CIEPoint?
+    /// Hue `dynamics.duration` in ms (0 = instant).
+    let durationMs: Int
+
+    struct CIEPoint: Equatable, Sendable {
+        let x: Double
+        let y: Double
+    }
+}
+
+/// What a scheduled effect automation writes, derived from the effect's OWN
+/// catalog defaults (the automation stores only an effect id, so the
+/// EffectLibrary card defaults ARE its settings).
+///
+/// Every one-shot/gradual effect used to write a hard-coded 70% / 300 mirek
+/// in 400 ms: "Wind Down" (a slow dim to 3%) and "Sunset" (a 30-minute fade
+/// to darkness) lit the house to 70% white instantly — close to the opposite
+/// of what was picked.
+///
+/// Hue limits honored: mirek 153–500, brightness 0–100, and a transition no
+/// longer than the Zigbee ceiling (uint16 × 100 ms). A gradual "Turn Off at
+/// End" rides the bridge as ONE fade-to-off transition — an app-side timer
+/// would die with the app long before a 30-minute ramp ends.
+enum AutomationEffectPlan: Equatable, Sendable {
+    /// Bridge-native firmware effect (candle, fire, …) on grouped_light.
+    case nativeEffect(String)
+    /// grouped_light writes applied in order, with a short pause between
+    /// steps so the bridge registers a start snap before the ramp begins.
+    case writes([AutomationGroupWrite])
+
+    /// Longest transition a Hue light can execute (65535 × 100 ms).
+    static let maxTransitionMs = 6_553_500
+
+    static func plan(for effect: HueEffect) -> AutomationEffectPlan {
+        switch effect.strategy {
+        case .bridgeNative(let effectName):
+            return .nativeEffect(effectName)
+
+        case .oneShot:
+            let mirek = slider("mirek", in: effect).map(clampedMirek)
+            // Warmth wins when both exist; a colour card (Romance) has no
+            // mirek slider, only a swatch.
+            let xy = mirek == nil ? color("color", in: effect).map(gamutXY) : nil
+            return .writes([AutomationGroupWrite(
+                on: true,
+                brightness: slider("brightness", in: effect).map(clampedBrightness) ?? 70,
+                mirek: mirek,
+                xy: xy,
+                durationMs: clampedDuration(Int(slider("fade", in: effect) ?? 400))
+            )])
+
+        case .gradual:
+            var steps: [AutomationGroupWrite] = []
+            let startBrightness = slider("startBrightness", in: effect)
+            let startMirek = slider("startMirek", in: effect)
+            if startBrightness != nil || startMirek != nil {
+                // Snap to the start look instantly (Sunrise begins dim + warm).
+                steps.append(AutomationGroupWrite(
+                    on: true,
+                    brightness: startBrightness.map(clampedBrightness),
+                    mirek: startMirek.map(clampedMirek),
+                    xy: nil,
+                    durationMs: 0
+                ))
+            }
+            let rampMs = clampedDuration((duration("duration", in: effect) ?? 900) * 1000)
+            let endMirek = slider("endMirek", in: effect).map(clampedMirek)
+            if toggle("turnOff", in: effect) == true {
+                // Fade to darkness across the whole duration, warming as it goes.
+                steps.append(AutomationGroupWrite(
+                    on: false, brightness: nil, mirek: endMirek, xy: nil, durationMs: rampMs
+                ))
+            } else {
+                steps.append(AutomationGroupWrite(
+                    on: true,
+                    brightness: slider("endBrightness", in: effect).map(clampedBrightness),
+                    mirek: endMirek,
+                    xy: nil,
+                    durationMs: rampMs
+                ))
+            }
+            return .writes(steps)
+
+        case .appDriven:
+            // Needs a foreground loop a notification can't provide (and the
+            // picker doesn't offer these) — a static warm fallback for any
+            // automation saved before that filter existed.
+            return .writes([AutomationGroupWrite(
+                on: true, brightness: 70, mirek: nil, xy: nil, durationMs: 400
+            )])
+        }
+    }
+
+    // MARK: Catalog defaults
+
+    private static func slider(_ key: String, in effect: HueEffect) -> Double? {
+        for param in effect.params {
+            if case .slider(let k, _, let value, _, _, _) = param, k == key { return value }
+        }
+        return nil
+    }
+
+    private static func duration(_ key: String, in effect: HueEffect) -> Int? {
+        for param in effect.params {
+            if case .durationPicker(let k, _, let seconds, _, _) = param, k == key { return seconds }
+        }
+        return nil
+    }
+
+    private static func toggle(_ key: String, in effect: HueEffect) -> Bool? {
+        for param in effect.params {
+            if case .toggle(let k, _, let value) = param, k == key { return value }
+        }
+        return nil
+    }
+
+    private static func color(_ key: String, in effect: HueEffect) -> Color? {
+        for param in effect.params {
+            if case .colorSwatch(let k, _, let color) = param, k == key { return color }
+        }
+        return nil
+    }
+
+    // MARK: Hue limits
+
+    private static func clampedMirek(_ value: Double) -> Int { min(500, max(153, Int(value.rounded()))) }
+    private static func clampedBrightness(_ value: Double) -> Double { min(100, max(0, value)) }
+    private static func clampedDuration(_ ms: Int) -> Int { min(maxTransitionMs, max(0, ms)) }
+
+    private static func gamutXY(_ color: Color) -> AutomationGroupWrite.CIEPoint {
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0
+        UIColor(color).getRed(&r, green: &g, blue: &b, alpha: nil)
+        let xy = HueColorUtils.xyFrom(red: Double(r), green: Double(g), blue: Double(b))
+        let clamped = HueColorUtils.clampXYToGamut(x: xy.x, y: xy.y, gamut: .c)
+        return AutomationGroupWrite.CIEPoint(x: clamped.x, y: clamped.y)
     }
 }
