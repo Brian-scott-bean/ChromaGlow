@@ -77,13 +77,29 @@ final class HueCapabilityFoundationTests: XCTestCase {
             "signaling": [
                 "signal": "alternating",
                 "duration": 2000,
+                // Items are the bare colour feature `{"xy": …}` — the CLIP v2
+                // signaling schema (aiohue `SignalingFeaturePut.colors`,
+                // Q42 `SignalingUpdate.Colors`), never `{"color": {"xy": …}}`.
                 "colors": [
-                    ["color": ["xy": ["x": 0.64, "y": 0.33]]],
-                    ["color": ["xy": ["x": 0.15, "y": 0.06]]],
+                    ["xy": ["x": 0.64, "y": 0.33]],
+                    ["xy": ["x": 0.15, "y": 0.06]],
                 ],
             ],
         ]
         XCTAssertEqual(body.dictionary() as NSDictionary, expected as NSDictionary)
+    }
+
+    /// The wire bytes, not just the dictionary: exactly what the PUT carries.
+    func testSignalingColorItemsEncodeAsBareXYOnTheWire() throws {
+        let body = SignalingBody(signal: .onOffColor, durationMs: 1000,
+                                 colorsXY: [CGPoint(x: 0.5, y: 0.25)])
+        let data = try JSONSerialization.data(withJSONObject: body.dictionary(),
+                                              options: [.sortedKeys])
+        let json = try XCTUnwrap(String(data: data, encoding: .utf8))
+        XCTAssertEqual(json,
+            #"{"signaling":{"colors":[{"xy":{"x":0.5,"y":0.25}}],"duration":1000,"signal":"on_off_color"}}"#)
+        XCTAssertFalse(json.contains(#""color":"#),
+            "a signaling colour item must not be wrapped in a `color` key")
     }
 
     func testSignalingDropsExtraColorsAndClampsDuration() {
