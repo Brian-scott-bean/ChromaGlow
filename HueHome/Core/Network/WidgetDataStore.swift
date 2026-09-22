@@ -196,6 +196,11 @@ final class WidgetDataStore: @unchecked Sendable {
             ud?.set(structure, forKey: Key.structure)
             WidgetCenter.shared.reloadAllTimelines()
         }
+        // Controls DO show state (room toggles, the All Lights master
+        // switch), and nothing else refreshes them: WidgetKit's timeline
+        // reload doesn't reach Control Center. Main app only (same rule as
+        // the timeline reload above).
+        if reloadOnStructureChange { Self.reloadControls() }
         return SnapshotPublishOutcome(contentChanged: true)
     }
 
@@ -207,6 +212,7 @@ final class WidgetDataStore: @unchecked Sendable {
             ud?.removeObject(forKey: Key.routing)
             ud?.removeObject(forKey: Key.bridgeIP)
             WidgetCenter.shared.reloadAllTimelines()
+            Self.reloadControls()
         } else {
             // Deterministic encoding (sortedKeys) so an unchanged map skips
             // the Keychain delete/add cycle — publish runs on every loadAll
@@ -222,6 +228,7 @@ final class WidgetDataStore: @unchecked Sendable {
                 // else reloads it, so a widget that rendered while unpaired
                 // stayed blank forever even after a successful re-pair.
                 WidgetCenter.shared.reloadAllTimelines()
+                Self.reloadControls()
             }
             let routing = bridges.mapValues { WidgetBridgeRouting(bridgeID: $0.bridgeID, ip: $0.ip) }
             if let data = try? encoder.encode(routing) {
@@ -304,8 +311,29 @@ final class WidgetDataStore: @unchecked Sendable {
         ud?.removeObject(forKey: Key.updatedAt)
         ud?.removeObject(forKey: Key.largePage)
         ud?.removeObject(forKey: Key.guestFeatures)
+        // The structure key too: left behind, a re-pair publishing the same
+        // rooms matched the stale identity list and never reloaded timelines.
+        ud?.removeObject(forKey: Key.structure)
         scrubLegacyPlaintextSecrets()
         SharedKeychainStore.delete(account: SharedKeychainStore.bridgeCredentialsAccount)
+        Self.reloadControls()
+    }
+
+    /// Refresh Control Center / Lock Screen controls (iOS 18+). They read
+    /// this store, but `reloadAllTimelines()` never reaches them — before
+    /// this nothing in the app ever reloaded a control.
+    static func reloadControls() {
+        #if os(iOS)
+        if #available(iOS 18.0, *) {
+            ControlCenter.shared.reloadAllControls()
+        }
+        #endif
+    }
+
+    /// Timelines AND controls — what a widget/control intent calls after a write.
+    static func reloadAllSurfaces() {
+        WidgetCenter.shared.reloadAllTimelines()
+        reloadControls()
     }
 
     // ──────────────────────────────────────────────

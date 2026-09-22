@@ -100,7 +100,7 @@ struct ToggleRoomIntent: AppIntent {
         // Only persist the flip the bridge acknowledged — a dead/revoked
         // bridge used to leave the widget asserting a state it invented.
         if ok { store.applyOptimistic(groupID: roomID, isOn: newState) }
-        WidgetCenter.shared.reloadAllTimelines()
+        WidgetDataStore.reloadAllSurfaces()
         return .result()
     }
 }
@@ -139,7 +139,7 @@ struct SetRoomPowerIntent: SetValueIntent {
             ip: creds.ip, token: creds.token
         )
         if ok { store.applyOptimistic(groupID: roomID, isOn: value) }
-        WidgetCenter.shared.reloadAllTimelines()
+        WidgetDataStore.reloadAllSurfaces()
         return .result()
     }
 }
@@ -180,7 +180,7 @@ struct AdjustBrightnessIntent: AppIntent {
             ip: creds.ip, token: creds.token
         )
         if ok { store.applyOptimistic(groupID: roomID, isOn: true, brightness: target) }
-        WidgetCenter.shared.reloadAllTimelines()
+        WidgetDataStore.reloadAllSurfaces()
         return .result()
     }
 }
@@ -220,7 +220,7 @@ struct ActivateSceneIntent: AppIntent {
         // A recall of a since-deleted scene id (scene moved rooms) 200s
         // nothing — never paint the room on for a write that didn't land.
         if ok, !groupID.isEmpty { store.applyOptimistic(groupID: groupID, isOn: true) }
-        WidgetCenter.shared.reloadAllTimelines()
+        WidgetDataStore.reloadAllSurfaces()
         return .result()
     }
 
@@ -284,7 +284,7 @@ struct ApplyPresetIntent: AppIntent {
                 }
             }
         }
-        WidgetCenter.shared.reloadAllTimelines()
+        WidgetDataStore.reloadAllSurfaces()
         return .result()
     }
 }
@@ -353,7 +353,7 @@ struct WidgetPageIntent: AppIntent {
         let pages  = max(1, (total + size - 1) / size)
         let next   = store.largePage + direction
         store.largePage = min(max(0, next), pages - 1)
-        WidgetCenter.shared.reloadAllTimelines()
+        WidgetDataStore.reloadAllSurfaces()
         return .result()
     }
 }
@@ -388,7 +388,7 @@ struct AllOffIntent: AppIntent {
             }
         }
         store.markAllGroups(on: false, onlyGroupIDs: Set(targets.map(\.id)))
-        WidgetCenter.shared.reloadAllTimelines()
+        WidgetDataStore.reloadAllSurfaces()
         return .result()
     }
 }
@@ -446,7 +446,7 @@ struct SetAllLightsPowerIntent: SetValueIntent {
         }
         store.markAllGroups(on: value, brightness: value ? welcome.brightness : nil,
                             onlyGroupIDs: Set(targets.map(\.id)))
-        WidgetCenter.shared.reloadAllTimelines()
+        WidgetDataStore.reloadAllSurfaces()
         return .result()
     }
 }

@@ -242,6 +242,10 @@ final class KeychainSharingTests: XCTestCase {
                                                groupedLightId: "gl1", bridgeID: "test-bridge")])
         store.write(guestFeatures: ["test-bridge": WidgetGuestFeatures(
             canPower: true, canAdjust: false, canRecallScenes: false)])
+        // A main-app publish records the structure (identity list) key.
+        store.write(rooms: store.rooms, zones: [], scenes: [], reloadOnStructureChange: true)
+        let groupDefaults = UserDefaults(suiteName: "group.com.huehome.pro")
+        XCTAssertNotNil(groupDefaults?.string(forKey: "hue_widget_structure_v1"))
         XCTAssertNotNil(store.credentials(for: "test-bridge"))
         XCTAssertFalse(store.features(for: "test-bridge").canAdjust)
 
@@ -254,6 +258,8 @@ final class KeychainSharingTests: XCTestCase {
         XCTAssertTrue(store.routing.isEmpty)
         XCTAssertFalse(store.isPaired)
         XCTAssertTrue(store.guestFeatures.isEmpty, "guest feature limits are wiped too")
+        XCTAssertNil(groupDefaults?.string(forKey: "hue_widget_structure_v1"),
+                     "a stale structure key made a same-rooms re-pair skip the timeline reload")
         XCTAssertNil(SharedKeychainStore.load(account: SharedKeychainStore.bridgeCredentialsAccount))
     }
 
