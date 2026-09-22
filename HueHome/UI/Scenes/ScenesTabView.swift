@@ -255,7 +255,12 @@ struct ScenesTabView: View {
                 onActivate: {
                     speedSheetScene = nil
                     HapticManager.shared.medium()
-                    orchestrator.activateGlobalScene(scene)
+                    // `scene` is the snapshot taken when the sheet opened;
+                    // the slider has since written the chosen speed into
+                    // globalScenes (setSceneSpeed). Activate THAT, or the
+                    // recall goes out at the old speed.
+                    let current = orchestrator.globalScenes.first { $0.id == scene.id } ?? scene
+                    orchestrator.activateGlobalScene(current)
                 }
             )
         }
