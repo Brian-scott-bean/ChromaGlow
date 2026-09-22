@@ -341,6 +341,19 @@ final class GatedBulkWriteTests: XCTestCase {
     }
 
     // ──────────────────────────────────────────────
+    // MARK: - Automation notifications and housekeeping
+    // ──────────────────────────────────────────────
+
+    /// A delivered notification changes nothing until it is tapped — the copy
+    /// used to claim the automation "is now active".
+    func testAutomationNotificationCopyAsksForTheTap() {
+        XCTAssertEqual(AutomationScheduler.notificationBody(for: .effect("winddown")),
+                       "Tap to apply Wind Down.")
+        XCTAssertEqual(AutomationScheduler.notificationBody(for: .preset("relax")),
+                       "Tap to apply Relax.")
+    }
+
+    // ──────────────────────────────────────────────
     // MARK: - M-14: same-color frames collapse to one grouped_light PUT
     // ──────────────────────────────────────────────
 

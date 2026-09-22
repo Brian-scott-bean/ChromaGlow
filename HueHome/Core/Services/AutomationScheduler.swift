@@ -52,7 +52,10 @@ final class AutomationScheduler: @unchecked Sendable {
 
             let content      = UNMutableNotificationContent()
             content.title    = automation.name.isEmpty ? "ChromaGlow" : automation.name
-            content.body     = "\(automation.action.displayName) is now active — tap to open the app"
+            // Honest copy: a delivered (background) notification runs
+            // NOTHING until it is tapped — the tap is what applies it. (In
+            // the foreground the banner is suppressed and it applies at once.)
+            content.body     = Self.notificationBody(for: automation.action)
             content.sound    = .default
             content.categoryIdentifier = Self.categoryID
             content.userInfo = [
@@ -87,6 +90,11 @@ final class AutomationScheduler: @unchecked Sendable {
     }
 
     // MARK: - Helpers
+
+    /// Notification body. Pure — pinned by test.
+    static func notificationBody(for action: AutomationAction) -> String {
+        "Tap to apply \(action.displayName)."
+    }
 
     private func notificationID(automation: AppAutomation, weekday: Int) -> String {
         "lightshade.automation.\(automation.id.uuidString).\(weekday)"
