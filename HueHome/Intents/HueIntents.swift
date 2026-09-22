@@ -11,6 +11,7 @@
 // and never touch UnifiedOrchestrator.
 
 import AppIntents
+import Foundation
 
 // MARK: - PowerState
 
@@ -409,12 +410,25 @@ extension AppIntent {
         store: WidgetDataStore,
         _ write: @escaping @Sendable (String, WidgetBridgeCredentials) async throws -> Void
     ) async -> [(name: String, ok: Bool)] {
+        await fanOut(to: targets, credentials: { store.credentials(for: $0) }, write)
+    }
+
+    /// Fail-fast: after a bridge's first TRANSPORT failure (timeout, no
+    /// route, TLS) its remaining groups are failed without being tried. Each
+    /// PUT has an 8 s timeout, so a whole-home command on an unreachable
+    /// bridge used to spend 8 s PER ROOM and outlive Siri. An HTTP rejection
+    /// (a reachable bridge saying no) does not trip it.
+    static func fanOut(
+        to targets: [WidgetRoomSnapshot],
+        credentials: (String?) -> WidgetBridgeCredentials?,
+        _ write: @escaping @Sendable (String, WidgetBridgeCredentials) async throws -> Void
+    ) async -> [(name: String, ok: Bool)] {
         // Resolve credentials up front (same trust rule as before).
         // Tuple, not a nested struct — types can't nest in a generic context.
         typealias Job = (name: String, glId: String?, creds: WidgetBridgeCredentials?, bridgeKey: String)
         let jobs: [Job] = targets.map { t in
             (name: t.name, glId: t.groupedLightId,
-             creds: store.credentials(for: t.bridgeID),
+             creds: credentials(t.bridgeID),
              bridgeKey: t.bridgeID ?? "")
         }
         let byBridge = Dictionary(grouping: jobs, by: { $0.bridgeKey })
@@ -424,15 +438,19 @@ extension AppIntent {
                 tasks.addTask {
                     var results: [(String, Bool)] = []
                     var sentAny = false
+                    var bridgeUnreachable = false
                     for job in bridgeJobs {
-                        guard let glId = job.glId, let creds = job.creds else {
+                        guard let glId = job.glId, let creds = job.creds, !bridgeUnreachable else {
                             results.append((job.name, false))
                             continue
                         }
                         if sentAny { try? await Task.sleep(for: .milliseconds(150)) }
                         sentAny = true
                         do { try await write(glId, creds); results.append((job.name, true)) }
-                        catch { results.append((job.name, false)) }
+                        catch {
+                            results.append((job.name, false))
+                            if Self.isTransportFailure(error) { bridgeUnreachable = true }
+                        }
                     }
                     return results
                 }
@@ -443,6 +461,13 @@ extension AppIntent {
             }
             return results
         }
+    }
+
+    /// The bridge could not be reached at all (vs. answered with an error
+    /// status — HueIntentAPIClient maps any non-2xx to .badServerResponse).
+    static func isTransportFailure(_ error: Error) -> Bool {
+        guard let urlError = error as? URLError else { return false }
+        return urlError.code != .badServerResponse && urlError.code != .badURL
     }
 }
 
