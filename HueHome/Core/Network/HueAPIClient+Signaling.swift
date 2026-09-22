@@ -33,8 +33,12 @@ struct SignalingBody: Equatable {
             "duration": min(Self.maxDurationMs, max(0, durationMs)),
         ]
         if !colorsXY.isEmpty {
+            // CLIP v2 `signaling.colors` items are the bare colour feature
+            // `{"xy": {…}}` — NOT the `{"color": {"xy": …}}` wrapper a light
+            // PUT's top-level `color` field uses. The wrapped form was being
+            // sent, so a colour signal carried no colour the bridge could read.
             signaling["colors"] = colorsXY.prefix(2).map {
-                ["color": ["xy": ["x": Double($0.x), "y": Double($0.y)]]]
+                ["xy": ["x": Double($0.x), "y": Double($0.y)]]
             }
         }
         return ["signaling": signaling]
