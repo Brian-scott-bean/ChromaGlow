@@ -1284,8 +1284,22 @@ final class UnifiedOrchestrator {
     // ──────────────────────────────────────────────
 
     /// Enter demo mode: loads mock data, marks as demo. No network access.
+    ///
+    /// More and Settings enter demo from a PAIRED session, where the real
+    /// bridge state is still live: real rooms in `roomsByBridge` (All Off's
+    /// bulk fan-out walked them with the real clients and turned the real
+    /// house off), real SSE merging real rooms back into the demo dashboard,
+    /// and real scenes in the Scenes tab. Detach all of it here. Clients stay
+    /// (a running Studio stop still needs them); the real-write choke points
+    /// refuse in demo, and `exitDemoMode` + the `.hueDemoExited` handler
+    /// rebuild the real session from scratch.
     func enterDemoMode() {
         isDemoMode = true
+        stopSSE()
+        roomsByBridge = [:]
+        zonesByBridge = [:]
+        allZones = []
+        globalScenes = DemoDataProvider.globalScenes
         loadDemoData()
         log.info("Demo mode activated")
     }
@@ -2280,6 +2294,10 @@ final class UnifiedOrchestrator {
         operation: String,
         perRoom: @escaping @Sendable (_ client: BridgeAPIClient, _ groupedLightID: String) async throws -> Void
     ) async {
+        // Demo never writes to a bridge. `clients` survives entering demo
+        // from a paired session, so without this refusal a demo "All Off"
+        // (or an automation firing mid-demo) reached the real house.
+        guard !isDemoMode else { return }
         var failedRooms: [String] = []
         await withTaskGroup(of: String?.self) { group in
             for (bridgeID, roomItems) in roomsByBridge {

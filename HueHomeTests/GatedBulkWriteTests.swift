@@ -160,6 +160,25 @@ final class GatedBulkWriteTests: XCTestCase {
         XCTAssertEqual(client.attemptsByID.count, 3)
     }
 
+    /// More/Settings enter demo from a PAIRED session: the real client stays
+    /// registered, so the bulk fan-out itself must refuse — and the real
+    /// rooms must not survive into the demo snapshot (All Off walked them).
+    func testDemoEnteredFromPairedSessionNeverWritesToTheRealBridge() async {
+        let (orchestrator, client) = makeBulkSUT(roomCount: 3)
+        orchestrator.enterDemoMode()
+
+        await orchestrator.turnAllOff()
+        await orchestrator.applyAutomationPreset(id: "relax")
+        await orchestrator.applyAutomationEffect(id: "movie")
+
+        XCTAssertTrue(client.attemptsByID.isEmpty,
+            "a demo All Off / automation must never reach the real bridge")
+        XCTAssertNil(orchestrator.testRoomsByBridge()["bridge-1"],
+            "real rooms must not survive into the demo snapshot")
+        XCTAssertFalse(orchestrator.allRooms.contains { $0.bridgeID == "bridge-1" })
+        XCTAssertFalse(orchestrator.globalScenes.contains { $0.bridgeID == "bridge-1" })
+    }
+
     // ──────────────────────────────────────────────
     // MARK: - M-08: automation preset routes through the gate too
     // ──────────────────────────────────────────────
