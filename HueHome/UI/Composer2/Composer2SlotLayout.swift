@@ -103,14 +103,17 @@ struct Composer2SlotLayout: Equatable {
         // stay tappable. That fan is presentation, so the layout stays honest
         // by reporting positions as estimated whenever it applies.
         let fannedSegments = !streaming && slots.contains { $0.isSegment }
+        let usesHeight = Composer2FloorPlan.depthUsesHeight(
+            slots.compactMap(\.position).map { (x: $0.x, y: $0.y, z: $0.z) })
         var out: [Slot] = []
         for s in slots {
             var name = s.lightID.flatMap { byID[$0]?.name } ?? "Light \(s.index + 1)"
             if s.isSegment { name += " · \(s.segmentIndex + 1)/\(s.segmentCount)" }
             let x: Double?, z: Double?
             if let p = s.position {
-                var px = Composer2Math.clamp01((p.x + 1) / 2)
-                let pz = Composer2Math.clamp01((1 - p.z) / 2)
+                let point = Composer2FloorPlan.point(x: p.x, y: p.y, z: p.z, depthUsesHeight: usesHeight)
+                var px = point.x
+                let pz = point.z
                 if fannedSegments, s.isSegment {
                     px = Composer2Math.clamp01(px + (Double(s.segmentIndex) - Double(s.segmentCount - 1) / 2) * 0.03)
                 }
@@ -134,12 +137,15 @@ struct Composer2SlotLayout: Equatable {
                           lights: [LightDisplayItem]) -> Composer2SlotLayout {
         let byID = Dictionary(lights.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         var counts: [String: Int] = [:]
-        let resolved: [(lightID: String?, x: Double, z: Double)] = config.channels.map { channel in
+        let resolved: [(lightID: String?, x: Double, y: Double, z: Double)] = config.channels.map { channel in
             let lightID = channel.lightServiceIDs.compactMap { membership[$0] }.first
             if let lightID { counts[lightID, default: 0] += 1 }
-            return (lightID, channel.position.x, channel.position.z)
+            return (lightID, channel.position.x, channel.position.y, channel.position.z)
         }
-        // Map bridge coordinates (−1…1 on both axes) into the unit square.
+        // Map bridge coordinates (−1…1) into the unit square — the shared
+        // floor plan, identical to the live geometry.
+        let usesHeight = Composer2FloorPlan.depthUsesHeight(
+            config.channels.map { (x: $0.position.x, y: $0.position.y, z: $0.position.z) })
         var seen: [String: Int] = [:]
         var slots: [Slot] = []
         for (i, r) in resolved.enumerated() {
@@ -148,10 +154,11 @@ struct Composer2SlotLayout: Equatable {
                 seen[id, default: 0] += 1
                 name += " · \(seen[id] ?? 1)/\(total)"
             }
+            let point = Composer2FloorPlan.point(x: r.x, y: r.y, z: r.z, depthUsesHeight: usesHeight)
             slots.append(Slot(index: i, lightID: r.lightID, name: name,
                               archetype: r.lightID.flatMap { byID[$0]?.archetype },
-                              x: Composer2Math.clamp01((r.x + 1) / 2),
-                              z: Composer2Math.clamp01((1 - r.z) / 2),
+                              x: point.x,
+                              z: point.z,
                               capability: r.lightID.flatMap { byID[$0] }.map(Self.capability)))
         }
         return Composer2SlotLayout(slots: slots, source: .streaming(areaName: config.name), positionsAreEstimated: false)

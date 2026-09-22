@@ -298,6 +298,17 @@ struct Composer2CompiledPalette: Equatable {
         guard n > 1 else { return labs.first ?? Composer2Lab(l: 1, a: 0, b: 0) }
         let u = cycle ? Composer2Math.frac(t) : Composer2Math.clamp01(t)
 
+        // A cycling palette whose first stop sits after 0 (explicit
+        // positions) closes the ring on BOTH sides of the wrap point: phases
+        // before the first stop blend in from the last stop instead of
+        // clamping to the first (which left a hard seam at phase 0).
+        if cycle, u < positions[0] {
+            let lo = positions[n - 1] - 1
+            let span = positions[0] - lo
+            let local = span > 1e-9 ? Composer2Math.clamp01((u - lo) / span) : 0
+            return blend(from: n - 1, to: 0, local: local)
+        }
+
         // Locate the segment [positions[i], positions[i+1]] containing u; a
         // cycling palette closes the ring between the last stop and the first.
         var i = 0
@@ -316,7 +327,11 @@ struct Composer2CompiledPalette: Equatable {
         }
         let span = hi - lo
         let local = span > 1e-9 ? Composer2Math.clamp01((u - lo) / span) : 0
+        return blend(from: i, to: hiIndex, local: local)
+    }
 
+    /// The colour `local` (0…1) of the way from stop `i` to stop `j`.
+    private func blend(from i: Int, to j: Int, local: Double) -> Composer2Lab {
         switch style {
         case .stepped:
             return labs[i]
@@ -325,14 +340,14 @@ struct Composer2CompiledPalette: Equatable {
             let band = 0.08
             if local < 1 - band { return labs[i] }
             let k = Composer2Math.smoothstep((local - (1 - band)) / band)
-            return Composer2ColorMath.mixHueArc(labs[i], labs[hiIndex], t: k)
+            return Composer2ColorMath.mixHueArc(labs[i], labs[j], t: k)
         case .linear:
-            let a = xys[i], b = xys[hiIndex]
+            let a = xys[i], b = xys[j]
             let xy = Composer2XY(x: Composer2Math.lerp(a.x, b.x, local),
                                  y: Composer2Math.lerp(a.y, b.y, local))
             return Composer2ColorMath.lab(fromXY: xy)
         case .hueArc:
-            return Composer2ColorMath.mixHueArc(labs[i], labs[hiIndex], t: local)
+            return Composer2ColorMath.mixHueArc(labs[i], labs[j], t: local)
         }
     }
 

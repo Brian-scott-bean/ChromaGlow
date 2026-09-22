@@ -78,10 +78,22 @@ struct Composer2Rhythm: Codable, Equatable {
     static let maximumPeriod: Double = 600
     static let maximumFlickerRate: Double = 2.5
 
-    /// Heartbeat has two rises per cycle, so its floor is twice the budget.
+    /// Where the heartbeat's second rise sits in its cycle (its humps peak at
+    /// 0.08 and 0.32).
+    static let heartbeatSecondRiseOffset: Double = 0.24
+
+    /// The shortest legal cycle for this shape. Heartbeat's two rises are
+    /// 0.24 of a cycle apart — NOT evenly spaced — so "twice the budget"
+    /// (0.68 s) still put them 0.16 s apart; the floor now keeps the closer
+    /// pair a whole flash budget apart.
+    var sanitizedPeriodFloor: Double {
+        shape == .heartbeat
+            ? Composer2Rhythm.minimumPeriod / Composer2Rhythm.heartbeatSecondRiseOffset
+            : Composer2Rhythm.minimumPeriod
+    }
+
     var sanitizedPeriod: Double {
-        let floorValue = shape == .heartbeat ? Composer2Rhythm.minimumPeriod * 2 : Composer2Rhythm.minimumPeriod
-        return Composer2Math.clamp(periodSeconds, floorValue, Composer2Rhythm.maximumPeriod)
+        Composer2Math.clamp(periodSeconds, sanitizedPeriodFloor, Composer2Rhythm.maximumPeriod)
     }
 
     var sanitizedFlickerRate: Double {
@@ -143,7 +155,7 @@ struct Composer2Rhythm: Codable, Equatable {
 
         case .heartbeat:
             let first = Composer2Rhythm.hump(p, start: 0.0, length: 0.16)
-            let second = Composer2Rhythm.hump(p, start: 0.24, length: 0.16) * 0.7
+            let second = Composer2Rhythm.hump(p, start: Composer2Rhythm.heartbeatSecondRiseOffset, length: 0.16) * 0.7
             curve = Swift.max(first, second)
 
         case .flicker:

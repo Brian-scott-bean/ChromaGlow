@@ -168,9 +168,15 @@ struct Composer2Motion: Codable, Equatable {
             if width >= 0.999 {
                 weight = 1
             } else {
-                // Exponential tail behind the head, measured in the travel direction.
+                // Exponential tail behind the head, measured in the direction
+                // the head is travelling RIGHT NOW. With bounce edges the
+                // head reverses every half cycle; using the fixed direction
+                // put the tail in front of the head on the way back.
                 let f = front(nt)
-                var behind = (f - pos) * dir
+                let travel: Double = edge == .bounce
+                    ? (Composer2Math.frac(nt * 0.5) < 0.5 ? dir : -dir)
+                    : dir
+                var behind = (f - pos) * travel
                 if edge == .wrap {
                     behind = Composer2Math.frac(behind)
                 } else {

@@ -37,8 +37,15 @@ enum Composer2Blend {
         guard c > 0 else { return }
         switch mode {
         case .replace:
+            // Colour follows each side's share of the LIGHT, not coverage
+            // alone: over black (brightness 0 beneath), a half-covered red
+            // light is half-bright RED — mixing by coverage washed it toward
+            // the accumulator's white seed and rendered pink.
+            let below = (1 - c) * acc.brightness
+            let above = c * b
+            let w = below + above > 1e-9 ? above / (below + above) : c
             acc.brightness = Composer2Math.lerp(acc.brightness, b, c)
-            acc.lab = Composer2ColorMath.mix(acc.lab, lab, t: c)
+            acc.lab = Composer2ColorMath.mix(acc.lab, lab, t: w)
         case .addLighten:
             let add = b * c
             let total = acc.brightness + add
@@ -245,16 +252,23 @@ struct Composer2Composition: Codable, Equatable, Identifiable {
         return [stops[0], stops[0]]
     }
 
-    /// A copy with a fresh identity (duplicate / save-as-new).
+    /// A copy with a fresh identity (duplicate / save-as-new) that PLAYS THE
+    /// SAME: every layer's effective seed is pinned before its id changes.
+    /// Seeds used to derive from the layer id and the composition's master
+    /// seed, so saving a tuned look as new silently reshuffled which lights
+    /// flickered, when events fired and who they hit — the saved look never
+    /// matched what was auditioned.
     func duplicated(name newName: String, at date: Date) -> Composer2Composition {
-        var copy = Composer2Composition(id: UUID(), name: newName, subtitle: subtitle, createdAt: date,
-                                        updatedAt: date, isBuiltIn: false, sourcePresetID: sourcePresetID,
-                                        target: target, master: master, layers: layers.map {
-                                            var l = $0
-                                            l.id = UUID()
-                                            return l
-                                        })
-        copy.master.seed = Composer2Hash.seed(from: copy.id)
-        return copy
+        let pinned: [Composer2Layer] = layers.map { layer in
+            var l = layer
+            if l.variation.seed == nil {
+                l.variation.seed = Composer2Engine.layerSeed(composition: self, layer: layer)
+            }
+            l.id = UUID()
+            return l
+        }
+        return Composer2Composition(id: UUID(), name: newName, subtitle: subtitle, createdAt: date,
+                                    updatedAt: date, isBuiltIn: false, sourcePresetID: sourcePresetID,
+                                    target: target, master: master, layers: pinned)
     }
 }

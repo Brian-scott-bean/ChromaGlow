@@ -20,7 +20,11 @@ enum Composer2LegacyImport {
         layer.rhythm = rhythm(from: preset.envelope)
         layer.audio = audio(from: preset.reaction)
         if preset.reaction.motionBeatsPerCycle > 0 {
-            layer.rhythm.quantizeBeats = preset.reaction.motionBeatsPerCycle
+            // The legacy lock sets the MOTION's cycle to N beats (it never
+            // touched the brightness rhythm, which import used to lock
+            // instead). Composer 2 motion has no beat lock, so the cycle is
+            // N beats at a nominal 120 BPM.
+            layer.motion.periodSeconds = preset.reaction.motionBeatsPerCycle * 0.5
         }
         layer.variation = preset.palette.randomize ? Composer2Variation.subtle : Composer2Variation.exact
         return layer
@@ -88,33 +92,54 @@ enum Composer2LegacyImport {
             m.angleDegrees = legacy.motionAngle
         }
         var events: Composer2EventSpec? = nil
+        // Legacy `spread` is the beam width (1 = full wash, 0 = tight beam);
+        // the travelling patterns honour it through the band width.
+        let wash = Composer2Math.clamp01(legacy.spread / 100)
+        let beamWidth = wash >= 0.95 ? 1 : 0.2 + 0.8 * wash
         switch legacy.pattern {
         case .static:
             m.kind = .static
         case .cascade:
             m.kind = .flow
+            m.travelWidth = beamWidth
+            m.smoothness = 1
         case .wave:
             m.kind = .wave
+            m.travelWidth = beamWidth
+            m.smoothness = 1
         case .scatter:
             m.kind = .scatter
             m.travelWidth = 0.6 + Composer2Math.clamp01(legacy.spread / 100) * 0.4
         case .bounce:
             m.kind = .bounce
+            m.travelWidth = beamWidth
+            m.smoothness = 1
         case .chase:
+            // The legacy head steps through 12 positions; its tail is
+            // 0.05 + wash·0.6 — exactly Composer 2's chase tail at
+            // travelWidth = wash (mapping it through that formula twice
+            // halved every tail). The legacy head COUNT has no Composer 2
+            // equivalent; mapping it to palette steps froze the colour on
+            // the first stop whenever the offset was small.
             m.kind = .chase
-            m.steps = 1 + Int((Composer2Math.clamp01(legacy.offset / 100) * 3).rounded())
+            m.steps = 12
             m.smoothness = 0
-            m.travelWidth = 0.05 + Composer2Math.clamp01(legacy.spread / 100) * 0.6
+            m.travelWidth = Swift.min(0.99, Swift.max(0.05, wash))
         case .comet:
+            // Legacy comet tail = 0.08 + wash·0.5 = 0.05 + width·0.6.
             m.kind = .chase
             m.smoothness = 1
-            m.travelWidth = 0.05 + Composer2Math.clamp01(legacy.spread / 100) * 0.6
+            m.travelWidth = Swift.min(0.99, Swift.max(0.05, (0.03 + wash * 0.5) / 0.6))
         case .pulseCenter:
             m.kind = .wave
             m.axisKind = .radial
+            m.travelWidth = beamWidth
+            m.smoothness = 1
         case .spiral:
             m.kind = .flow
             m.axisKind = .angular
+            m.travelWidth = beamWidth
+            m.smoothness = 1
         case .twinkle:
             m.kind = .static
             events = Composer2EventSpec(timing: .fixed, interval: Swift.max(0.34, legacy.periodSeconds / 8),

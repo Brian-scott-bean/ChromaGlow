@@ -10,6 +10,7 @@
 // per-frame mutable state so nothing observable is written at frame rate.
 
 import Foundation
+import MediaAccessibility
 
 final class Composer2LiveOutput: CompositionFrameSource, @unchecked Sendable {
 
@@ -20,12 +21,27 @@ final class Composer2LiveOutput: CompositionFrameSource, @unchecked Sendable {
     }
 
     /// 0…1 cap on event flashes (Dim Flashing Lights ⇒ 0.3). Applied on the
-    /// wire and on screen alike.
-    var eventCap: Double = 1
+    /// wire and on screen alike. Every output starts from the system setting;
+    /// the playback center and the screen follow its changes.
+    var eventCap: Double = Composer2LiveOutput.accessibilityEventCap()
+
+    /// iOS "Dim Flashing Lights" ⇒ events flash at 30 %, the same cap Studio
+    /// applies to its strobes. It used to be defined and never set.
+    static func accessibilityEventCap() -> Double {
+        MADimFlashingLightsEnabled() ? 0.3 : 1
+    }
 
     /// Light identities per render slot when a layout could resolve them.
+    /// Ignored while the live loop's exact slots are installed: those carry
+    /// the orchestrator's own identities, and a layout that could not name
+    /// every light would otherwise erase them (light-id masks then fell back
+    /// to the whole room).
     var layoutLightIDs: [String]? {
-        didSet { geometry = geometry.withLightIDs(layoutLightIDs); plansDirty = true }
+        didSet {
+            guard !(geometryFromBox && !liveSlots.isEmpty) else { return }
+            geometry = geometry.withLightIDs(layoutLightIDs)
+            plansDirty = true
+        }
     }
 
     private(set) var state = Composer2EngineState()
@@ -130,8 +146,12 @@ final class Composer2LiveOutput: CompositionFrameSource, @unchecked Sendable {
             liveSlots = slots
             let ids = slots.map { $0.lightID ?? "slot-\($0.index)" }
             if slots.allSatisfy({ $0.position != nil }) {
+                // The SAME floor-plan mapping the on-screen layout uses — the
+                // raw bridge z here was the mirror image of the preview's.
+                let positions = slots.map { (x: $0.position?.x ?? 0, y: $0.position?.y ?? 0, z: $0.position?.z ?? 0) }
+                let usesHeight = Composer2FloorPlan.depthUsesHeight(positions)
                 geometry = Composer2SlotGeometry(
-                    points: slots.map { (x: $0.position?.x ?? 0.5, z: $0.position?.z ?? 0.5) },
+                    points: positions.map { Composer2FloorPlan.point(x: $0.x, y: $0.y, z: $0.z, depthUsesHeight: usesHeight) },
                     lightIDs: ids)
             } else if radial.count == count, angular.count == count {
                 geometry = Composer2SlotGeometry(radial: radial, angular: angular, lightIDs: ids)

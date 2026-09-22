@@ -21,6 +21,15 @@ final class Composer2Store {
 
     @ObservationIgnored let fileURL: URL
     @ObservationIgnored private var setAsideCorruptFile = false
+    /// The file existed but could not be READ (not: could not be decoded) —
+    /// e.g. data protection before the first unlock. Such a file is almost
+    /// certainly fine, so it is re-read before any save and never replaced
+    /// while it stays unreadable.
+    @ObservationIgnored private var readDeferred = false
+    /// Some saved compositions did not decode (a newer build's data, a
+    /// hand edit). The file is copied aside once before the first save
+    /// rewrites it without them.
+    @ObservationIgnored private var droppedEntries = false
 
     struct FileEnvelope: Codable {
         static let currentSchema = 1
@@ -38,6 +47,8 @@ final class Composer2Store {
         let read = Composer2Store.readEnvelope(from: self.fileURL)
         compositions = read.compositions
         loadFailed = read.failed
+        readDeferred = read.unreadable
+        droppedEntries = read.dropped
     }
 
     var all: [Composer2Composition] {
@@ -89,30 +100,61 @@ final class Composer2Store {
         readEnvelope(from: url).compositions
     }
 
+    struct ReadResult {
+        var compositions: [Composer2Composition]
+        /// Present but undecodable as a whole.
+        var failed: Bool
+        /// Present but could not be read from disk at all.
+        var unreadable: Bool = false
+        /// Decoded, but some entries were skipped.
+        var dropped: Bool = false
+    }
+
     private struct FailableEnvelope: Decodable {
         let schema: Int?
         let compositions: [FailableDecodable<Composer2Composition>]?
     }
 
-    nonisolated private static func readEnvelope(from url: URL) -> (compositions: [Composer2Composition], failed: Bool) {
-        guard FileManager.default.fileExists(atPath: url.path) else { return ([], false) }
-        guard let data = try? Data(contentsOf: url) else { return ([], true) }
+    nonisolated static func readEnvelope(from url: URL) -> ReadResult {
+        guard FileManager.default.fileExists(atPath: url.path) else { return ReadResult(compositions: [], failed: false) }
+        guard let data = try? Data(contentsOf: url) else {
+            return ReadResult(compositions: [], failed: false, unreadable: true)
+        }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         if let envelope = try? decoder.decode(FailableEnvelope.self, from: data) {
-            let items = (envelope.compositions ?? []).compactMap(\.value)
-            return (items, false)
+            let raw = envelope.compositions ?? []
+            let items = raw.compactMap(\.value)
+            return ReadResult(compositions: items, failed: false, dropped: items.count != raw.count)
         }
         // A bare array is accepted too, for hand-written files.
-        if let items = try? decoder.decode([FailableDecodable<Composer2Composition>].self, from: data) {
-            return (items.compactMap(\.value), false)
+        if let raw = try? decoder.decode([FailableDecodable<Composer2Composition>].self, from: data) {
+            let items = raw.compactMap(\.value)
+            return ReadResult(compositions: items, failed: false, dropped: items.count != raw.count)
         }
-        return ([], true)
+        return ReadResult(compositions: [], failed: true)
     }
 
     // MARK: Writing
 
     private func persist() {
+        if readDeferred {
+            // The file could not be read at launch. Read it now; merge what
+            // is on disk under what the user has done since (theirs wins).
+            let retry = Composer2Store.readEnvelope(from: fileURL)
+            if retry.unreadable { return }   // still locked: never clobber it
+            readDeferred = false
+            loadFailed = retry.failed
+            droppedEntries = droppedEntries || retry.dropped
+            let mine = Set(compositions.map(\.id))
+            compositions = retry.compositions.filter { !mine.contains($0.id) } + compositions
+        }
+        if droppedEntries && !loadFailed {
+            droppedEntries = false
+            let copy = fileURL.deletingPathExtension()
+                .appendingPathExtension("partial-\(Int(Date().timeIntervalSince1970)).bak")
+            try? FileManager.default.copyItem(at: fileURL, to: copy)
+        }
         if loadFailed && !setAsideCorruptFile {
             setAsideCorruptFile = true
             let aside = fileURL.deletingPathExtension()

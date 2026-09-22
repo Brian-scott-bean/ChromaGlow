@@ -110,7 +110,25 @@ final class Composer2LabLayerTests: XCTestCase {
         let fast = Composer2Rhythm(shape: .pulse, periodSeconds: 0.05)
         XCTAssertEqual(fast.sanitizedPeriod, BeatMath.FlashSafety.minOnsetLedgerPeriod, accuracy: 1e-12)
         let heartbeat = Composer2Rhythm(shape: .heartbeat, periodSeconds: 0.05)
-        XCTAssertEqual(heartbeat.sanitizedPeriod, BeatMath.FlashSafety.minOnsetLedgerPeriod * 2, accuracy: 1e-12)
+        // The two rises are 0.24 of a cycle apart, so the floor keeps THAT
+        // gap — not half the cycle — a whole flash budget long.
+        XCTAssertEqual(heartbeat.sanitizedPeriod * Composer2Rhythm.heartbeatSecondRiseOffset,
+                       BeatMath.FlashSafety.minOnsetLedgerPeriod, accuracy: 1e-12)
+        // Measured, not just computed: the peaks at the floor are ≥ the budget apart.
+        let period = heartbeat.sanitizedPeriod
+        var peaks: [Double] = []
+        var previous = 0.0, rising = false
+        for i in 0..<Int(period * 2 * 1000) {
+            let t = Double(i) / 1000
+            let v = heartbeat.value(cyclePhase: t / period, time: t, slot: 0, seed: 1)
+            if v < previous && rising { peaks.append(t - 0.001) }
+            rising = v > previous
+            previous = v
+        }
+        XCTAssertGreaterThanOrEqual(peaks.count, 3)
+        for (a, b) in zip(peaks, peaks.dropFirst()) {
+            XCTAssertGreaterThanOrEqual(b - a, BeatMath.FlashSafety.minOnsetLedgerPeriod - 0.002)
+        }
     }
 
     func testFlickerCrossingsStayUnderThreeHertz() {

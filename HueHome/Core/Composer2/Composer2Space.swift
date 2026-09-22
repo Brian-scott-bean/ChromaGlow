@@ -155,6 +155,34 @@ struct Composer2SlotGeometry: Equatable {
     }
 }
 
+// MARK: - Floor plan
+
+/// One mapping from bridge positions to the unit-square room picture, shared
+/// by every Composer 2 layout AND the live geometry — so what the hero shows
+/// and what the lights do can never be mirrored against each other.
+///
+/// Hue Entertainment positions are x = left → right, y = front → back and
+/// z = floor → ceiling, each −1…1. The floor plan is therefore (x, y). Areas
+/// whose lights all sit on one front/back line (the ones ChromaGlow's own
+/// area builder writes) carry no depth in y; there, height is the only
+/// second dimension the bridge knows, so it stands in.
+enum Composer2FloorPlan {
+    static func depthUsesHeight(_ positions: [(x: Double, y: Double, z: Double)]) -> Bool {
+        let ys = positions.map(\.y).filter(\.isFinite)
+        let zs = positions.map(\.z).filter(\.isFinite)
+        let ySpread = (ys.max() ?? 0) - (ys.min() ?? 0)
+        let zSpread = (zs.max() ?? 0) - (zs.min() ?? 0)
+        return ySpread < 0.05 && zSpread >= 0.05
+    }
+
+    /// Unit-square point: x left → right, z (screen depth) back/top = 0.
+    static func point(x: Double, y: Double, z: Double, depthUsesHeight: Bool) -> (x: Double, z: Double) {
+        let depth = depthUsesHeight ? z : y
+        return (x: Composer2Math.clamp01(((x.isFinite ? x : 0) + 1) / 2),
+                z: Composer2Math.clamp01((1 - (depth.isFinite ? depth : 0)) / 2))
+    }
+}
+
 // MARK: - Layer mask
 
 /// Which lights a layer drives, as a 0…1 weight per slot.
