@@ -219,6 +219,10 @@ final class CompositionMixerTests: XCTestCase {
 
     private let snap120 = BeatSnapshot(bpm: 120, beatEpoch: 0, beatsPerBar: 4)
     private let channels: [Int] = [0, 1, 2]
+    /// `PerformanceViewModel` holds its orchestrator `unowned`, and a REST
+    /// strobe punch reads it from a Task that runs after the test returns —
+    /// the test case keeps it alive for the whole run.
+    private var performOrchestrator: UnifiedOrchestrator?
 
     private func box(hueShift: Double = 0) -> CompositionParamBox {
         let box = CompositionParamBox(
@@ -313,6 +317,43 @@ final class CompositionMixerTests: XCTestCase {
                                                beat: snap120, hostNow: 0.4)[0] // beatPhase 0.8
         XCTAssertGreaterThan(on.brightness, 0.5)
         XCTAssertLessThan(off.brightness, 0.5)
+    }
+
+    func testStrobeCeilingCapsTheOnLevelNotTheRate() {
+        // Dim Flashing Lights: Studio's 30 % strobe cap, on the Perform pad.
+        let mix = PerformanceMixBox(deckA: box())
+        mix.strobeCeiling = PerformanceMixBox.dimFlashingStrobeCeiling
+        mix.engagePunch(.strobe)
+        let on = CompositionMixer.renderMixed(time: 1, channelIDs: channels, mix: mix,
+                                              beat: snap120, hostNow: 0.1)   // beatPhase 0.2
+        let off = CompositionMixer.renderMixed(time: 1, channelIDs: channels, mix: mix,
+                                               beat: snap120, hostNow: 0.4)  // beatPhase 0.8
+        for frame in on { XCTAssertEqual(frame.brightness, 0.3, accuracy: 1e-9) }
+        for frame in off { XCTAssertEqual(frame.brightness, 0, accuracy: 1e-9) }
+    }
+
+    @MainActor
+    func testPerformStrobePadHonorsDimFlashingLights() {
+        let room = RoomDisplayItem(
+            kind: .room, id: "room-dim", name: "Dim", archetype: nil, isOn: true, brightness: 60,
+            groupedLightID: "gl-dim", lightCount: 3, bridgeID: "bridge-a", childResourceRefs: [])
+        let orchestrator = UnifiedOrchestrator()
+        performOrchestrator = orchestrator
+        let performance = PerformanceViewModel(
+            orchestrator: orchestrator, room: room, liveBox: box(), liveName: "Live")
+        performance.forcedReduceMotionForTesting = false
+
+        performance.forcedDimFlashingLightsForTesting = true
+        XCTAssertTrue(performance.punchDown(.strobe), "Dim Flashing Lights dims the strobe, it does not refuse it")
+        XCTAssertEqual(performance.mix.punch, .strobe)
+        XCTAssertEqual(performance.mix.strobeCeiling, 0.3, accuracy: 1e-12,
+                       "the pad strobes at Studio's 30 % cap")
+        performance.punchUp()
+
+        performance.forcedDimFlashingLightsForTesting = false
+        XCTAssertTrue(performance.punchDown(.strobe))
+        XCTAssertEqual(performance.mix.strobeCeiling, 1.0, accuracy: 1e-12,
+                       "with the setting off the pad is back at full")
     }
 
     func testMasterFaderScalesPostBlend() {

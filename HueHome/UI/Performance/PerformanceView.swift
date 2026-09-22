@@ -11,6 +11,7 @@
 // shared beat panel — never bespoke clock UI.
 
 import SwiftUI
+import MediaAccessibility
 import QuartzCore
 import UIKit
 
@@ -227,7 +228,20 @@ final class PerformanceViewModel: Identifiable {
     /// TEST SEAM — mirrors StudioViewModel's, for the same reason: the system
     /// setting cannot be toggled from a unit test.
     var forcedReduceMotionForTesting: Bool?
+    /// TEST SEAM for `isDimFlashingLightsEnabled`, same reason.
+    var forcedDimFlashingLightsForTesting: Bool?
     #endif
+
+    /// iOS "Dim Flashing Lights" (MediaAccessibility — there is no
+    /// UIAccessibility equivalent). Studio caps its strobe card to 30 %
+    /// brightness under it; the STROBE pad must not be the one flash-class
+    /// surface that ignores it.
+    var isDimFlashingLightsEnabled: Bool {
+        #if DEBUG
+        if let forced = forcedDimFlashingLightsForTesting { return forced }
+        #endif
+        return MADimFlashingLightsEnabled()
+    }
 
     /// Returns true when the punch was actually engaged. A refusal must not
     /// leave the pad looking held, and must not earn a matching `punchUp` —
@@ -247,13 +261,21 @@ final class PerformanceViewModel: Identifiable {
             strobeRefusalNotice = StudioSafetyCopy.strobeReduceMotion
             return false
         }
+        // Dim Flashing Lights: the pad still strobes, at Studio's 30 % cap.
+        let dimFlashing = pad == .strobe && isDimFlashingLightsEnabled
+        if pad == .strobe {
+            mix.strobeCeiling = dimFlashing ? PerformanceMixBox.dimFlashingStrobeCeiling : 1.0
+        }
         mix.engagePunch(pad)
         HapticManager.shared.medium()
         // REST tier: the mixer overlay only lands at scheduler cadence, so
         // fire the bridge-native burst too — instant, self-terminating.
         // STROBE must alternate two contrasting colors (white↔white was a
         // static flash); BURST is the steady white push, like the overlay.
-        if !isStreaming, pad != .blackout {
+        // Not under Dim Flashing Lights: the bridge's `alternating` signal
+        // has no brightness field, so the burst cannot be dimmed — the capped
+        // mixer overlay is the only strobe that room gets.
+        if !isStreaming, pad != .blackout, !dimFlashing {
             let colors: (a: CGPoint, b: CGPoint) = pad == .strobe
                 ? (CGPoint(x: 0.3127, y: 0.3290), CGPoint(x: 0.1500, y: 0.0600))
                 : (CGPoint(x: 0.3127, y: 0.3290), CGPoint(x: 0.3127, y: 0.3290))
