@@ -169,6 +169,27 @@ final class HueIntentEntityTests: XCTestCase {
         XCTAssertTrue(LightingPresetIntent.isTransportFailure(URLError(.cannotConnectToHost)))
     }
 
+    /// "Stop the lights" used to answer "Stopped light effects." even when
+    /// no bridge was reachable.
+    func testStopReportsUnreachableAndPartialFailuresHonestly() {
+        XCTAssertNoThrow(try StopLightEffectsIntent.throwIfStopFailed(
+            [(name: "A", ok: true), (name: "B", ok: true)]))
+
+        XCTAssertThrowsError(try StopLightEffectsIntent.throwIfStopFailed(
+            [(name: "A", ok: false), (name: "B", ok: false)])) { error in
+            guard case IntentError.bridgeUnreachable = error else {
+                return XCTFail("all groups failed must be unreachable, got \(error)")
+            }
+        }
+        XCTAssertThrowsError(try StopLightEffectsIntent.throwIfStopFailed(
+            [(name: "A", ok: true), (name: "B", ok: false)])) { error in
+            guard case IntentError.partialFailure(_, let names) = error else {
+                return XCTFail("a mixed outcome must be partial, got \(error)")
+            }
+            XCTAssertEqual(names, ["B"])
+        }
+    }
+
     // ── Family Sharing feature limits (out-of-app surfaces) ──
 
     func testFeatureLookupIsUnrestrictedForOwnedAndLegacyBridges() {

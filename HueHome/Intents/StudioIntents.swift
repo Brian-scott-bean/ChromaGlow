@@ -125,14 +125,29 @@ struct StartStudioEffectIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
-        // Family Sharing: effects restyle the lights — same grant as a preset.
-        guard WidgetDataStore.shared.features(for: group.bridgeID).canPowerAndAdjust else {
-            throw IntentError.notPermitted(group.name)
-        }
+        try Self.checkStartable(group)
         DeepLinkCoordinator.shared.requestStudioAction(
             .effect(effectID: effect.rawValue, groupID: group.id)
         )
-        return .result(dialog: "Starting \(effect.displayName) in \(group.name).")
+        // A hand-off, not a confirmed start: Studio runs it once the app is
+        // up (and may still refuse), so don't claim it has started.
+        return .result(dialog: "Opening ChromaGlow to start \(effect.displayName) in \(group.name).")
+    }
+}
+
+extension StartStudioEffectIntent {
+    /// Checks both open-app intents make BEFORE answering: the room must
+    /// still be in the published snapshot (deleted, or pruned by a narrowed
+    /// guest allowlist, since Siri resolved it), and — Family Sharing —
+    /// effects restyle the lights, so the grant needs power AND adjust.
+    static func checkStartable(_ group: HueGroupEntity) throws {
+        let store = WidgetDataStore.shared
+        guard store.groups.contains(where: { $0.id == group.id }) else {
+            throw IntentError.unknownEntity("room")
+        }
+        guard store.features(for: group.bridgeID).canPowerAndAdjust else {
+            throw IntentError.notPermitted(group.name)
+        }
     }
 }
 
@@ -158,12 +173,10 @@ struct StartCompositionIntent: AppIntent {
         guard let presetID = UUID(uuidString: composition.id) else {
             throw IntentError.unknownEntity("Composer scene")
         }
-        guard WidgetDataStore.shared.features(for: group.bridgeID).canPowerAndAdjust else {
-            throw IntentError.notPermitted(group.name)
-        }
+        try StartStudioEffectIntent.checkStartable(group)
         DeepLinkCoordinator.shared.requestStudioAction(
             .composition(presetID: presetID, groupID: group.id)
         )
-        return .result(dialog: "Starting \(composition.name) in \(group.name).")
+        return .result(dialog: "Opening ChromaGlow to start \(composition.name) in \(group.name).")
     }
 }
