@@ -151,6 +151,15 @@ final class BeatClock {
 
     /// Register one tap. BPM = median of the last few tap intervals; the
     /// tap itself re-anchors the beat phase (a tap IS a beat).
+    ///
+    /// The clock pins only once the taps have MEASURED a tempo — two or more
+    /// taps inside the 30–300 BPM window. A pinned clock ignores the mic until
+    /// "Auto", so pinning on the first tap let one stray tap freeze the clock:
+    /// at 0 BPM ("Listening for a beat…" forever) when nothing had locked yet,
+    /// or on a re-anchored phase the audio could no longer correct. A lone tap
+    /// now only starts the measurement — except on a clock the user already
+    /// owns (a tap/manual pin with a tempo), where it re-anchors the phase as
+    /// every tap always has.
     func tap(now: Double = CACurrentMediaTime()) {
         if let last = tapTimes.last, now - last > Self.tapResetGap {
             tapTimes = []
@@ -158,24 +167,31 @@ final class BeatClock {
         tapTimes.append(now)
         if tapTimes.count > 8 { tapTimes.removeFirst() }
 
-        beatEpoch = now   // every tap re-anchors phase
-        guard tapTimes.count >= 2 else {
-            source = .tap
-            isPinned = true
-            publishMirror()
+        guard let tappedBPM = measuredTapBPM() else {
+            if isPinned, bpm > 0 {
+                beatEpoch = now
+                publishMirror()
+            }
             return
         }
+        bpm = tappedBPM
+        confidence = 1.0
+        beatEpoch = now   // the tap re-anchors phase
+        source = .tap
+        isPinned = true
+        publishMirror()
+    }
+
+    /// Median tap interval as a BPM, or nil until at least two taps inside
+    /// the 30–300 BPM sanity window have measured one.
+    private func measuredTapBPM() -> Double? {
+        guard tapTimes.count >= 2 else { return nil }
         var intervals: [Double] = []
         for i in 1..<tapTimes.count { intervals.append(tapTimes[i] - tapTimes[i - 1]) }
         intervals.sort()
         let median = intervals[intervals.count / 2]
-        if median > 0.2, median < 2.0 {   // 30–300 BPM sanity window
-            bpm = 60.0 / median
-            confidence = 1.0
-        }
-        source = .tap
-        isPinned = true
-        publishMirror()
+        guard median > 0.2, median < 2.0 else { return nil }   // 30–300 BPM sanity window
+        return 60.0 / median
     }
 
     /// Set an explicit BPM (pins the clock). The beat position at `now` is

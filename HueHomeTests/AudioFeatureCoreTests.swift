@@ -301,6 +301,45 @@ final class BeatClockTests: XCTestCase {
         XCTAssertEqual(snap.beatPhase(at: 101.5), 0, accuracy: 0.001)
     }
 
+    /// One stray Tap used to pin the clock at whatever it had — 0 BPM on a
+    /// fresh clock — and a pinned clock ignores the mic until "Auto".
+    func testASingleStrayTapDoesNotPinTheClock() {
+        let clock = BeatClock()
+        clock.tap(now: 10)
+        XCTAssertFalse(clock.isPinned, "one tap measures no tempo")
+        XCTAssertEqual(clock.bpm, 0)
+        XCTAssertEqual(clock.source, .none)
+        clock.ingest(estimate: TempoEstimate(bpm: 100, confidence: 0.9, lastBeatOffset: 0), endTime: 20)
+        XCTAssertEqual(clock.bpm, 100, accuracy: 0.01, "the mic can still lock after a stray tap")
+        XCTAssertEqual(clock.source, .audio)
+    }
+
+    func testASingleTapLeavesAnAudioDrivenClockAlone() {
+        let clock = BeatClock()
+        clock.ingest(estimate: TempoEstimate(bpm: 120, confidence: 0.9, lastBeatOffset: 0), endTime: 50)
+        let before = BeatClock.snapshot()
+        clock.tap(now: 51.13)
+        XCTAssertFalse(clock.isPinned)
+        XCTAssertEqual(clock.source, .audio)
+        XCTAssertEqual(BeatClock.snapshot(), before, "neither tempo nor phase moves on one tap")
+        // The second tap measures a tempo and pins.
+        clock.tap(now: 51.73)
+        XCTAssertTrue(clock.isPinned)
+        XCTAssertEqual(clock.source, .tap)
+        XCTAssertEqual(clock.bpm, 100, accuracy: 0.01)
+        XCTAssertEqual(BeatClock.snapshot().beatPhase(at: 51.73), 0, accuracy: 1e-9)
+    }
+
+    func testASingleTapReAnchorsAClockTheUserAlreadyOwns() {
+        let clock = BeatClock()
+        clock.setBPM(100, now: 10)
+        clock.tap(now: 50.37)
+        XCTAssertTrue(clock.isPinned)
+        XCTAssertEqual(clock.bpm, 100, accuracy: 1e-9)
+        XCTAssertEqual(BeatClock.snapshot().beatPhase(at: 50.37), 0, accuracy: 1e-9,
+                       "a tap on a pinned clock is still a beat")
+    }
+
     func testPinnedClockIgnoresAudio() {
         let clock = BeatClock()
         for i in 0..<4 { clock.tap(now: 100.0 + Double(i) * 0.5) }
