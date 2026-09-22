@@ -1739,6 +1739,30 @@ final class StudioProductionWiringTests: XCTestCase {
         XCTAssertEqual(box.palette.color2, CodableColor(x: 0.17, y: 0.7))
         XCTAssertEqual(box.palette.color3, CodableColor(x: 0.15, y: 0.06))
     }
+
+    /// Audit #7 — on a cold start Studio can be configured before `loadAll`
+    /// lands. The selection was seeded only in `configure`, so the wheel
+    /// showed rooms[0] while every card tap refused "Select a room first".
+    func testRoomsArrivingAfterConfigureSeedTheSelection() {
+        XCTAssertTrue(orchestrator.allRooms.isEmpty, "fixture: configured before any room loaded")
+        XCTAssertNil(vm.selectedRoom)
+
+        let first = room("room-1", bridge: "bridge-a")
+        orchestrator.allRooms = [first, room("room-2", bridge: "bridge-a")]
+        vm.seedSelectedRoomIfNeeded()
+        XCTAssertEqual(vm.selectedRoom.map(StudioSelectionKey.init), StudioSelectionKey(room: first),
+                       "the selection agrees with the wheel's first room")
+
+        // Never overrides a selection that exists.
+        let chosen = room("room-2", bridge: "bridge-a")
+        vm.selectedRoom = chosen
+        vm.seedSelectedRoomIfNeeded()
+        XCTAssertEqual(vm.selectedRoom.map(StudioSelectionKey.init), StudioSelectionKey(room: chosen))
+
+        // And StudioView re-runs it whenever the room count changes.
+        let view = try? productionCode("HueHome/UI/Studio/StudioView.swift")
+        XCTAssertTrue(view?.contains("drainStudioAction: seedSelectionAndDrainStudioAction") ?? false)
+    }
 }
 
 /// Holds a `RestSender` busy on demand, so "this closure is still pending"

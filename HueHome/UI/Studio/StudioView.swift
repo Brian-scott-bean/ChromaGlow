@@ -452,7 +452,7 @@ struct StudioView: View {
             openToken: deepLink.openToken,
             retryKey: siriDrainRetryKey,
             drainShare: consumePendingShare,
-            drainStudioAction: consumePendingStudioAction
+            drainStudioAction: seedSelectionAndDrainStudioAction
         ))
         .modifier(StudioMusicWiring(vm: vm))
         .modifier(EntertainmentHandoffAlert(vm: vm))
@@ -1614,6 +1614,15 @@ struct StudioView: View {
     /// change re-fires the drain task.
     private var siriDrainRetryKey: String {
         "\(vm.compositionStore.isLoaded)-\(orchestrator.allRooms.count)-\(orchestrator.allZones.count)"
+    }
+
+    /// Runs on every change of `siriDrainRetryKey` — which includes the room
+    /// count, so it is also where a cold start's late-arriving rooms seed the
+    /// selection (the wheel already shows rooms[0]; the VM must agree before
+    /// the first card tap). Seeding first also lets a Siri drain see it.
+    private func seedSelectionAndDrainStudioAction() {
+        vm.seedSelectedRoomIfNeeded()
+        consumePendingStudioAction()
     }
 
     /// Drains a Siri "start X in Y". Both cold-launch dependencies retry via
