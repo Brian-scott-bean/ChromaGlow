@@ -178,10 +178,12 @@ final class BeatClock {
         publishMirror()
     }
 
-    /// Set an explicit BPM (pins the clock).
+    /// Set an explicit BPM (pins the clock). The beat position at `now` is
+    /// kept: the ±1 BPM buttons and a Tap Dial twist change the tempo from
+    /// here on, they do not jump the lights to a different beat or bar.
     func setBPM(_ newBPM: Double, now: Double = CACurrentMediaTime()) {
-        bpm = min(300, max(20, newBPM))
         if beatEpoch == 0 { beatEpoch = now }
+        retime(to: min(300, max(20, newBPM)), keepingPhaseAt: now)
         confidence = 1.0
         source = .manual
         isPinned = true
@@ -216,6 +218,25 @@ final class BeatClock {
             // not leave the label on "Music" with nothing driving.
             source = isServiceDriven(now: now) ? .service : (bpm > 0 ? .audio : .none)
         }
+    }
+
+    /// Change the tempo WITHOUT moving the beat position at `pivot`.
+    ///
+    /// Phase is `(t − beatEpoch) / beatInterval`, so replacing the interval
+    /// under a fixed epoch rescales every beat since the epoch: a change of δ
+    /// BPM shifts the phase at `t` by `(t − beatEpoch) · δ / 60` beats. Five
+    /// minutes into a set, a 0.3 BPM audio drift is a 1.5-beat jump; a ±1 BPM
+    /// press, 5. The epoch is therefore re-based so the beat count at `pivot`
+    /// — whole beats, phase and bar — is identical under the new interval.
+    ///
+    /// NOT used by `driveFromTrack`: there the epoch IS track t=0 and a new
+    /// sidecar BPM re-states the grid from that anchor by design.
+    private func retime(to newBPM: Double, keepingPhaseAt pivot: Double) {
+        if bpm > 0, newBPM > 0, newBPM != bpm, pivot.isFinite {
+            let beatsAtPivot = (pivot - beatEpoch) * bpm / 60.0
+            beatEpoch = pivot - beatsAtPivot * 60.0 / newBPM
+        }
+        bpm = newBPM
     }
 
     /// Full reset (session end).
@@ -351,7 +372,10 @@ final class BeatClock {
             return
         }
 
-        bpm = clampedBPM
+        // Tempo drift keeps the beat position at the analysis end time; the
+        // gentle correction below is then measured against the grid a viewer
+        // is actually seeing, not one the new BPM rescaled out from the epoch.
+        retime(to: clampedBPM, keepingPhaseAt: endTime)
 
         // Gentle phase correction: move the epoch toward the audio-observed
         // beat by at most maxPhaseCorrection — never a visible jump.
