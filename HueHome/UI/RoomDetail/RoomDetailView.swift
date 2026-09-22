@@ -102,7 +102,8 @@ struct RoomDetailView: View {
                 VStack {
                     Spacer()
                     SceneEditBar(vm: vm) { scene in
-                        // Edit: activate the scene to seed light states, then open builder
+                        // Edit: recall the scene as a live preview, then open the
+                        // builder (it seeds from the scene's stored actions).
                         vm.activateScene(scene)
                         vm.exitSceneSelectMode()
                         sceneToEdit = scene
@@ -157,7 +158,10 @@ struct RoomDetailView: View {
                 bridgeID: room.bridgeID ?? "",
                 existingSceneID: scene.id,
                 existingSceneName: scene.name,
-                initialLights: vm.lights   // lights are already in scene state after activateScene()
+                // Live lights (capabilities + fallback for lights the scene
+                // doesn't name). The builder overwrites each light from the
+                // scene's own stored actions before anything is editable.
+                initialLights: vm.lights
             ) {
                 Task { await vm.loadScenes() }
             }
@@ -785,12 +789,12 @@ struct RoomDetailView: View {
                                     // (design §5). Favorite is local-only.
                                     if !isGrantedBridge {
                                         Button {
-                                            // Edit: activate scene first to seed light colors, then open builder
+                                            // Edit: recall the scene so the room previews
+                                            // it, then open the builder — which seeds from
+                                            // the scene's own stored actions, not from the
+                                            // (still refreshing) live light state.
                                             vm.activateScene(scene)
-                                            // Small delay so lights update before builder opens
-                                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-                                                sceneToEdit = scene
-                                            }
+                                            sceneToEdit = scene
                                         } label: {
                                             Label("Edit Scene", systemImage: "slider.horizontal.3")
                                         }

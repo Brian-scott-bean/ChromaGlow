@@ -228,4 +228,52 @@ final class SceneCopyEngineTests: XCTestCase {
         XCTAssertEqual(request.actions[1].action.color_temperature?.mirek, 366)
         XCTAssertEqual(request.actions[2].action.on?.on, false)
     }
+
+    // ── Scene builder edit seed (same stored-action source) ──
+
+    private func liveLight(_ id: String, x: Double? = 0.6, y: Double? = 0.3,
+                           mirek: Int? = nil, brightness: Double = 30,
+                           on: Bool = true) -> LightDisplayItem {
+        LightDisplayItem(id: id, name: "Live \(id)", archetype: nil,
+                         isOn: on, brightness: brightness,
+                         colorX: x, colorY: y, colorTempMirek: mirek,
+                         mirekMin: 153, mirekMax: 500)
+    }
+
+    /// Editing must start from the scene's stored actions, never from the
+    /// room's live (possibly pre-recall) state — which is what used to be
+    /// saved back over the scene.
+    func testBuilderEditSeedTakesTheScenesOwnActions() {
+        let live = [
+            liveLight("l1"),                                     // live: red 30%
+            liveLight("l2", x: 0.2, y: 0.2, brightness: 50),
+            liveLight("l3", brightness: 70),                     // not in the scene
+        ]
+        let actions = [
+            action(rid: "l1", brightness: 90, x: 0.17, y: 0.7),  // stored: green 90%
+            action(rid: "l2", brightness: 40, mirek: 366),       // stored: CT
+        ]
+
+        let seeded = SceneColorBuilderView.seeded(live, from: actions)
+
+        XCTAssertEqual(seeded.map(\.id), ["l1", "l2", "l3"], "order and membership preserved")
+        XCTAssertEqual(seeded[0].colorX ?? -1, 0.17, accuracy: 0.0001)
+        XCTAssertEqual(seeded[0].colorY ?? -1, 0.7, accuracy: 0.0001)
+        XCTAssertEqual(seeded[0].brightness, 90)
+        XCTAssertNil(seeded[0].colorTempMirek, "a color action means color mode")
+        XCTAssertEqual(seeded[1].colorTempMirek, 366)
+        XCTAssertNil(seeded[1].colorX, "a CT action must save back as CT (xy wins in updateScene)")
+        XCTAssertEqual(seeded[1].brightness, 40)
+        XCTAssertEqual(seeded[2].colorX, 0.6, "lights the scene doesn't name keep live state")
+        XCTAssertEqual(seeded[2].brightness, 70)
+    }
+
+    func testBuilderEditSeedHonoursStoredOff() {
+        let seeded = SceneColorBuilderView.seeded(
+            [liveLight("l1", on: true)],
+            from: [action(rid: "l1", on: false, brightness: nil)]
+        )
+        XCTAssertFalse(seeded[0].isOn)
+        XCTAssertEqual(seeded[0].brightness, 30, "no stored dimming keeps the live value")
+    }
 }
