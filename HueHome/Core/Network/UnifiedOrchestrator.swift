@@ -5912,6 +5912,25 @@ final class UnifiedOrchestrator {
         await AudioAnalysisEngine.shared.setDemand(.composerReaction, active: needed)
     }
 
+    /// Called on EVERY `startCompositionMode` path that returns without
+    /// `.started`: the microphone demand is re-derived from what is actually
+    /// running and pushed to the engine UNCONDITIONALLY.
+    ///
+    /// Two acquisitions can precede a refusal — the start's own mic head
+    /// start below, and Studio's pre-start acquire of `.composerReaction` —
+    /// and before this nothing released either on a refusal (a commit-time
+    /// `.contested`, an unproven release, a bridge-stored failure, an early
+    /// unreadable bridge). `refreshCompositionMicDemand` alone could not be
+    /// trusted to: it runs only from live loops and teardown, and its
+    /// `lastComposerMicDemand` cache skips the push whenever the cached value
+    /// already matches — so a demand raised behind the cache's back (Studio's)
+    /// could stay held forever with the mic indicator on. Forcing the cache to
+    /// `nil` makes the refresh push the truth either way.
+    private func releaseCompositionMicDemandForUnstartedStart() async {
+        lastComposerMicDemand = nil
+        await refreshCompositionMicDemand()
+    }
+
     /// Composer 2.1: an ATTENDED start for a composition owner outside Studio.
     ///
     /// Runs the same third-party preflight Studio runs, asks `askTakeover`
@@ -5995,6 +6014,7 @@ final class UnifiedOrchestrator {
 
         guard let api = hueClient(for: room.bridgeID),
               let groupedLightID = room.groupedLightID else {
+            await releaseCompositionMicDemandForUnstartedStart()
             return .failed(message: EntertainmentConsentCopy.bridgeUnreadable)
         }
 
@@ -6024,8 +6044,10 @@ final class UnifiedOrchestrator {
                 outstandingCandidateID = candidate.id
             case .needsForeignConsent(let snapshot, let targetConfigID):
                 debugLog("[Handoff] Composition needs bridge \(bridgeID), which another app is using — nothing mutated")
+                await releaseCompositionMicDemandForUnstartedStart()
                 return .needsForeignConsent(snapshot: snapshot, targetConfigID: targetConfigID)
             case .failed(let message):
+                await releaseCompositionMicDemandForUnstartedStart()
                 return .failed(message: message)
             case .heldByAnotherLook:
                 // One of our own app-driven looks is streaming this bridge.
@@ -6034,6 +6056,7 @@ final class UnifiedOrchestrator {
                 // 25 fps stream and do nothing visible at all. Nothing has been
                 // mutated yet, so the running look is untouched.
                 debugLog("[Handoff] Composition refused bridge \(bridgeID) — a ChromaGlow look already streams it")
+                await releaseCompositionMicDemandForUnstartedStart()
                 return .failed(message: EntertainmentHandoffCopy.alreadyStreaming)
             case .notNeeded, .unavailable:
                 break
@@ -6159,10 +6182,13 @@ final class UnifiedOrchestrator {
                 case .committed:
                     break
                 case .contested(let snapshot, let targetConfigID):
+                    await releaseCompositionMicDemandForUnstartedStart()
                     return .needsForeignConsent(snapshot: snapshot, targetConfigID: targetConfigID)
                 case .verificationUnavailable:
+                    await releaseCompositionMicDemandForUnstartedStart()
                     return .failed(message: EntertainmentConsentCopy.bridgeUnreadable)
                 case .releaseNotProven, .sessionFailed:
+                    await releaseCompositionMicDemandForUnstartedStart()
                     return .failed(message: EntertainmentAvailabilityCopy.couldNotStart)
                 }
             }
@@ -6271,6 +6297,7 @@ final class UnifiedOrchestrator {
                 // nothing surfaces in the room aggregate on its account
                 // (round 4c's invariant, now structural).
                 noteRoomOwnershipChange(bridgeID: bridgeID, roomID: roomID)
+                await releaseCompositionMicDemandForUnstartedStart()
                 return .failed(message: BridgeSaveCopy.savedNotConfirmedRunning)
 
             case .replacementBlocked:
@@ -6278,17 +6305,20 @@ final class UnifiedOrchestrator {
                 // would — nothing was created, so nothing may be claimed.
                 deactivateComposerTelemetrySession(
                     sessionKey: composerTelemetryKey, pendingRemovalReported: false)
+                await releaseCompositionMicDemandForUnstartedStart()
                 return .failed(
                     message: "Couldn't start \(preset.name) — the previous look is still on the bridge. Try again in a moment.")
 
             case .compensatedNothingRemains:
                 deactivateComposerTelemetrySession(
                     sessionKey: composerTelemetryKey, pendingRemovalReported: false)
+                await releaseCompositionMicDemandForUnstartedStart()
                 return .failed(message: BridgeSaveCopy.saveFailedNothingRecorded)
 
             case .partialCleanup(_, _, let recoverable):
                 deactivateComposerTelemetrySession(
                     sessionKey: composerTelemetryKey, pendingRemovalReported: false)
+                await releaseCompositionMicDemandForUnstartedStart()
                 return .failed(message: recoverable
                     ? BridgeSaveCopy.partialCleanupRecoverable
                     : BridgeSaveCopy.partialCleanupNotDurable)
