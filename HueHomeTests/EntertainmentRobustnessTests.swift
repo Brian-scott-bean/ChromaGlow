@@ -16,6 +16,7 @@
 // Audit: docs/audit/hardening-audit-2026-07-01.md §6 "Entertainment / DTLS".
 
 import XCTest
+import Network
 @testable import HueHome
 
 // MARK: - Spy REST client (records entertainment_configuration PUTs)
@@ -336,6 +337,58 @@ final class EntertainmentRobustnessTests: XCTestCase {
         _ = try? await client.startSession(configID: "cfg-term-2")
         let resetFlag = await client.isTerminallyFailed
         XCTAssertFalse(resetFlag, "startSession must reset the terminal-failure flag")
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - A dead session is detected after the handshake
+    // ──────────────────────────────────────────────
+
+    /// The state handler used to return early once the handshake completed,
+    /// dropping every later `.failed`/`.cancelled`: a session the bridge had
+    /// ended kept reporting itself healthy to its owner.
+    func testAPostHandshakeLossOfTheInstalledConnectionIsDetected() async {
+        let spy = spyClient()
+        let client = makeClient(spy: spy)
+        await client.seedSessionForTesting(configID: "cfg-dead")
+        let conn = NWConnection(host: "192.0.2.1", port: 2100, using: .udp)   // never started
+        await client.testInstallConnection(conn)
+        let healthyBefore = await client.hasStartedSession()
+        XCTAssertTrue(healthyBefore)
+
+        await client.handleConnectionLost(conn, reason: "DTLS failed: test")
+
+        let healthyAfter = await client.hasStartedSession()
+        XCTAssertFalse(healthyAfter,
+            "a connection that died after the handshake must stop reading as streaming")
+        await client.stopSession()   // cancels the scheduled reconnect
+    }
+
+    /// Our own cancels (stop, send-error teardown, the handshake timeout)
+    /// deliver `.cancelled` for a connection that is no longer installed —
+    /// those must never be mistaken for a loss of the live one.
+    func testALossReportForAConnectionThatIsNotInstalledIsIgnored() async {
+        let spy = spyClient()
+        let client = makeClient(spy: spy)
+        await client.seedSessionForTesting(configID: "cfg-live")
+        let live = NWConnection(host: "192.0.2.1", port: 2100, using: .udp)
+        let retired = NWConnection(host: "192.0.2.1", port: 2100, using: .udp)
+        await client.testInstallConnection(live)
+
+        await client.handleConnectionLost(retired, reason: "DTLS cancelled")
+
+        let healthy = await client.hasStartedSession()
+        XCTAssertTrue(healthy, "a retired connection's cancellation says nothing about the live one")
+        await client.stopSession()
+    }
+
+    func testOnlyFailedAndCancelledCountAsAPostHandshakeLoss() {
+        XCTAssertNotNil(HueEntertainmentClient.postHandshakeLossReason(.failed(.posix(.ECONNRESET))))
+        XCTAssertNotNil(HueEntertainmentClient.postHandshakeLossReason(.cancelled))
+        XCTAssertNil(HueEntertainmentClient.postHandshakeLossReason(.ready))
+        XCTAssertNil(HueEntertainmentClient.postHandshakeLossReason(.preparing))
+        XCTAssertNil(HueEntertainmentClient.postHandshakeLossReason(.setup))
+        XCTAssertNil(HueEntertainmentClient.postHandshakeLossReason(.waiting(.posix(.ENETDOWN))),
+            "waiting is a path change the stack may recover from — not a verdict")
     }
 
     func testStartSessionRegistersBeforeRESTActivate() async {
