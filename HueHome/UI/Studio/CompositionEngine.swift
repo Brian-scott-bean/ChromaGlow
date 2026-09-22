@@ -310,6 +310,32 @@ enum CompositionEngine {
         return normalizeProjections(projections)
     }
 
+    /// Room-mode spatial positions in exact RENDER-SLOT order — the values the
+    /// REST start path derives (`computeSpatialPositions` over the resolver's
+    /// light order, then `expandToRenderChannels` across gradient strips),
+    /// read back from the slots the orchestrator published for the box.
+    /// Empty when any slot has no position: the start path falls back to
+    /// index order then too, so a live edit must not invent geometry.
+    static func computeSpatialPositions(
+        renderSlots: [CompositionRenderSlot],
+        motionAngle: Double
+    ) -> [Double] {
+        guard renderSlots.count > 1 else {
+            return renderSlots.isEmpty ? [] : [0.5]
+        }
+
+        let rad = motionAngle * .pi / 180.0
+        let dx = cos(rad), dz = sin(rad)
+
+        var projections: [Double] = []
+        projections.reserveCapacity(renderSlots.count)
+        for slot in renderSlots {
+            guard let position = slot.position else { return [] }
+            projections.append(position.x * dx + position.z * dz)
+        }
+        return normalizeProjections(projections)
+    }
+
     /// Re-index per-PHYSICAL-LIGHT metadata into RENDER-CHANNEL order
     /// (Composer 2 packet 5).
     ///

@@ -2199,21 +2199,27 @@ final class StudioViewModel {
         // copies the angle back without them leaves the lights chasing the
         // un-reverted direction under a reverted dial (review round, A-5).
         let entChannels = orchestrator?.activeEntertainmentConfig(for: effect.room)?.channels
+        // Same rule as the start path: Auto (-1) resolves to the area's
+        // principal angle, an authored angle is used as is.
+        var revertedAngle = preset.motion.motionAngle
+        var revertedPositions: [Double] = []
+        if let entChannels, !entChannels.isEmpty {
+            if revertedAngle < 0 {
+                revertedAngle = CompositionEngine.principalAngle(channels: entChannels)
+            }
+            // In THIS row's render order — channel order only when streaming.
+            revertedPositions = liveSpatialPositions(for: effect, box: session.box,
+                                                     angle: revertedAngle)
+        }
         let verdict = commitComposerEdit(session) { box in
             box.palette = preset.palette
             box.motion = preset.motion
             box.envelope = preset.envelope
             box.reaction = preset.reaction
             if let entChannels, !entChannels.isEmpty {
-                // Same rule as the start path: Auto (-1) resolves to the
-                // area's principal angle, an authored angle is used as is.
-                if box.motion.motionAngle < 0 {
-                    box.motion.motionAngle = CompositionEngine.principalAngle(channels: entChannels)
-                }
-                let positions = CompositionEngine.computeSpatialPositionsForEntertainment(
-                    channels: entChannels, motionAngle: box.motion.motionAngle)
-                if !positions.isEmpty {
-                    box.targetSpatialPositions = positions
+                box.motion.motionAngle = revertedAngle
+                if !revertedPositions.isEmpty {
+                    box.targetSpatialPositions = revertedPositions
                     box.spatialLerpProgress = 0.0
                 }
             }
@@ -2230,6 +2236,24 @@ final class StudioViewModel {
         }
         bumpLiveValuesTick()
         statusMessage = "Reverted to saved '\(preset.name)'"
+    }
+
+    /// The spatial positions a live direction change (or Revert) must chase,
+    /// in the order THIS row's transport renders. Streaming indexes the
+    /// area's channels; Room mode indexes the resolver's light order with
+    /// gradient strips expanded — the box's published `renderSlots`. Writing
+    /// channel-order positions into a Room-mode box sent every light chasing
+    /// some other light's position.
+    func liveSpatialPositions(for effect: RunningEffect, box: CompositionParamBox,
+                              angle: Double) -> [Double] {
+        if effect.isEntertainment {
+            guard let channels = orchestrator?.activeEntertainmentConfig(for: effect.room)?.channels,
+                  !channels.isEmpty else { return [] }
+            return CompositionEngine.computeSpatialPositionsForEntertainment(
+                channels: channels, motionAngle: angle)
+        }
+        return CompositionEngine.computeSpatialPositions(
+            renderSlots: box.renderSlots, motionAngle: angle)
     }
 
     private enum PrefKeys {
