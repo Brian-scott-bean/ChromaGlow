@@ -173,6 +173,39 @@ final class Composer2LabLifecycleTests: XCTestCase {
         XCTAssertNotEqual(doc.selectedLayer.motion.kind, .static)
     }
 
+    /// The light selection belongs to the selected behavior. It used to be
+    /// one document-wide set, so choosing lights for one behavior and then
+    /// tapping a light on another rewrote the second behavior's mask with
+    /// the first behavior's lights.
+    func testLightSelectionFollowsTheSelectedBehavior() throws {
+        let doc = document(Composer2PresetLibrary.thunderstorm)
+        let sky = doc.composition.layers[0].id
+        let lightning = doc.composition.layers[1].id
+
+        doc.select(layerID: lightning)
+        doc.toggleSlot(0)
+        doc.toggleSlot(2)
+        XCTAssertEqual(doc.selectedSlots, [0, 2])
+        XCTAssertEqual(doc.composition.layers[1].mask.slots, [0, 2])
+
+        doc.select(layerID: sky)
+        XCTAssertEqual(doc.selectedSlots, [], "the sky layer lights the whole room; nothing is picked")
+        doc.toggleSlot(1)
+        XCTAssertEqual(doc.composition.layers[0].mask.slots, [1], "only the light tapped for THIS behavior")
+        XCTAssertEqual(doc.composition.layers[1].mask.slots, [0, 2], "the other behavior is untouched")
+
+        doc.select(layerID: lightning)
+        XCTAssertEqual(doc.selectedSlots, [0, 2], "coming back shows that behavior's own lights")
+
+        // Reopening a saved composition shows its first behavior's selection.
+        var saved = doc.composition
+        saved.layers.swapAt(0, 1)
+        doc.load(saved)
+        XCTAssertEqual(doc.selectedSlots, [0, 2])
+        let fresh = Composer2Document(composition: saved)
+        XCTAssertEqual(fresh.selectedSlots, [0, 2])
+    }
+
     // MARK: Layouts
 
     func testStreamingLayoutUsesRealPositionsAndMembership() {

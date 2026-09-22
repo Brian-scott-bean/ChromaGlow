@@ -85,6 +85,7 @@ final class Composer2Document {
         self.roomContext = roomContext
         self.selectedLayerID = composition.layers.first?.id ?? UUID()
         self.sourceID = composition.id
+        syncSelectionToSelectedLayer()
     }
 
     // MARK: Selection
@@ -103,6 +104,21 @@ final class Composer2Document {
     func select(layerID: UUID) {
         guard composition.layers.contains(where: { $0.id == layerID }) else { return }
         selectedLayerID = layerID
+        syncSelectionToSelectedLayer()
+    }
+
+    /// The on-screen light selection belongs to ONE behavior: it is read back
+    /// from that behavior's mask whenever the selected behavior changes. A
+    /// document-wide set leaked across behaviors — picking lights for the
+    /// sparkle layer and then one light on the base layer rewrote the base
+    /// layer's mask with the sparkle layer's lights plus one.
+    func syncSelectionToSelectedLayer() {
+        guard hasSelectedLayer else {
+            selectedSlots = []
+            return
+        }
+        let mask = selectedLayer.mask
+        selectedSlots = mask.kind == .slots && !mask.invert ? Set(mask.slots.filter { $0 >= 0 }) : []
     }
 
     // MARK: Editing
@@ -132,7 +148,7 @@ final class Composer2Document {
     func load(_ new: Composer2Composition, asSource: Bool = true) {
         composition = new
         selectedLayerID = new.layers.first?.id ?? UUID()
-        selectedSlots = []
+        syncSelectionToSelectedLayer()
         isDirty = false
         if asSource { sourceID = new.id }
         onEdit?()
@@ -157,6 +173,7 @@ final class Composer2Document {
         fresh.id = UUID()
         edit { $0.layers.append(fresh) }
         selectedLayerID = fresh.id
+        syncSelectionToSelectedLayer()
         return fresh
     }
 
@@ -165,7 +182,10 @@ final class Composer2Document {
     func removeLayer(id: UUID) -> Bool {
         guard composition.layers.count > 1, let index = composition.layers.firstIndex(where: { $0.id == id }) else { return false }
         edit { $0.layers.remove(at: index) }
-        if selectedLayerID == id { selectedLayerID = composition.layers[min(index, composition.layers.count - 1)].id }
+        if selectedLayerID == id {
+            selectedLayerID = composition.layers[min(index, composition.layers.count - 1)].id
+            syncSelectionToSelectedLayer()
+        }
         return true
     }
 
@@ -176,6 +196,7 @@ final class Composer2Document {
         copy.name += " copy"
         edit { $0.layers.insert(copy, at: index + 1) }
         selectedLayerID = copy.id
+        syncSelectionToSelectedLayer()
     }
 
     func moveLayer(id: UUID, up: Bool) {
