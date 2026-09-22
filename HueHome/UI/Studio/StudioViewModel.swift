@@ -1824,11 +1824,21 @@ final class StudioViewModel {
         orchestrator.studioRuntimeEventHandler = { [weak self] event in
             self?.handleStudioRuntimeEvent(event)
         }
-        if selectedRoom == nil, let first = orchestrator.allRooms.first {
-            selectedRoom = first
-        }
+        seedSelectedRoomIfNeeded()
         restoreLastUsedParams()
         hydrateRecoveredBridgeStored()
+    }
+
+    /// Studio's selection starts on the first room — at `configure` when the
+    /// rooms are already loaded, and (called again by StudioView whenever the
+    /// room count changes) the moment they arrive when Studio opened first on
+    /// a cold start. Seeding only in `configure` left the wheel showing
+    /// rooms[0] while every card tap refused with "Select a room first".
+    /// Never overrides a selection that exists.
+    func seedSelectedRoomIfNeeded() {
+        if selectedRoom == nil, let first = orchestrator?.allRooms.first {
+            selectedRoom = first
+        }
     }
 
     // ── Runtime truth corrections (R4A) ───────────────────────
