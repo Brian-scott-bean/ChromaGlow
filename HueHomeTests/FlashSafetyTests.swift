@@ -2079,7 +2079,15 @@ final class FlashSafetyTests: XCTestCase {
             let briTo = Double.random(in: 0.30...1.0, using: &rng)
             let span = Int.random(in: 20...45, using: &rng)
 
+            // Qualification is graded on the PRE-red-rule candidacy — the
+            // legacy replica, whose no-drop wire is exactly what the shipped
+            // gate streamed before the WCAG red-quantity rule. Grading it on
+            // the current gate let that rule (which now holds red rises the
+            // old gate streamed) re-shuffle the seeded draw: 1464 scenarios,
+            // a different 12 ramps, every measured number below moved. This
+            // keeps the fifth round's draw, so its numbers still pin it.
             let baseline = WireModel()
+            baseline.gate = LegacyForgetOnDropGate()
             modelRamp(baseline, from: from, to: to, briFrom: briFrom, briTo: briTo,
                       frames: span, cycles: 6)
             let baselineOnsets = realizedOnsets(baseline.wire).count
@@ -2107,9 +2115,22 @@ final class FlashSafetyTests: XCTestCase {
                     // number that lets "the gate stopped admitting anything"
                     // pass as a spacing success.
                     let hidden = length / FS.minCycleFrames() + 1
+                    let label = "ramp \(from)→\(to) bri \(briFrom)→\(briTo) span \(span) drop \(window)"
+                    // The luminance floor, exactly as before.
+                    assertOnsetsRespectTheFloor(onsets, label: label, atLeast: 0)
+                    // "The model must actually flash" is asked of EVERY onset a
+                    // viewer receives. Two palette entries — (0.64, 0.33) and
+                    // the amber (0.56, 0.40), R / (R + G + B) ≈ 0.85 — are WCAG
+                    // saturated red, and since the red-quantity rule a ramp that
+                    // starts on one spends part of the one onset clock on RED
+                    // admissions, which the luminance viewer does not count: an
+                    // amber → cyan ramp behind a 17-frame opening outage realizes
+                    // 2 luminance onsets + red ones where the pre-change gate
+                    // realized 3 luminance ones. Fewer luminance onsets, never
+                    // closer ones — and the floor holds across both kinds.
+                    let everyOnset = Array(Set(onsets + viewerRedRises(fixed.wire))).sorted()
                     assertOnsetsRespectTheFloor(
-                        onsets,
-                        label: "ramp \(from)→\(to) bri \(briFrom)→\(briTo) span \(span) drop \(window)",
+                        everyOnset, label: label + " (all kinds)",
                         atLeast: max(1, min(3, baselineOnsets - hidden)))
                     if let gap = minimumGap(onsets) {
                         fixedWorstFrames = min(fixedWorstFrames, gap / fd)
@@ -3178,7 +3199,7 @@ final class FlashSafetyTests: XCTestCase {
                                                                         minBrightness: 0, maxBrightness: 100),
                                                seconds: 8).wire
                 if shape != .steady {
-                    XCTAssertGreaterThan(luminanceSpan(wire), 0.1,
+                    XCTAssertGreaterThan(modulationSpan(wire), 0.1,
                         "REST \(shape) @ \(bpm): the gated wire never moved")
                 }
                 assertOnsetsRespectTheFloor(realizedOnsets(wire), label: "REST \(shape) @ \(bpm) bpm", atLeast: 0)
@@ -3773,11 +3794,20 @@ final class FlashSafetyTests: XCTestCase {
     func testFlickerIsGatedToThreeHz() {
         // `.flicker`'s fastest component is independent of bpm, so the slowest
         // authored tempo does not make it safe.
-        let onsets = realizedOnsets(
-            compositionWire(envelope: EnvelopeConfig(shape: .flicker, bpm: 20, depth: 100,
-                                                     minBrightness: 0, maxBrightness: 100),
-                            seconds: 10).wire)
-        assertOnsetsRespectTheFloor(onsets, label: "composition .flicker", atLeast: 1)
+        let wire = compositionWire(envelope: EnvelopeConfig(shape: .flicker, bpm: 20, depth: 100,
+                                                            minBrightness: 0, maxBrightness: 100),
+                                   seconds: 10).wire
+        assertOnsetsRespectTheFloor(realizedOnsets(wire), label: "composition .flicker", atLeast: 0)
+        // The default palette (amber → deep red) is saturated red at BOTH ends,
+        // so since the WCAG red-quantity rule each flicker attack is admitted as
+        // a RED onset at its first 0.0625 R′ step and held for 0.34 s — which
+        // for red is only ~0.013 of luminance. The wire still flashes, on the
+        // same one clock, but can no longer build the 0.10 luminance swing the
+        // luminance-only viewer counts. "The model must actually flash" is
+        // therefore asked of every onset a viewer receives, red ones included,
+        // and the floor is asserted on all of them together.
+        let everyOnset = Array(Set(realizedOnsets(wire) + viewerRedRises(wire))).sorted()
+        assertOnsetsRespectTheFloor(everyOnset, label: "composition .flicker (all kinds)", atLeast: 1)
     }
 
     /// A wire that never moved satisfies any floor vacuously (review round,
@@ -3788,6 +3818,26 @@ final class FlashSafetyTests: XCTestCase {
         return hi - lo
     }
 
+    /// How far the wire moved in EITHER unit the gate governs: relative
+    /// luminance, or WCAG's red quantity R′ = max(0, R − G − B).
+    ///
+    /// The envelope sweeps run on the default palette — amber (0.55, 0.39) →
+    /// deep red (0.64, 0.33) — and BOTH ends are WCAG-saturated red
+    /// (R / (R + G + B) ≥ 0.8). Since the red rule measures R′, a red attack
+    /// spread over several 40 ms frames is clipped at its first 0.0625 R′ step
+    /// for 0.34 s, exactly as rule 1 clips a white attack at its first 0.10
+    /// luminance step — and for these colours that step carries almost no
+    /// luminance (red's factor is 0.21), so the 20 BPM heartbeat's gated wire
+    /// now spans ~0.075 in luminance while it still swings well over 0.1 in R′.
+    /// The anti-vacuity question is "did the wire modulate", and a wire that
+    /// modulates red modulates; measuring it in luminance alone was the same
+    /// blind spot the red rule closes.
+    private func modulationSpan(_ wire: [Emission]) -> Double {
+        let reds = wire.map { viewerRedQuantity($0.frame) }
+        guard let lo = reds.min(), let hi = reds.max() else { return luminanceSpan(wire) }
+        return max(luminanceSpan(wire), hi - lo)
+    }
+
     func testEveryAuthoredEnvelopeShapeAtEveryTempoRespectsTheFloor() {
         for shape in EnvelopeConfig.Shape.allCases {
             for bpm in [20.0, 60, 137, 180, 240] {
@@ -3795,7 +3845,7 @@ final class FlashSafetyTests: XCTestCase {
                                                                     minBrightness: 0, maxBrightness: 100),
                                            seconds: 8).wire
                 if shape != .steady {
-                    XCTAssertGreaterThan(luminanceSpan(wire), 0.1,
+                    XCTAssertGreaterThan(modulationSpan(wire), 0.1,
                         "\(shape) @ \(bpm): the gated wire never moved — a floor over a dark wire proves nothing")
                 }
                 assertOnsetsRespectTheFloor(realizedOnsets(wire), label: "\(shape) @ \(bpm) bpm", atLeast: 0)
@@ -3861,5 +3911,171 @@ final class FlashSafetyTests: XCTestCase {
         }
         assertOnsetsRespectTheFloor(realizedOnsets(shared.wire),
                                     label: "composition + uniform on one bridge", atLeast: 2)
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // MARK: - The red flash in WCAG's red quantity
+    // ══════════════════════════════════════════════════════════════
+    //
+    // WCAG 2.3.1's red flash is a pair of opposing transitions involving a
+    // saturated red (R / (R + G + B) ≥ 0.8) where (R − G − B) × 320 — negative
+    // values set to 0, R/G/B linear sRGB — changes by more than 20. The gate's
+    // red rule used to require a CHROMATICITY step first, so a saturated-red
+    // pulse at fixed xy (red → dim → red) was never a red candidate, and red's
+    // 0.2126 luminance factor kept a 0 → 0.74 dimming pulse (0.0993 luminance)
+    // under the general 0.10 rule. Every measurement below is re-derived from
+    // those definitions with bare literals, sharing no line with the gate.
+
+    /// WCAG's red quantity for an emitted frame: max(0, R − G − B) of the
+    /// full-drive linear-sRGB colour, at the L*-cube dimming luminance.
+    private func viewerRedQuantity(_ f: BeatMath.FlashSafety.WireFrame) -> Double {
+        let c = viewerDrive(f)
+        guard f.brightness > 0 else { return 0 }
+        let lStar = (100.0 * min(max(f.brightness, 0), 1) + 16.0) / 116.0
+        return max(0, c.r - c.g - c.b) * min(1, max(0, lStar * lStar * lStar))
+    }
+
+    /// Red-flash RISES a viewer receives: a climb of ≥ 20/320 in the red
+    /// quantity above its lowest value since the previous counted rise, where
+    /// either end of the step is saturated red. Rises spaced ≥ 0.34 s mean
+    /// opposing-transition pairs at ≤ 2.94 Hz.
+    private func viewerRedRises(_ wire: [Emission]) -> [Double] {
+        guard let first = wire.first else { return [] }
+        let epsilon = 1e-9
+        var rises: [Double] = []
+        var trough = viewerRedQuantity(first.frame)
+        var last = first.frame
+        for e in wire.dropFirst() {
+            let red = viewerRedQuantity(e.frame)
+            let involvesRed = viewerRedFraction(e.frame) >= 0.8 - epsilon
+                || viewerRedFraction(last) >= 0.8 - epsilon
+            if involvesRed, red - trough >= 20.0 / 320.0 - epsilon {
+                rises.append(e.time)
+                trough = red
+            } else {
+                trough = min(trough, red)
+            }
+            last = e.frame
+        }
+        return rises
+    }
+
+    private static let hueRed = (x: 0.6400, y: 0.3300)
+
+    func testTheRedQuantityIsWCAGs() {
+        typealias Frame = BeatMath.FlashSafety.WireFrame
+        XCTAssertEqual(FS.redFlashRedDelta, 0.0625, accuracy: 1e-15, "20 / 320")
+        let red = Frame(x: Self.hueRed.x, y: Self.hueRed.y, brightness: 0.74)
+        // The defect in two numbers: under the general rule, a red transition
+        // seven times WCAG's red threshold.
+        XCTAssertLessThan(red.relativeLuminance, FS.onsetRiseThreshold,
+                          "red at 0.74 dimming is under the 0.10 general threshold")
+        XCTAssertEqual(red.redSaturation, viewerRedQuantity(red), accuracy: 1e-12)
+        XCTAssertGreaterThan(red.redSaturation, 7 * FS.redFlashRedDelta)
+        for (x, y) in [(0.3127, 0.3290), (0.1670, 0.0400), (0.1700, 0.7000)] {
+            XCTAssertEqual(Frame(x: x, y: y, brightness: 1).redSaturation, 0, accuracy: 1e-12,
+                           "white, blue and green carry no red quantity (\(x), \(y))")
+        }
+    }
+
+    func testARedPulseAtFixedXYIsACandidateWithNoChromaStep() {
+        typealias Frame = BeatMath.FlashSafety.WireFrame
+        var gate = BeatMath.FlashSafety.OnsetGate(
+            lastEmitted: Frame(x: Self.hueRed.x, y: Self.hueRed.y, brightness: 0))
+        XCTAssertTrue(gate.isOnsetCandidate(Frame(x: Self.hueRed.x, y: Self.hueRed.y, brightness: 0.74)),
+                      "black → red 0.74 at the SAME xy is a red flash transition")
+        // A ramp: the climb is judged from the red trough, not the last frame,
+        // so a pulse spread over many frames cannot slip under it.
+        gate.admitDelivered(frame: Frame(x: Self.hueRed.x, y: Self.hueRed.y, brightness: 0.20), at: 0)
+        XCTAssertTrue(gate.isOnsetCandidate(Frame(x: Self.hueRed.x, y: Self.hueRed.y, brightness: 0.36)),
+                      "0 → 0.20 → 0.36: R′ is 0.0625+ above the trough though each step is smaller")
+    }
+
+    func testARedToWhiteStepAtMatchedLuminanceIsACandidate() {
+        typealias Frame = BeatMath.FlashSafety.WireFrame
+        let red = Frame(x: Self.hueRed.x, y: Self.hueRed.y, brightness: 1.0)
+        let matchedWhite = Frame(x: 0.3127, y: 0.3290,
+                                 brightness: FS.inverseDimmingLuminance(red.relativeLuminance))
+        XCTAssertLessThan(abs(matchedWhite.relativeLuminance - red.relativeLuminance),
+                          FS.redFlashLuminanceDelta / 100,
+                          "the two frames carry (all but) the same luminance — the old rule's delta never fires")
+        let gate = BeatMath.FlashSafety.OnsetGate(lastEmitted: red)
+        XCTAssertTrue(gate.isOnsetCandidate(matchedWhite),
+                      "red → white changes R′ by its whole range while luminance does not move")
+    }
+
+    /// The acceptance scenario: saturated red at fixed xy, pulsing 0 ↔ 0.7
+    /// dimming at 5 Hz (5 frames on, 5 off on the 20 ms grid), streamed without
+    /// waiting on the gate, exactly as a composition renders it.
+    private func modelFixedRedPulse(_ w: WireModel, frames: Int, x: Double, y: Double) {
+        for i in 0..<frames {
+            w.emit(i % 10 < 5 ? 0.7 : 0.0, x: x, y: y)
+        }
+    }
+
+    func testAFixedXYSaturatedRedPulseAtFiveHzIsGatedToThreeHz() {
+        let gated = WireModel()
+        modelFixedRedPulse(gated, frames: 500, x: Self.hueRed.x, y: Self.hueRed.y)
+        let rises = viewerRedRises(gated.wire)
+        assertOnsetsRespectTheFloor(rises, label: "fixed-xy red 0 ↔ 0.7 @ 5 Hz", atLeast: 20)
+        XCTAssertLessThanOrEqual(Double(rises.count) / (500 * fd), 3.0,
+                                 "the realized red-flash rate is at most 3 Hz")
+
+        // The pre-fix candidacy (the replica's rules are the shipped gate's
+        // before this change) streams the pulse untouched: 5 Hz of red flashes.
+        let legacy = WireModel()
+        legacy.gate = LegacyForgetOnDropGate()
+        modelFixedRedPulse(legacy, frames: 500, x: Self.hueRed.x, y: Self.hueRed.y)
+        let legacyRises = viewerRedRises(legacy.wire)
+        XCTAssertLessThan(minimumGap(legacyRises) ?? .infinity, 0.34,
+                          "the pre-fix gate must reproduce the defect, or this test proves nothing")
+        XCTAssertTrue(realizedOnsets(legacy.wire).count <= 1,
+                      "…and the luminance-only viewer is blind to it: that is why it shipped")
+    }
+
+    func testASmoothRedPulseIsJudgedFromTheRedTrough() {
+        // 3.5 Hz sine to 0.5 dimming: R′ peaks at ~0.18 and never moves by
+        // 0.0625 in one frame, so a frame-to-frame red rule would pass it all.
+        func model(_ w: WireModel) {
+            for i in 0..<700 {
+                let t = Double(i) * fd
+                w.emit(0.25 * (1 - cos(2 * Double.pi * 3.5 * t)), x: Self.hueRed.x, y: Self.hueRed.y)
+            }
+        }
+        let gated = WireModel()
+        model(gated)
+        assertOnsetsRespectTheFloor(viewerRedRises(gated.wire), label: "red sine 3.5 Hz", atLeast: 10)
+
+        let legacy = WireModel()
+        legacy.gate = LegacyForgetOnDropGate()
+        model(legacy)
+        XCTAssertLessThan(minimumGap(viewerRedRises(legacy.wire)) ?? .infinity, 0.34,
+                          "the pre-fix gate lets the smooth red pulse through above 3 Hz")
+    }
+
+    func testWhiteAndBluePulsesAreGatedExactlyAsBefore() {
+        // The red rule reads 0 for any colour with no red excess, so on white,
+        // blue and green the shipped gate must put the IDENTICAL frame list on
+        // the wire that the pre-change candidacy did (no drops here, so the
+        // replica's drop handling never engages).
+        let shapes: [(label: String, x: Double, y: Double, peak: Double)] = [
+            ("white", 0.3127, 0.3290, 0.7), ("white full", 0.3127, 0.3290, 1.0),
+            ("blue", 0.1670, 0.0400, 1.0), ("green", 0.1700, 0.7000, 0.6),
+        ]
+        for shape in shapes {
+            let current = WireModel()
+            let before = WireModel()
+            before.gate = LegacyForgetOnDropGate()
+            for w in [current, before] {
+                for i in 0..<400 {
+                    // 5 Hz square, then a slow ramp: both gate paths exercised.
+                    let bri = i < 200 ? (i % 10 < 5 ? shape.peak : 0.0)
+                                      : shape.peak * Double(i - 200) / 200.0
+                    w.emit(bri, x: shape.x, y: shape.y)
+                }
+            }
+            XCTAssertEqual(current.wire, before.wire,
+                           "\(shape.label): the red rule must not change a colour with no red in it")
+        }
     }
 }

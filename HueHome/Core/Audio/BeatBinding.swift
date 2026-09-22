@@ -256,6 +256,21 @@ enum BeatMath {
         /// fall does.
         static let redFlashLuminanceDelta = 0.02
 
+        /// WCAG 2.3.1's red-flash TRANSITION, in WCAG's own quantity: a change
+        /// of more than 20 in `(R − G − B) × 320` (negative values set to 0),
+        /// with R, G, B the linear-sRGB channels of the light — i.e. a change
+        /// of `20 / 320 = 0.0625` in `WireFrame.redSaturation`.
+        ///
+        /// The luminance carve-out above cannot stand in for it. Red carries
+        /// 0.2126 of the luminance, so a saturated-red pulse at FIXED xy from
+        /// black to dimming 0.74 is a 0.0993 luminance rise — under the general
+        /// 0.10 rule — and, with no chromaticity step, invisible to the chroma
+        /// rule; in R′ it is 0.47, seven times WCAG's red threshold. And a
+        /// red ↔ white step at matched luminance changes luminance by nothing
+        /// while R′ swings by its whole range. `≥` rather than WCAG's `>` on
+        /// purpose: the gate's thresholds are all inclusive (conservative).
+        static let redFlashRedDelta = 20.0 / 320.0
+
         /// "Saturated red" for the rule above: at least 80 % of the frame's
         /// linear-RGB drive is in the red channel. Hue's red primary (0.64, 0.33)
         /// scores 1.0; D65 white scores 0.33.
@@ -337,6 +352,14 @@ enum BeatMath {
             let sum = c.r + c.g + c.b
             guard sum > 0 else { return 0 }
             return c.r / sum
+        }
+
+        /// WCAG's red quantity `max(0, R − G − B)` for a chromaticity at FULL
+        /// drive (the same normalized linear-sRGB drive the luminance factor
+        /// uses): Hue's red primary 1.0, D65 white / blue / green 0.
+        static func redExcess(x: Double, y: Double) -> Double {
+            let c = linearRGB(x: x, y: y)
+            return max(0, c.r - c.g - c.b)
         }
 
         /// Finite-guarded `Int(_: Double)` for a value read out of a live param
@@ -439,6 +462,15 @@ enum BeatMath {
             /// (white) of maximum luminance at the same dimming.
             var relativeLuminance: Double {
                 FlashSafety.chromaticityLuminanceFactor(x: x, y: y)
+                    * FlashSafety.dimmingLuminance(brightness)
+            }
+
+            /// WCAG's red quantity for what the viewer receives: `max(0, R − G − B)`
+            /// in linear sRGB at this frame's dimming luminance (the same scaling
+            /// `relativeLuminance` applies). A red-flash TRANSITION is a change
+            /// of `redFlashRedDelta` in this. White, blue and green read 0.
+            var redSaturation: Double {
+                FlashSafety.redExcess(x: x, y: y)
                     * FlashSafety.dimmingLuminance(brightness)
             }
 
@@ -618,6 +650,9 @@ enum BeatMath {
             /// that had fallen to 0.02 and climbed back to 0.30 is measured as a
             /// rise from 0.30 and the climb that follows is under-measured.
             fileprivate let priorTrough: Double
+            /// The red-quantity trough before this admit, restored with the
+            /// luminance trough for the same reason.
+            fileprivate let priorRedTrough: Double
             /// Who owned the clock before this reservation stamped it — restored
             /// on rollback so the sweep whose stamp is current again may go on
             /// (safety round 5).
@@ -654,6 +689,8 @@ enum BeatMath {
                 var lastEmitted: WireFrame?
                 var trough: Double = 0
                 var lastKnown: WireFrame?
+                /// The red-flash rule's own trough, in `redSaturation`.
+                var redTrough: Double = 0
             }
             private var wires: [String: SourceWire] = [:]
             /// The source the current `admit`/`commit` is about.
@@ -673,6 +710,17 @@ enum BeatMath {
             private(set) var luminanceTroughSinceOnset: Double {
                 get { wires[currentSource]?.trough ?? 0 }
                 set { wires[currentSource, default: SourceWire()].trough = newValue }
+            }
+
+            /// The LOWEST `redSaturation` emitted since the last admitted onset —
+            /// the floor a red-flash rise is measured from, kept exactly like
+            /// the luminance trough (re-based on admission, a running minimum
+            /// otherwise, surviving a forget). A frame-to-frame red rule would be
+            /// the slew-limit defect M3 all over again: a red pulse whose climb
+            /// is spread over five frames never changes R′ by 0.0625 in one.
+            private(set) var redTroughSinceOnset: Double {
+                get { wires[currentSource]?.redTrough ?? 0 }
+                set { wires[currentSource, default: SourceWire()].redTrough = newValue }
             }
 
             /// When a frame — ANY frame, admitted or held — last reached the
@@ -737,7 +785,8 @@ enum BeatMath {
                 if let lastEmitted {
                     wires[""] = SourceWire(lastEmitted: lastEmitted,
                                            trough: lastEmitted.relativeLuminance,
-                                           lastKnown: lastEmitted)
+                                           lastKnown: lastEmitted,
+                                           redTrough: lastEmitted.redSaturation)
                 }
             }
 
@@ -773,8 +822,9 @@ enum BeatMath {
 
             /// Is this frame an onset CANDIDATE against the wire state?
             ///
-            /// Two ways in, and only two — both stated in RELATIVE LUMINANCE,
-            /// which is what a photosensitive viewer's eye integrates:
+            /// Three ways in — the general flash in RELATIVE LUMINANCE, which is
+            /// what a photosensitive viewer's eye integrates, and the red flash
+            /// in WCAG's own red quantity R′ = max(0, R − G − B):
             ///
             ///  1. **A rise from the luminance trough** of at least
             ///     `onsetRiseThreshold` (WCAG 2.3.1's general flash: 10 % of
@@ -787,12 +837,19 @@ enum BeatMath {
             ///     maximum luminance) and the chromaticity step that raises
             ///     luminance while dimming falls (blue at 0.90 → white at 0.85 is
             ///     a 0.66 rise).
-            ///  2. **A WCAG red flash**: a chromaticity step (further than
-            ///     `onsetColorDelta`) to or from saturated red, with a luminance
-            ///     change of at least `redFlashLuminanceDelta` in EITHER
-            ///     direction. This is the only rule chromaticity has of its own,
-            ///     and it exists because red flashes are hazardous well below the
+            ///  2. **A WCAG red flash by chromaticity step**: a step (further
+            ///     than `onsetColorDelta`) to or from saturated red, with a
+            ///     luminance change of at least `redFlashLuminanceDelta` OR an R′
+            ///     change of at least `redFlashRedDelta`, in EITHER direction.
+            ///     This is the only rule chromaticity has of its own, and it
+            ///     exists because red flashes are hazardous well below the
             ///     general threshold.
+            ///  3. **A WCAG red flash in place**: either endpoint saturated red
+            ///     and R′ at least `redFlashRedDelta` above the red trough
+            ///     (`redTroughSinceOnset`), with or without a chromaticity step —
+            ///     the saturated-red pulse at fixed xy that rules 1 and 2 both
+            ///     missed (red's 0.2126 luminance factor holds a 0 → 0.74 dimming
+            ///     pulse under 0.10, and there is no step for rule 2 to see).
             ///
             /// There is deliberately no "palette step" rule beyond that, and no
             /// `lastAdmittedBrightness` exemption to carve back out of one. Under
@@ -811,11 +868,22 @@ enum BeatMath {
                 let luminance = frame.relativeLuminance
                 if luminance - luminanceTroughSinceOnset
                     >= FlashSafety.onsetRiseThreshold - tol { return true }
+                let involvesSaturatedRed = frame.isSaturatedRed || last.isSaturatedRed
+                // Rule 3 (red flash in place) — see above.
+                if involvesSaturatedRed,
+                   frame.redSaturation - redTroughSinceOnset
+                    >= FlashSafety.redFlashRedDelta - tol { return true }
                 guard frame.chromaDistance(to: last) > FlashSafety.onsetColorDelta,
-                      frame.isSaturatedRed || last.isSaturatedRed
+                      involvesSaturatedRed
                 else { return false }
+                // Rule 2. The luminance delta alone was too loose in red terms:
+                // for pure red it fires only at an R′ change of 0.094, and a
+                // red ↔ white step at matched luminance changes luminance by
+                // nothing while R′ changes by its whole range.
                 return abs(luminance - last.relativeLuminance)
                     >= FlashSafety.redFlashLuminanceDelta - tol
+                    || abs(frame.redSaturation - last.redSaturation)
+                    >= FlashSafety.redFlashRedDelta - tol
             }
 
             /// Is this frame a candidate against an UNKNOWN wire?
@@ -843,12 +911,18 @@ enum BeatMath {
                 let tol = FlashSafety.onsetComparisonTolerance
                 let luminance = frame.relativeLuminance
                 if luminance >= FlashSafety.onsetRiseThreshold - tol { return true }
+                // "Unknown" read as black, in red terms: a saturated-red frame
+                // whose R′ is itself a WCAG red transition from black.
+                if frame.isSaturatedRed,
+                   frame.redSaturation >= FlashSafety.redFlashRedDelta - tol { return true }
                 guard let known = lastKnownFrame,
                       frame.chromaDistance(to: known) > FlashSafety.onsetColorDelta,
                       frame.isSaturatedRed || known.isSaturatedRed
                 else { return false }
                 return abs(luminance - known.relativeLuminance)
                     >= FlashSafety.redFlashLuminanceDelta - tol
+                    || abs(frame.redSaturation - known.redSaturation)
+                    >= FlashSafety.redFlashRedDelta - tol
             }
 
             /// The frame-level gate, **reserve half**: what should go on the wire
@@ -936,7 +1010,8 @@ enum BeatMath {
                 }
                 sequence &+= 1
                 let prior = (onset: lastOnset, emitted: lastEmitted,
-                             trough: luminanceTroughSinceOnset)
+                             trough: luminanceTroughSinceOnset,
+                             redTrough: redTroughSinceOnset)
 
                 guard let last = lastEmitted else {
                     // Has this ledger ever driven the wire at all? A TRUE cold
@@ -955,6 +1030,12 @@ enum BeatMath {
                     let coldStart = lastKnownFrame == nil
                     let troughRise = frame.relativeLuminance - luminanceTroughSinceOnset
                         >= FlashSafety.onsetRiseThreshold - tol
+                    // The red trough's own rise, judged the same way — and kept
+                    // SEPARATE: each trough is re-based only by a rise of its own
+                    // kind (see `troughRises`).
+                    let redTroughRise = (frame.isSaturatedRed || lastKnownFrame?.isSaturatedRed == true)
+                        && frame.redSaturation - redTroughSinceOnset
+                        >= FlashSafety.redFlashRedDelta - tol
                     guard isColdOnsetCandidate(frame) else {
                         // NOT `resettingTrough: true` (fifth review round). Only
                         // an admitted ONSET may re-base the trough upward; an
@@ -983,9 +1064,10 @@ enum BeatMath {
                     // the red rule below the general threshold), and re-basing
                     // on those would lift the floor above the eye's.
                     let rebase = coldStart || troughRise
+                    let redRebase = coldStart || redTroughRise
                     if prior.onset == nil {
                         let stamped = tryOnset(at: t, minPeriod: minPeriod)
-                        record(frame, resettingTrough: rebase)
+                        record(frame, resettingTrough: rebase, resettingRedTrough: redRebase)
                         return reservation(.emit(frame),
                                            stampedAt: stamped ? lastOnset : nil, prior: prior)
                     }
@@ -995,7 +1077,7 @@ enum BeatMath {
                         record(black, resettingTrough: false)
                         return reservation(.hold(black), stampedAt: nil, prior: prior)
                     }
-                    record(frame, resettingTrough: rebase)
+                    record(frame, resettingTrough: rebase, resettingRedTrough: redRebase)
                     return reservation(.emit(frame), stampedAt: lastOnset, prior: prior)
                 }
 
@@ -1006,8 +1088,43 @@ enum BeatMath {
                 guard tryOnset(at: t, minPeriod: minPeriod) else {
                     return reservation(.hold(last), stampedAt: nil, prior: prior)
                 }
-                record(frame, resettingTrough: true)
+                let rises = troughRises(frame, against: last)
+                record(frame, resettingTrough: rises.luminance, resettingRedTrough: rises.red)
                 return reservation(.emit(frame), stampedAt: lastOnset, prior: prior)
+            }
+
+            /// Which troughs an ADMITTED frame re-bases.
+            ///
+            /// The gate keeps one onset CLOCK — any candidate, of any kind,
+            /// waits out the same 0.34 s — but two TROUGHS, each the floor of one
+            /// kind of rise, and a viewer re-bases each only on a rise of that
+            /// kind. So may the gate. Before the red trough existed every
+            /// admission was a luminance-rule admission and re-basing on all of
+            /// them was exact; a red-rule admission is not. Re-basing the
+            /// luminance trough on one (a frame whose luminance barely moved)
+            /// lifts the gate's luminance floor above the eye's, and a later
+            /// luminance climb then reads as nothing to the gate and as a flash
+            /// to the viewer — the seeded ramp × drop sweep found two realized
+            /// onsets 0.12 s apart that way.
+            ///
+            /// `luminance` is exactly the pre-red-trough candidacy (rule 1, or
+            /// rule 2 on its luminance delta), so non-red content re-bases
+            /// precisely as it always did; `red` is rule 3.
+            private func troughRises(_ frame: WireFrame, against last: WireFrame)
+                -> (luminance: Bool, red: Bool) {
+                let tol = FlashSafety.onsetComparisonTolerance
+                let luminance = frame.relativeLuminance
+                let involvesSaturatedRed = frame.isSaturatedRed || last.isSaturatedRed
+                let luminanceRise = luminance - luminanceTroughSinceOnset
+                    >= FlashSafety.onsetRiseThreshold - tol
+                    || (involvesSaturatedRed
+                        && frame.chromaDistance(to: last) > FlashSafety.onsetColorDelta
+                        && abs(luminance - last.relativeLuminance)
+                            >= FlashSafety.redFlashLuminanceDelta - tol)
+                let redRise = involvesSaturatedRed
+                    && frame.redSaturation - redTroughSinceOnset
+                        >= FlashSafety.redFlashRedDelta - tol
+                return (luminanceRise, redRise)
             }
 
             /// The frame-level gate, **commit half**: reconcile the ledger with
@@ -1098,6 +1215,7 @@ enum BeatMath {
                         lastEmitted = reservation.priorLastEmitted
                     }
                     luminanceTroughSinceOnset = reservation.priorTrough
+                    redTroughSinceOnset = reservation.priorRedTrough
                     return
                 }
                 // EVERY delivered frame moves the silence clock, not only the
@@ -1195,18 +1313,20 @@ enum BeatMath {
                 guard var wire = wires[source], wire.lastEmitted != nil else { return }
                 wire.lastEmitted = frame
                 wire.trough = min(wire.trough, frame.relativeLuminance)
+                wire.redTrough = min(wire.redTrough, frame.redSaturation)
                 wires[source] = wire
             }
 
             private mutating func reservation(_ verdict: FrameVerdict, stampedAt: Double?,
                                               prior: (onset: Double?, emitted: WireFrame?,
-                                                      trough: Double)) -> Reservation {
+                                                      trough: Double, redTrough: Double)) -> Reservation {
                 let priorOwner = lastOnsetOwner
                 if stampedAt != nil { lastOnsetOwner = sequence; unrealizedStamp = sequence }
                 return Reservation(verdict: verdict, source: currentSource, stampedAt: stampedAt,
                             priorLastOnset: prior.onset,
                             priorLastEmitted: prior.emitted,
                             priorTrough: prior.trough,
+                            priorRedTrough: prior.redTrough,
                             priorOwner: priorOwner,
                             sequence: sequence)
             }
@@ -1215,12 +1335,21 @@ enum BeatMath {
             /// trough to the emitted luminance (a further climb above the peak
             /// just admitted is a NEW onset); anything else lowers it if the frame
             /// is darker than the darkest frame so far.
-            private mutating func record(_ frame: WireFrame, resettingTrough: Bool) {
+            ///
+            /// The red trough follows the same rule on its own decision
+            /// (`resettingRedTrough`, defaulting to the luminance one where both
+            /// troughs start or run together — a cold start, a non-candidate).
+            private mutating func record(_ frame: WireFrame, resettingTrough: Bool,
+                                         resettingRedTrough: Bool? = nil) {
                 lastEmitted = frame
                 let luminance = frame.relativeLuminance
                 luminanceTroughSinceOnset = resettingTrough
                     ? luminance
                     : min(luminanceTroughSinceOnset, luminance)
+                let red = frame.redSaturation
+                redTroughSinceOnset = (resettingRedTrough ?? resettingTrough)
+                    ? red
+                    : min(redTroughSinceOnset, red)
             }
         }
 
