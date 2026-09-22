@@ -207,7 +207,12 @@ struct ActivateSceneIntent: AppIntent {
 
     func perform() async throws -> some IntentResult {
         let store = WidgetDataStore.shared
-        guard let creds = store.credentials(for: bridgeID.isEmpty ? nil : bridgeID),
+        // Only a scene the app still PUBLISHES may be recalled. A Control
+        // Center scene control stores its scene id at configuration time; a
+        // later-narrowed guest allowlist (or a deleted scene) removes it from
+        // the snapshot, and recalling the stored id bypassed that.
+        guard Self.isPublished(sceneID: sceneID, bridgeID: bridgeID, in: store.scenes),
+              let creds = store.credentials(for: bridgeID.isEmpty ? nil : bridgeID),
               store.features(for: bridgeID.isEmpty ? nil : bridgeID).canRecallScenes else {
             return .result()
         }
@@ -217,6 +222,13 @@ struct ActivateSceneIntent: AppIntent {
         if ok, !groupID.isEmpty { store.applyOptimistic(groupID: groupID, isOn: true) }
         WidgetCenter.shared.reloadAllTimelines()
         return .result()
+    }
+
+    /// Membership in the published scene snapshot (bridge-matched when the
+    /// caller names a bridge).
+    static func isPublished(sceneID: String, bridgeID: String,
+                            in scenes: [WidgetSceneSnapshot]) -> Bool {
+        scenes.contains { $0.id == sceneID && (bridgeID.isEmpty || $0.bridgeID == bridgeID) }
     }
 }
 
