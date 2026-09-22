@@ -358,17 +358,34 @@ struct StopLightEffectsIntent: AppIntent {
         }
 
         // Bridge-native effects (candle/fire/…) persist after app death by
-        // design — kill them from here. Per-group failures are tolerated:
-        // some firmware 400s no_effect when nothing is running.
+        // design — kill them from here.
         let store = WidgetDataStore.shared
+        guard !store.groups.isEmpty else { throw IntentError.noBridgeConnection }
         // Family Sharing: clearing an effect changes light state ("adjust").
         let targets = Self.permitted(Self.dedupedWholeHomeTargets(store.groups),
                                      features: store.guestFeatures) { $0.canAdjust }
-        _ = await Self.fanOut(to: targets,
-                              store: store) { glId, creds in
-            try await HueIntentAPIClient.stopNativeEffects(id: glId, ip: creds.ip, token: creds.token)
+        guard !targets.isEmpty else { throw IntentError.notPermitted("your lights") }
+        let outcomes = await Self.fanOut(to: targets, store: store) { glId, creds in
+            do {
+                try await HueIntentAPIClient.stopNativeEffects(id: glId, ip: creds.ip, token: creds.token)
+            } catch let error as URLError where error.code == .badServerResponse {
+                // Some firmware 400s no_effect when nothing is running — a
+                // reachable bridge with nothing to stop is not a failure.
+            }
         }
+        // It used to say "Stopped light effects." unconditionally — even with
+        // every bridge unreachable.
+        try Self.throwIfStopFailed(outcomes)
         return .result(dialog: "Stopped light effects.")
+    }
+
+    /// Honest outcome: every group unreachable → unreachable; some → partial.
+    /// Pure — unit-tested.
+    static func throwIfStopFailed(_ outcomes: [(name: String, ok: Bool)]) throws {
+        let failed = outcomes.filter { !$0.ok }.map(\.name)
+        guard !failed.isEmpty else { return }
+        if failed.count == outcomes.count { throw IntentError.bridgeUnreachable("your lights") }
+        throw IntentError.partialFailure("Stopping light effects", failed)
     }
 }
 
