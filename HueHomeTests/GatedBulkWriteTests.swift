@@ -216,6 +216,28 @@ final class GatedBulkWriteTests: XCTestCase {
         XCTAssertEqual(failure.roomNames, ["Room 1"])
     }
 
+    /// Forget-all: once Settings suspends publishing, a rebuild landing in
+    /// the async teardown window must not schedule a widget/watch publish —
+    /// its `wc_unpaired = false` push superseded the watch's unpair.
+    func testForgetAllSuspendsWidgetPublishingThroughTeardown() async {
+        let (orchestrator, _) = makeBulkSUT(roomCount: 2)
+        orchestrator.testSetGuestGrants([:])   // any rebuild schedules a publish
+        XCTAssertTrue(orchestrator.testHasPendingWidgetWrite, "sanity: rebuilds publish normally")
+
+        orchestrator.suspendWidgetPublishingForTeardown()
+        XCTAssertFalse(orchestrator.testHasPendingWidgetWrite, "the pending publish is cancelled")
+
+        orchestrator.testSetGuestGrants([:])
+        await orchestrator.applyAutomationPreset(id: "relax")
+        XCTAssertFalse(orchestrator.testHasPendingWidgetWrite,
+            "no publish may be scheduled while a forget-all teardown is in progress")
+
+        await orchestrator.forgetAllBridges()
+        orchestrator.testSetGuestGrants([:])
+        XCTAssertFalse(orchestrator.testHasPendingWidgetWrite,
+            "still suspended after teardown — only the next configure lifts it")
+    }
+
     // ──────────────────────────────────────────────
     // MARK: - Effect automations apply the effect's OWN look
     // ──────────────────────────────────────────────

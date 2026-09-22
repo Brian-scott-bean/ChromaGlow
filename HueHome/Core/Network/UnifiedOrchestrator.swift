@@ -1107,6 +1107,16 @@ final class UnifiedOrchestrator {
     @ObservationIgnored
     private var widgetWriteTask: Task<Void, Never>?
 
+    /// Forget-all teardown: no widget/watch publish may run from the moment
+    /// the user confirms until a bridge is configured again. Settings wipes
+    /// the shared surface and pushes `wc_unpaired` BEFORE the orchestrator's
+    /// own teardown finishes, and a debounced publish landing in that window
+    /// re-wrote the rooms and pushed `wc_unpaired = false` — which, as the
+    /// newer application context, replaced the unpair and the watch kept its
+    /// credentials. Lifted by `configure(bridges:modelContext:)`.
+    @ObservationIgnored
+    private var widgetPublishSuspended = false
+
     /// Debounced post-action state refresh.
     /// Any successful state-change (toggle, brightness, scene) schedules a 1.5 s
     /// delayed loadAll() so colors and aggregate brightness always reflect the
@@ -1342,6 +1352,10 @@ final class UnifiedOrchestrator {
     /// Call on app start with the full list from SwiftData.
     /// Handles first-launch legacy credential migration automatically.
     func configure(bridges: [BridgeRecord], modelContext: ModelContext) {
+        // A (re-)configured session publishes again — this is the path every
+        // re-pair after a forget-all takes (splash → onPaired → MainTabView).
+        widgetPublishSuspended = false
+
         // MARK: Legacy migration — one-time on first Stage 2A launch
         if bridges.isEmpty {
             let legacyID = UUID().uuidString
@@ -3064,15 +3078,17 @@ final class UnifiedOrchestrator {
         widgetWriteTask?.cancel()
         // Demo data never leaves the app: the widget, watch and Siri surfaces
         // all read this snapshot, and they keep acting on it after demo ends.
-        guard !isDemoMode else {
+        // A forget-all teardown publishes nothing until the next configure.
+        guard !isDemoMode, !widgetPublishSuspended else {
             widgetWriteTask = nil
             return
         }
         widgetWriteTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(500))
-            // Re-check at fire time: demo may have been entered during the
-            // debounce, and allRooms/globalScenes are demo data by now.
-            guard !Task.isCancelled, let self, !self.isDemoMode else { return }
+            // Re-check at fire time: demo or a forget-all may have begun
+            // during the debounce.
+            guard !Task.isCancelled, let self,
+                  !self.isDemoMode, !self.widgetPublishSuspended else { return }
             let roomSnaps = self.allRooms.map { r in
                 WidgetRoomSnapshot(
                     id:             r.id,
@@ -8082,12 +8098,28 @@ final class UnifiedOrchestrator {
         return result
     }
 
+    /// Forget-all step zero — call SYNCHRONOUSLY before wiping the shared
+    /// widget/watch surface. Cancels any debounced publish and refuses new
+    /// ones until the next `configure`, so nothing can re-write the rooms or
+    /// supersede the watch's `wc_unpaired` push while teardown is suspended
+    /// in `stopStudioMode()`.
+    func suspendWidgetPublishingForTeardown() {
+        widgetPublishSuspended = true
+        widgetWriteTask?.cancel()
+        widgetWriteTask = nil
+    }
+
     /// Full local teardown for "Forget All Bridges". Clearing only the
     /// Keychain left the in-memory clients (with tokens) fully functional
     /// until the app was relaunched — the UI kept controlling lights after
     /// a forget-all. Also clears the room/zone snapshots so a later re-pair
     /// cannot resurrect stale bridge ids through the SwiftData preload.
     func forgetAllBridges() async {
+        // Before the first `await`: no publish may land mid-teardown (see
+        // suspendWidgetPublishingForTeardown — Settings already called it;
+        // this keeps any other caller honest).
+        suspendWidgetPublishingForTeardown()
+
         // ── All-Day, SYNCHRONOUSLY, before this function's first `await` ──
         //
         // `await stopStudioMode()` below is the very first statement of the
