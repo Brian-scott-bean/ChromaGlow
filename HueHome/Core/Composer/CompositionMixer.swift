@@ -48,6 +48,15 @@ final class PerformanceMixBox: @unchecked Sendable {
     var punchHeld = false
     var punchReleasedAt: Double? = nil
 
+    /// Peak brightness of the STROBE punch's ON phase. 1.0 normally; the
+    /// Perform UI lowers it to `dimFlashingStrobeCeiling` while iOS "Dim
+    /// Flashing Lights" is on (set on the main actor before the punch engages).
+    var strobeCeiling: Double = 1.0
+    /// Studio's Dim Flashing Lights cap for its strobe card — brightness 30 of
+    /// 100 (StudioViewModel's `.appDriven("strobe")` start) — so the Perform
+    /// pad dims exactly as far as the Studio strobe does.
+    static let dimFlashingStrobeCeiling = 0.3
+
     init(deckA: CompositionParamBox) {
         self.deckA = deckA
     }
@@ -208,8 +217,10 @@ enum CompositionMixer {
                 phase = (hostNow * hz).truncatingRemainder(dividingBy: 1)
             }
             let on = phase < 0.5
+            // Dim Flashing Lights lowers the ON level, never the rate cap.
+            let peak = min(1, max(0, mix.strobeCeiling))
             return frames.map {
-                let target = on ? 1.0 : 0.0
+                let target = on ? peak : 0.0
                 return LightFrame(channelID: $0.channelID,
                                   x: $0.x + (d65.x - $0.x) * strength,
                                   y: $0.y + (d65.y - $0.y) * strength,
