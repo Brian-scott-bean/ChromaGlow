@@ -540,6 +540,24 @@ extension WatchStore: WCSessionDelegate {
     /// launch if the watch app was not running at send time.
     nonisolated func session(_ session: WCSession,
                              didReceiveApplicationContext applicationContext: [String: Any]) {
+        apply(applicationContext, isReplay: false)
+    }
+
+    /// Freshness stamp for an applied context, or nil to leave the stored
+    /// stamp alone. Pure — the replay rule lives here.
+    /// - live delivery: when the phone composed it (`wc_sent_at`), else now.
+    /// - launch REPLAY of `receivedApplicationContext`: never "now" — it is
+    ///   the last context ever received, not new contact. Stamp only a
+    ///   composed-at time newer than what the watch already has.
+    nonisolated static func freshnessStamp(sentAt: Date?, isReplay: Bool,
+                                           storedStamp: Date?, now: Date = Date()) -> Date? {
+        guard isReplay else { return sentAt ?? now }
+        guard let sentAt else { return nil }
+        if let storedStamp, sentAt <= storedStamp { return nil }
+        return sentAt
+    }
+
+    nonisolated private func apply(_ applicationContext: [String: Any], isReplay: Bool) {
         guard let roomsData = applicationContext["wc_rooms_v1"] as? Data,
               let decoded   = try? JSONDecoder().decode([WatchRoom].self, from: roomsData)
         else { return }
@@ -565,6 +583,14 @@ extension WatchStore: WCSessionDelegate {
             }
             return
         }
+
+        let watchGroupDefaults = UserDefaults(suiteName: "group.com.huehome.pro")
+        let sentAt = applicationContext["wc_sent_at"] as? Date
+        let storedStamp = watchGroupDefaults?.object(forKey: "hue_widget_updated_at") as? Date
+        let stamp = Self.freshnessStamp(sentAt: sentAt, isReplay: isReplay, storedStamp: storedStamp)
+        // A replayed context the watch already has (or older than its own
+        // later refreshes/commands) must not roll the cache back.
+        if isReplay, sentAt != nil, stamp == nil { return }
 
         // Decode zones (optional — older payloads may not include them)
         let decodedZones: [WatchRoom]
@@ -622,7 +648,7 @@ extension WatchStore: WCSessionDelegate {
         if let scenesData = applicationContext["wc_scenes_v1"] as? Data {
             watchGroup?.set(scenesData, forKey: "hue_widget_scenes_v1")
         }
-        watchGroup?.set(Date(),    forKey: "hue_widget_updated_at")
+        if let stamp { watchGroup?.set(stamp, forKey: "hue_widget_updated_at") }
         if !ip.isEmpty { watchGroup?.set(ip, forKey: "hue_widget_bridge_ip") }
 
         // Update published properties on MainActor + reload complications
@@ -631,7 +657,7 @@ extension WatchStore: WCSessionDelegate {
             self?.zones    = decodedZones
             self?.scenes   = decodedScenes
             self?.isPaired = !(decoded.isEmpty && decodedZones.isEmpty) || !ip.isEmpty || bridgesData != nil
-            self?.lastSyncedAt = Date()
+            if let stamp { self?.lastSyncedAt = stamp }
             WidgetCenter.shared.reloadAllTimelines()
         }
     }
@@ -661,10 +687,11 @@ extension WatchStore: WCSessionDelegate {
                              activationDidCompleteWith activationState: WCSessionActivationState,
                              error: Error?) {
         if let error { debugLog("WatchStore WCSession: activation error — \(error)") }
-        // Replay any context delivered while the app was not running
+        // Replay any context delivered while the app was not running —
+        // as a REPLAY: it must not be stamped fresh or roll newer state back.
         let ctx = session.receivedApplicationContext
         if !ctx.isEmpty {
-            self.session(session, didReceiveApplicationContext: ctx)
+            apply(ctx, isReplay: true)
         }
     }
 }
