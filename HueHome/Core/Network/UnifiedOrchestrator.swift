@@ -7095,8 +7095,10 @@ final class UnifiedOrchestrator {
         frames: [LightFrame],
         api: HueAPIClient,
         gamut: HueColorUtils.Gamut,
-        sentX: Double, sentY: Double, sentBri: Double
+        sentX: Double, sentY: Double, sentBri: Double,
+        slots: [CompositionRenderSlot] = []
     ) -> RestSender.Work {
+        let slotByLight = Dictionary(slots.compactMap { s in s.lightID.map { ($0, s) } }, uniquingKeysWith: { a, _ in a })
         return { [weak self] stillCurrent in
             self?.composerWorkStarted(token)
             // The realized-frame gate, at dispatch (safety round 2): the
@@ -7173,13 +7175,26 @@ final class UnifiedOrchestrator {
                                             on: true,
                                             durationMs: 200))
                                 } else {
+                                    // Capability honesty (Composer 2.2): a room
+                                    // with a gradient strip sends its OTHER
+                                    // lights by capability too — colour → xy,
+                                    // tunable white → mirek in range, dimmable →
+                                    // brightness only (an xy PUT to a white bulb
+                                    // is refused, and took the brightness with it).
                                     let xy = HueColorUtils.clampXYToGamut(
                                         x: first.x, y: first.y, gamut: gamut)
+                                    let slot = slotByLight[entry.lightID]
+                                    let capability = slot?.capability ?? .color
+                                    let mirek: Int? = capability == .tunableWhite
+                                        ? HueColorUtils.mirek(fromX: xy.x, y: xy.y,
+                                                              min: (slot?.mirekRange ?? 153...500).lowerBound,
+                                                              max: (slot?.mirekRange ?? 153...500).upperBound)
+                                        : nil
                                     try await api.setLightEffect(
                                         id: entry.lightID, on: true,
                                         brightness: max(1, first.brightness * 100.0),
-                                        xy: (xy.x, xy.y),
-                                        mirek: nil,
+                                        xy: capability == .color ? (xy.x, xy.y) : nil,
+                                        mirek: mirek,
                                         duration: 200)
                                 }
                                 return (entryIndices, true)
@@ -7757,7 +7772,14 @@ final class UnifiedOrchestrator {
                     hasCompletedInitialSuccessfulRotation: $0.hasCompletedInitialSuccessfulRotation,
                     cursor: $0.cursor)
             } ?? false
-            if !userEditBurstActive && !rotationIncomplete
+            // Composer 2 (v2.2): a frame-source composition moves single
+            // lights (masks, one-light sparkles, lightning off to one side)
+            // while light 0 stays put, so frame 0 is no proxy for it — every
+            // channel is compared with what its light last received.
+            let frameSourceMoved = runtime.paramBox.frameSource != nil
+                && Self.composerFramesChanged(frames, lastDelivered: runtime.lastDeliveredFrames,
+                                              gradientMap: runtime.gradientMap)
+            if !userEditBurstActive && !rotationIncomplete && !frameSourceMoved
                 && colorDelta < 0.003 && briDelta < 1.0 {
                 try? await Task.sleep(for: tickInterval)
                 continue
@@ -7813,7 +7835,8 @@ final class UnifiedOrchestrator {
                     makeComposerGradientWork(
                         token: token, entries: subset, frames: frames,
                         api: capturedAPI, gamut: capturedGamut,
-                        sentX: sentX, sentY: sentY, sentBri: sentBri)
+                        sentX: sentX, sentY: sentY, sentBri: sentBri,
+                        slots: capturedSlots)
                 }
             } else if usePerLight, let slice = sweepSlice {
                 // ── PER-LIGHT MODE ──
@@ -7862,6 +7885,35 @@ final class UnifiedOrchestrator {
 
             try? await Task.sleep(for: tickInterval)
         }
+    }
+
+    /// Has any channel moved away from what its light last received? Strips
+    /// are compared on the ONE averaged brightness their PUT carries (what
+    /// `lastDeliveredFrames` records for them), so a strip with a brightness
+    /// gradient never reads as perpetually changed. Pure.
+    static func composerFramesChanged(_ frames: [LightFrame],
+                                      lastDelivered: [Int: (x: Double, y: Double, brightness: Double)],
+                                      gradientMap: GradientChannelMap?) -> Bool {
+        func moved(_ index: Int, x: Double, y: Double, brightness: Double) -> Bool {
+            guard let last = lastDelivered[index] else { return true }
+            return hypot(x - last.x, y - last.y) >= 0.003 || abs(brightness - last.brightness) * 100 >= 1
+        }
+        if let map = gradientMap {
+            for entry in map.entries {
+                let indices = entry.channelRange.filter { $0 < frames.count }
+                guard !indices.isEmpty else { continue }
+                let average = indices.map { frames[$0].brightness }.reduce(0, +) / Double(indices.count)
+                for i in indices {
+                    let f = frames[i]
+                    if moved(i, x: f.x, y: f.y, brightness: entry.isGradient ? average : f.brightness) { return true }
+                }
+            }
+            return false
+        }
+        for (i, f) in frames.enumerated() where moved(i, x: f.x, y: f.y, brightness: f.brightness) {
+            return true
+        }
+        return false
     }
 
     private func nextCompositionRoomPriority(now: CFAbsoluteTime) -> CompositionPlaybackKey? {

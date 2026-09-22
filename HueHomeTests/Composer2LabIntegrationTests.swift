@@ -143,4 +143,17 @@ final class Composer2LabIntegrationTests: XCTestCase {
         XCTAssertEqual(Composer2Copy.takeoverDeclined, EntertainmentConsentCopy.takeoverDeclined)
         XCTAssertFalse(Composer2Copy.takeoverDeclined.isEmpty)
     }
+
+    /// Room mode's "did anything change" must see every light, not light 0.
+    func testRoomModeDeltaGateSeesEveryChannel() {
+        let delivered: [Int: (x: Double, y: Double, brightness: Double)] = [0: (0.3, 0.3, 0.5), 1: (0.3, 0.3, 0.5), 2: (0.3, 0.3, 0.5)]
+        let same = [0, 1, 2].map { LightFrame(channelID: $0, x: 0.3, y: 0.3, brightness: 0.5) }
+        XCTAssertFalse(UnifiedOrchestrator.composerFramesChanged(same, lastDelivered: delivered, gradientMap: nil))
+        var sparkle = same
+        sparkle[2] = LightFrame(channelID: 2, x: 0.3, y: 0.3, brightness: 1)
+        XCTAssertTrue(UnifiedOrchestrator.composerFramesChanged(sparkle, lastDelivered: delivered, gradientMap: nil),
+                      "a sparkle on light 3 is a change even though light 1 held still")
+        XCTAssertTrue(UnifiedOrchestrator.composerFramesChanged(same, lastDelivered: [0: (0.3, 0.3, 0.5)], gradientMap: nil),
+                      "a light never delivered to is a change")
+    }
 }
