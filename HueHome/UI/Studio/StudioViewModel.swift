@@ -923,14 +923,47 @@ final class StudioViewModel {
         guard let orchestrator else { return }
 
         // A local preset is what gives the bridge copy a name and a room to be
-        // recovered under, so it is created first and reported separately: the
-        // user is told whether a copy landed in My Creations or not.
-        let preset = compositionStore.presets.first { $0.id == runningPresetID(for: card) }
-            ?? saveActiveComposition(session: session, name: card.name, icon: card.icon,
-                                     preferredTransport: nil)
-        guard let preset else {
-            studioNotice = StudioNotice(message: BridgeSaveCopy.saveFailedNothingRecorded)
-            return
+        // recovered under, so it is settled first and reported separately.
+        //
+        // The bridge chain is built from the PRESET, so for the running look
+        // the preset must say what the live box says. Reusing the stored one
+        // uploaded the saved design without the user's live edits (and for
+        // "+ Create", the untouched starter draft) while the sheet claimed a
+        // copy "In My Creations" regardless. Now: a stored preset the live
+        // look still matches is reused and reported as already in the
+        // library; the starter draft or an edited look becomes a real preset
+        // in My Creations — only once it is known to be bridge-storable, so a
+        // refusal leaves no stray copy behind. A caller naming a DIFFERENT
+        // stored preset saves that preset, as before.
+        let stored = compositionStore.presets.first { $0.id == runningPresetID(for: card) }
+        let savesLiveLook = session.identity.cardID == card.id
+        let reusable: CompositionPreset? = stored.flatMap { stored in
+            guard savesLiveLook else { return stored }
+            guard stored.id != Self.composerStarterDraftPresetID else { return nil }
+            return Self.liveLook(box, matches: stored) ? stored : nil
+        }
+        let preset: CompositionPreset
+        let createdLocalPreset: Bool
+        if let reusable {
+            preset = reusable
+            createdLocalPreset = false
+        } else {
+            let candidate = presetFromLiveBox(
+                session: session, name: stored?.name ?? card.name,
+                icon: stored?.icon ?? card.icon,
+                accentColorHex: stored?.accentColorHex ?? "#FFB340",
+                preferredTransport: nil, category: .myCreations)
+            guard candidate.canRunOnBridge else {
+                studioNotice = StudioNotice(message: BridgeSaveCopy.ineligibleReactive)
+                return
+            }
+            guard candidate.capabilityTier == .bridgeOptimized else {
+                studioNotice = StudioNotice(message: BridgeSaveCopy.ineligibleMotion)
+                return
+            }
+            compositionStore.save(candidate)
+            preset = candidate
+            createdLocalPreset = true
         }
 
         // The STRICT path: no app-driven fallback, so nothing here can report a
@@ -942,7 +975,8 @@ final class StudioViewModel {
 
         applyBridgeSaveOutcome(
             outcome, room: room, presetName: preset.name,
-            bridgeLabel: orchestrator.bridgeLabel(for: room.bridgeID ?? ""))
+            bridgeLabel: orchestrator.bridgeLabel(for: room.bridgeID ?? ""),
+            createdLocalPreset: createdLocalPreset)
     }
 
     /// Apply a strict-save outcome to this VM's state — synchronously, in the
@@ -959,15 +993,20 @@ final class StudioViewModel {
     /// proves only that playback CHANGED (the newer look may itself have
     /// stopped by now), so that branch claims neither emptiness nor active
     /// playback.
+    ///
+    /// `createdLocalPreset`: true when the save added a copy to My Creations,
+    /// false when the look was an existing library preset (said as such).
     func applyBridgeSaveOutcome(
         _ outcome: UnifiedOrchestrator.BridgeSaveOutcome,
-        room: RoomDisplayItem, presetName: String, bridgeLabel: String
+        room: RoomDisplayItem, presetName: String, bridgeLabel: String,
+        createdLocalPreset: Bool = true
     ) {
         switch outcome {
         case .savedAndRunning(let manifestID, _):
             bridgeSaveResult = BridgeSaveResult(
                 lookName: presetName, roomName: room.name, bridgeLabel: bridgeLabel,
-                isRunningOnBridge: true, createdLocalPreset: true,
+                isRunningOnBridge: true, createdLocalPreset: createdLocalPreset,
+                alreadyInLibrary: !createdLocalPreset,
                 stopSurvivesRelaunch: true,
                 headline: BridgeSaveCopy.savedAndRunning,
                 stoppableManifestID: manifestID)
@@ -1021,7 +1060,8 @@ final class StudioViewModel {
             }
             bridgeSaveResult = BridgeSaveResult(
                 lookName: presetName, roomName: room.name, bridgeLabel: bridgeLabel,
-                isRunningOnBridge: false, createdLocalPreset: true,
+                isRunningOnBridge: false, createdLocalPreset: createdLocalPreset,
+                alreadyInLibrary: !createdLocalPreset,
                 stopSurvivesRelaunch: true,
                 headline: headline,
                 stoppableManifestID: manifestID)
@@ -1034,7 +1074,8 @@ final class StudioViewModel {
             // itself and take the handle with it.
             bridgeSaveResult = BridgeSaveResult(
                 lookName: presetName, roomName: room.name, bridgeLabel: bridgeLabel,
-                isRunningOnBridge: false, createdLocalPreset: true,
+                isRunningOnBridge: false, createdLocalPreset: createdLocalPreset,
+                alreadyInLibrary: !createdLocalPreset,
                 stopSurvivesRelaunch: recoverable,
                 headline: reason,
                 stoppableManifestID: manifestID,
@@ -1182,7 +1223,11 @@ final class StudioViewModel {
         let roomName: String
         let bridgeLabel: String
         let isRunningOnBridge: Bool
+        /// True when THIS save added a copy to My Creations.
         let createdLocalPreset: Bool
+        /// True when no copy was needed: the saved look already IS a preset
+        /// in the user's library.
+        var alreadyInLibrary: Bool = false
         let stopSurvivesRelaunch: Bool
         let headline: String
         /// Present whenever resources exist on the bridge that this result can
@@ -4536,11 +4581,29 @@ final class StudioViewModel {
         preferredTransport: CompositionPreferredTransport?,
         category: PresetCategory = .myCreations
     ) -> CompositionPreset? {
+        let preset = presetFromLiveBox(session: session, name: rawName, icon: icon,
+                                       accentColorHex: accentColorHex,
+                                       preferredTransport: preferredTransport,
+                                       category: category)
+        compositionStore.save(preset)
+        return preset
+    }
+
+    /// A new user preset holding the live box's four layers — built, not
+    /// saved, so a caller can check it before it reaches the library.
+    private func presetFromLiveBox(
+        session: ComposerEditSession,
+        name rawName: String,
+        icon: String,
+        accentColorHex: String,
+        preferredTransport: CompositionPreferredTransport?,
+        category: PresetCategory
+    ) -> CompositionPreset {
         let box = session.box
         let trimmed = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
         let safeIcon = sanitizedSymbolName(icon)
         let now = Date()
-        let preset = CompositionPreset(
+        return CompositionPreset(
             id: UUID(),
             name: trimmed.isEmpty ? "My Composition" : trimmed,
             icon: safeIcon,
@@ -4557,8 +4620,18 @@ final class StudioViewModel {
             updatedAt: now,
             preferredTransport: preferredTransport
         )
-        compositionStore.save(preset)
-        return preset
+    }
+
+    /// Does the live box still say exactly what the stored preset says?
+    /// `motionAngle` is ignored where the preset left it on Auto: the start
+    /// path resolves Auto INTO the box, and that is not an edit.
+    static func liveLook(_ box: CompositionParamBox, matches preset: CompositionPreset) -> Bool {
+        var liveMotion = box.motion
+        if preset.motion.motionAngle < 0 { liveMotion.motionAngle = preset.motion.motionAngle }
+        return box.palette == preset.palette
+            && liveMotion == preset.motion
+            && box.envelope == preset.envelope
+            && box.reaction == preset.reaction
     }
 
     private func sanitizedSymbolName(_ raw: String) -> String {

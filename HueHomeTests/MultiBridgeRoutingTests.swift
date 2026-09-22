@@ -12457,4 +12457,58 @@ extension MultiBridgeRoutingTests {
         XCTAssertEqual(fresh.palette, look.palette)
         XCTAssertEqual(fresh.motion.speed, look.motion.speed)
     }
+
+    /// Audit #8 — Save to Bridge uploaded the STORED preset (without the
+    /// user's live edits, and for "+ Create" the untouched starter draft)
+    /// while the result sheet always claimed "Local copy: In My Creations".
+    func testSaveToBridgeStoresTheLiveLookAndReportsTheLocalCopyTruthfully() async throws {
+        stageStreamableBridge(bridgeB)
+        let playing = runtimeOnlyPreset(named: "Live Look")
+        let named = bridgeStorablePreset(named: "Named Bridge Look")
+        let vm = makeP7FVM(presets: [playing, named])
+        let roomB = streamRoomOnB()
+        vm.selectedRoom = roomB
+        let card = vm.studioCard(for: playing)
+        await vm.apply(card, roomOverride: roomB, preferEntertainmentOverride: false)
+        let box = try XCTUnwrap(
+            vm.testActiveCompositionBox(bridgeID: "bridge-b", roomID: roomB.id),
+            "precondition: the look is playing (status: \(vm.statusMessage))")
+        let libraryBefore = vm.compositionStore.presets.count
+
+        // Unedited, the running look is its (moving) stored preset: refused,
+        // and the refusal adds nothing to the library.
+        await vm.saveActiveLookToBridge(card)
+        XCTAssertNil(vm.bridgeSaveResult)
+        XCTAssertEqual(vm.studioNotice?.message, BridgeSaveCopy.ineligibleMotion)
+        XCTAssertEqual(vm.compositionStore.presets.count, libraryBefore,
+                       "a refused save leaves no stray copy behind")
+        vm.studioNotice = nil
+
+        // Edited live into a bridge-storable look: THAT is what gets saved,
+        // as a real preset in My Creations — and the sheet says so.
+        box.motion.pattern = .static
+        box.palette.color1 = CodableColor(x: 0.2, y: 0.6)
+        await vm.saveActiveLookToBridge(card)
+        let result = try XCTUnwrap(vm.bridgeSaveResult,
+                                   "notice: \(vm.studioNotice?.message ?? "none")")
+        XCTAssertTrue(result.createdLocalPreset)
+        XCTAssertFalse(result.alreadyInLibrary)
+        XCTAssertEqual(vm.compositionStore.presets.count, libraryBefore + 1)
+        let copy = try XCTUnwrap(vm.compositionStore.presets.last)
+        XCTAssertNotEqual(copy.id, playing.id, "the stored look is not overwritten")
+        XCTAssertEqual(copy.palette.color1, CodableColor(x: 0.2, y: 0.6),
+                       "the live edit is what was saved")
+        XCTAssertEqual(copy.motion.pattern, .static)
+        XCTAssertEqual(copy.category, .myCreations)
+        vm.bridgeSaveResult = nil
+
+        // A caller naming a stored preset saves THAT preset: no new copy,
+        // and the sheet says it already lives in the library.
+        await vm.saveActiveLookToBridge(vm.studioCard(for: named))
+        let reused = try XCTUnwrap(vm.bridgeSaveResult,
+                                   "notice: \(vm.studioNotice?.message ?? "none")")
+        XCTAssertFalse(reused.createdLocalPreset)
+        XCTAssertTrue(reused.alreadyInLibrary)
+        XCTAssertEqual(vm.compositionStore.presets.count, libraryBefore + 1)
+    }
 }
