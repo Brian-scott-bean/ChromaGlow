@@ -304,6 +304,52 @@ final class BeatClockTests: XCTestCase {
         XCTAssertEqual(snap.beatIndex(at: 42.37 + 0.6), 1, "0.6 s after the anchor at 120 BPM is beat 1")
     }
 
+    /// The ±1 BPM buttons (and a Tap Dial twist) call `setBPM` on a running
+    /// clock. Phase is `(t − epoch) / interval`, so changing the interval
+    /// under the old epoch rescaled every beat since it: 100 s into a 120 BPM
+    /// clock, +1 BPM moved the phase at "now" from 0.30 to 0.97 of a beat and
+    /// jumped the bar. The beat position at the moment of the change must hold.
+    func testSetBPMKeepsBeatAndBarPositionContinuous() {
+        let clock = BeatClock()
+        clock.setBPM(120, now: 10)
+        let t = 110.15                                   // 200.3 beats in
+        let before = BeatClock.snapshot()
+        clock.setBPM(121, now: t)
+        let after = BeatClock.snapshot()
+        XCTAssertEqual(after.bpm, 121)
+        XCTAssertEqual(after.beatPhase(at: t), before.beatPhase(at: t), accuracy: 1e-9,
+                       "a tempo change must not jump the beat phase")
+        XCTAssertEqual(after.beatIndex(at: t), before.beatIndex(at: t),
+                       "…or skip beats")
+        XCTAssertEqual(after.barPhase(at: t), before.barPhase(at: t), accuracy: 1e-9,
+                       "…or move the bar")
+        // From the pivot on, the grid advances at the NEW interval.
+        let nextBeat = t + (1 - after.beatPhase(at: t)) * (60.0 / 121.0)
+        XCTAssertEqual(after.beatPhase(at: nextBeat + 1e-6), 0, accuracy: 1e-4)
+    }
+
+    /// The audio path drifts the tempo a fraction of a BPM at a time — and
+    /// five minutes into a set a 0.3 BPM drift under the old epoch was a
+    /// ~half-beat jump that the ≤30 ms correction then crept after for
+    /// seconds. With the grid held at the analysis end time, an estimate that
+    /// agrees with the grid about where the beat fell needs no correction.
+    func testAudioTempoDriftKeepsTheGridWhereTheBeatIs() {
+        let clock = BeatClock()
+        clock.ingest(estimate: TempoEstimate(bpm: 120, confidence: 0.9, lastBeatOffset: 0),
+                     endTime: 50)                        // epoch 50
+        let end = 350.1                                  // 600.2 beats in; last beat at 350.0
+        let phaseBefore = BeatClock.snapshot().beatPhase(at: end)
+        clock.ingest(estimate: TempoEstimate(bpm: 120.3, confidence: 0.9, lastBeatOffset: 0.1),
+                     endTime: end)
+        let after = BeatClock.snapshot()
+        XCTAssertEqual(after.bpm, 120.3, accuracy: 1e-9)
+        XCTAssertEqual(after.beatPhase(at: end), phaseBefore, accuracy: 0.001,
+                       "the drift must not move the beat position at the analysis end")
+        let phaseAtBeat = after.beatPhase(at: 350.0)
+        XCTAssertLessThan(min(phaseAtBeat, 1 - phaseAtBeat), 0.001,
+                          "the observed beat still lands on the grid")
+    }
+
     func testSnapshotMathWithNoClockIsInert() {
         let snap = BeatSnapshot.none
         XCTAssertEqual(snap.beatPhase(at: 123), 0)
