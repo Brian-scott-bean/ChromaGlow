@@ -33,10 +33,17 @@ final class AutomationsViewModel {
     func configure(bridgeIDs: [String], orchestrator: UnifiedOrchestrator) {
         isDemoMode    = orchestrator.isDemoMode
         bridgeClients = bridgeIDs.compactMap { id in
-            guard let api = orchestrator.hueClient(for: id) else { return nil }
+            // Family Sharing: a granted bridge's behavior_instances are the
+            // OWNER's automations — a guest must neither see nor toggle them
+            // (the same owner-only rule Room Detail applies to its section).
+            guard !orchestrator.isGuestGrantedBridge(id),
+                  let api = orchestrator.hueClient(for: id) else { return nil }
             return (id: id, api: api)
         }
     }
+
+    /// The bridges this view model will fetch from (post guest filter).
+    var configuredBridgeIDs: [String] { bridgeClients.map(\.id) }
 
     // MARK: - Load
 
