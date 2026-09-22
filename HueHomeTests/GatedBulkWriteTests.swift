@@ -353,6 +353,26 @@ final class GatedBulkWriteTests: XCTestCase {
                        "Tap to apply Relax.")
     }
 
+    /// iOS silently keeps only 64 pending requests; over the cap the soonest
+    /// slots win (and the caller logs the rest) instead of an arbitrary drop.
+    func testSchedulingOverTheIOSCapKeepsTheSoonestFiringSlots() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(identifier: "UTC"))
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-09-22T12:00:00Z"))
+        let today = calendar.component(.weekday, from: now)
+        let tomorrow = today % 7 + 1
+        let id = UUID()
+        let inOneHour = AutomationScheduler.Slot(automationID: id, weekday: today, hour: 13, minute: 0)
+        let tomorrowSlot = AutomationScheduler.Slot(automationID: id, weekday: tomorrow, hour: 9, minute: 0)
+        let almostAWeek = AutomationScheduler.Slot(automationID: id, weekday: today, hour: 11, minute: 0)
+        let slots = [almostAWeek, tomorrowSlot, inOneHour]
+
+        XCTAssertEqual(AutomationScheduler.slotsWithinCap(slots, now: now, calendar: calendar, cap: 2),
+                       [inOneHour, tomorrowSlot])
+        XCTAssertEqual(AutomationScheduler.slotsWithinCap(slots, now: now, calendar: calendar),
+                       slots, "under the 64 cap every slot is kept as-is")
+    }
+
     // ──────────────────────────────────────────────
     // MARK: - M-14: same-color frames collapse to one grouped_light PUT
     // ──────────────────────────────────────────────
