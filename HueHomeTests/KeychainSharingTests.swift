@@ -257,6 +257,21 @@ final class KeychainSharingTests: XCTestCase {
         XCTAssertNil(SharedKeychainStore.load(account: SharedKeychainStore.bridgeCredentialsAccount))
     }
 
+    /// Watch resync (activation / install): a pending forget-all unpair is
+    /// repeated, a paired snapshot is re-sent, and an empty credential map is
+    /// NEVER read as an unpair (L-30 — it looks exactly like a transient
+    /// Keychain failure).
+    func testWatchResyncRepeatsUnpairAndNeverInfersOneFromEmptyCredentials() {
+        XCTAssertEqual(WatchSessionManager.resyncAction(unpairPending: true, hasStoredBridges: false),
+                       .unpair)
+        XCTAssertEqual(WatchSessionManager.resyncAction(unpairPending: true, hasStoredBridges: true),
+                       .unpair, "an explicit unpair outranks any leftover snapshot")
+        XCTAssertEqual(WatchSessionManager.resyncAction(unpairPending: false, hasStoredBridges: true),
+                       .snapshot)
+        XCTAssertEqual(WatchSessionManager.resyncAction(unpairPending: false, hasStoredBridges: false),
+                       .none)
+    }
+
     // ──────────────────────────────────────────────
     // MARK: - Pin store leaves no plaintext mirrors (D-018 fold-in)
     // ──────────────────────────────────────────────
