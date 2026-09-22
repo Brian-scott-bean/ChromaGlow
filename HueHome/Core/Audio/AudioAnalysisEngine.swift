@@ -172,9 +172,11 @@ final class AudioAnalysisEngine {
                   let typeVal = info[AVAudioSessionInterruptionTypeKey] as? UInt,
                   let type = AVAudioSession.InterruptionType(rawValue: typeVal) else { return }
             Task { @MainActor in
+                guard let self else { return }
                 switch type {
-                case .began: self?.stopEngine()
-                case .ended: await self?.startEngineIfNeeded()
+                case .began: self.stopEngine()
+                case .ended:
+                    if self.mayRecoverCaptureAutomatically { await self.startEngineIfNeeded() }
                 @unknown default: break
                 }
             }
@@ -196,7 +198,8 @@ final class AudioAnalysisEngine {
             case .newDeviceAvailable, .oldDeviceUnavailable, .categoryChange,
                  .routeConfigurationChange, .override:
                 Task { @MainActor in
-                    guard let self, self.hasActiveDemand, !self.isCaptureLive else { return }
+                    guard let self, self.hasActiveDemand, !self.isCaptureLive,
+                          self.mayRecoverCaptureAutomatically else { return }
                     await self.startEngineIfNeeded()
                 }
             default:
@@ -213,7 +216,9 @@ final class AudioAnalysisEngine {
             Task { @MainActor in
                 guard let self else { return }
                 self.stopEngine()
-                if self.hasActiveDemand { await self.startEngineIfNeeded() }
+                if self.hasActiveDemand, self.mayRecoverCaptureAutomatically {
+                    await self.startEngineIfNeeded()
+                }
             }
         })
     }
@@ -240,6 +245,17 @@ final class AudioAnalysisEngine {
     /// True while any consumer holds a demand (engine may still be paused
     /// by an interruption/backgrounding — it restarts automatically).
     var hasActiveDemand: Bool { !demands.isEmpty }
+
+    /// May an AUTOMATIC recovery (interruption ended, route change, media
+    /// services reset, engine reconfiguration) start the microphone now?
+    /// Not while the app is in the background: `didEnterBackground` stopped
+    /// capture on purpose, a background start either records with the app
+    /// out of sight or fails to activate the session (and the failure used
+    /// to surface as "enable access in Settings" on return). The foreground
+    /// transition restarts capture itself, so nothing is lost by waiting.
+    private var mayRecoverCaptureAutomatically: Bool {
+        UIApplication.shared.applicationState != .background
+    }
 
     // MARK: - Engine
 
@@ -363,7 +379,11 @@ final class AudioAnalysisEngine {
             input.removeTap(onBus: 0)
             try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
             audioEngine = nil
-            NotificationCenter.default.post(name: .compositionMicPermissionDenied, object: nil)
+            // Permission is GRANTED on this path (the denials returned above):
+            // this is the session, the route or the engine failing to start.
+            // Posting `.compositionMicPermissionDenied` here told the user to
+            // "enable access in Settings" for a switch that was already on.
+            NotificationCenter.default.post(name: .compositionMicCaptureFailed, object: nil)
             return false
         }
     }
@@ -432,7 +452,7 @@ final class AudioAnalysisEngine {
     /// audio, bring capture back up on the new hardware format.
     private func rebuildAfterConfigurationChange() async {
         log.info("Audio engine configuration changed — rebuilding capture")
-        let rebuild = hasActiveDemand
+        let rebuild = hasActiveDemand && mayRecoverCaptureAutomatically
         stopEngine(deactivatingSession: !rebuild)
         guard rebuild else { return }
         await startEngineIfNeeded()
@@ -472,4 +492,12 @@ final class AudioAnalysisEngine {
             }
         }
     }
+}
+
+extension Notification.Name {
+    /// Microphone capture could not START although permission is granted —
+    /// the session, the input route or the engine failed. Distinct from
+    /// `.compositionMicPermissionDenied`, which is posted ONLY for a real
+    /// permission denial and whose observers send the user to Settings.
+    static let compositionMicCaptureFailed = Notification.Name("compositionMicCaptureFailed")
 }
