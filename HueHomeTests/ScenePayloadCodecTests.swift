@@ -186,6 +186,103 @@ final class ScenePayloadCodecTests: XCTestCase {
         XCTAssertLessThan(squeezed.count, raw.count)
         XCTAssertEqual(try ScenePayloadCodec.decompress(squeezed), raw)
     }
+
+    // MARK: - Hostile payloads (audit #3)
+
+    private func shareURL(json: String) throws -> URL {
+        let blob = ScenePayloadCodec.base64URLEncode(try ScenePayloadCodec.compress(Data(json.utf8)))
+        return try XCTUnwrap(URL(string: "lightshade://share?d=\(blob)"))
+    }
+
+    /// A hand-crafted link used to reach the engine unclamped: Int.min
+    /// temperature overflowed `temperature - 153`, a negative chase offset
+    /// made `0..<heads` an invalid range, a huge step `bars` overflowed
+    /// `bars * beatsPerBar`, a vanishing `quantizeBeats` trapped an `Int`
+    /// conversion, and an unclamped BPM ran past the flash ceiling.
+    func testAHostileShareLinkDecodesClampedToTheAuthoringRanges() throws {
+        let json = """
+        {"v":1,"kind":"composition","scene":{
+          "name":"Hostile","icon":"sparkles","accentColorHex":"#FF0000","category":"Ambient",
+          "seasonMonths":[0,6,99],
+          "palette":{"mode":"temperature","temperature":-9223372036854775808,
+                     "color1":{"x":-5,"y":1e300},"color2":{"x":0.5,"y":0.4},
+                     "hueShift":1e308,"saturation":-1e308},
+          "motion":{"pattern":"chase","speed":1e308,"spread":-1e308,"offset":-1e308,
+                    "motionAngle":1e308},
+          "envelope":{"shape":"pulse","bpm":100000,"depth":500,"attack":-3,"decay":1e9,
+                      "dutyCycle":0,"minBrightness":-10,"maxBrightness":1e6},
+          "reaction":{"source":"beat","sensitivity":1e308,"smoothing":-1,"intensity":1e308,
+                      "threshold":1e308,"quantizeBeats":1e-300,"colorStepPerTrigger":1e308,
+                      "motionBeatsPerCycle":1e-300,"punchDecay":-1e308},
+          "sequence":{"loops":true,"steps":[
+             {"name":"Evil","bars":9223372036854775807,"crossfadeBeats":9223372036854775807,
+              "envelope":{"bpm":1e308},"motion":{"pattern":"chase","offset":-1e308}}]}
+        }}
+        """
+        let scene = try ScenePayloadCodec.decode(try shareURL(json: json))
+
+        XCTAssertTrue((153...500).contains(scene.palette.temperature))
+        XCTAssertTrue((0...1).contains(scene.palette.color1.x))
+        XCTAssertTrue((0...1).contains(scene.palette.color1.y))
+        XCTAssertEqual(scene.palette.hueShift, 180)
+        XCTAssertEqual(scene.palette.saturation, 0)
+        XCTAssertEqual(scene.motion.speed, 100)
+        XCTAssertEqual(scene.motion.spread, 0)
+        XCTAssertEqual(scene.motion.offset, 0)
+        XCTAssertTrue((0..<360).contains(scene.motion.motionAngle))
+        XCTAssertEqual(scene.envelope.bpm, 240, "the authoring flash ceiling holds")
+        XCTAssertEqual(scene.envelope.depth, 100)
+        XCTAssertEqual(scene.envelope.attack, 0)
+        XCTAssertEqual(scene.envelope.decay, 100)
+        XCTAssertEqual(scene.envelope.dutyCycle, 10)
+        XCTAssertEqual(scene.envelope.minBrightness, 0)
+        XCTAssertEqual(scene.envelope.maxBrightness, 100)
+        XCTAssertEqual(scene.reaction.sensitivity, 100)
+        XCTAssertEqual(scene.reaction.smoothing, 0)
+        XCTAssertEqual(scene.reaction.quantizeBeats, 0.25)
+        XCTAssertEqual(scene.reaction.colorStepPerTrigger, 1)
+        XCTAssertEqual(scene.reaction.motionBeatsPerCycle, 1)
+        XCTAssertEqual(scene.reaction.punchDecay, 0)
+        XCTAssertEqual(scene.seasonMonths, [6])
+        let step = try XCTUnwrap(scene.sequence?.steps.first)
+        XCTAssertEqual(step.bars, 32)
+        XCTAssertEqual(step.crossfadeBeats, 16)
+        XCTAssertEqual(step.envelope.bpm, 240)
+        XCTAssertEqual(step.motion.offset, 0)
+
+        // The formerly trapping paths now run.
+        _ = scene.palette.color(at: 0.5)
+        _ = scene.motion.sample(position: 0.3, radial: nil, angular: nil, lightIndex: 0, time: 1)
+        _ = step.motion.sample(position: 0.3, radial: nil, angular: nil, lightIndex: 1, time: 2)
+
+        // And what reaches the library is the clamped scene.
+        let preset = scene.makePreset()
+        XCTAssertEqual(preset.envelope.bpm, 240)
+        XCTAssertEqual(preset.sequence?.steps.first?.bars, 32)
+    }
+
+    /// `makePreset` sanitizes on its own, whatever produced the scene.
+    func testMakePresetClampsAnUnsanitizedScene() {
+        var hostile = samplePreset
+        hostile.palette.temperature = Int.min
+        hostile.motion.offset = -1e9
+        hostile.envelope.bpm = 1e9
+        hostile.reaction.quantizeBeats = 0
+        let preset = SharedScene(preset: hostile).makePreset()
+        XCTAssertEqual(preset.palette.temperature, 153)
+        XCTAssertEqual(preset.motion.offset, 0)
+        XCTAssertEqual(preset.envelope.bpm, 240)
+        XCTAssertEqual(preset.reaction.quantizeBeats, 0.25)
+    }
+
+    /// Sanitizing is a no-op on everything the app itself authors: every
+    /// built-in survives it unchanged (so a share round trip stays exact).
+    func testSanitizingLeavesEveryBuiltInUntouched() {
+        for preset in CompositionStore.builtInPresets {
+            let scene = SharedScene(preset: preset)
+            XCTAssertEqual(scene.sanitizedForImport(), scene, preset.name)
+        }
+    }
 }
 
 // MARK: - Scene list palette decode (true-color previews)

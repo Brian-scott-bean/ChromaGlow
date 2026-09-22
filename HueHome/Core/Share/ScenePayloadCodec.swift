@@ -58,27 +58,141 @@ struct SharedScene: Codable, Equatable {
 
     /// Rebuild as a preset the receiver owns: fresh identity, fresh timestamps,
     /// never built-in. A shared "Ocean Drift" does not overwrite the recipient's
-    /// built-in "Ocean Drift".
+    /// built-in "Ocean Drift". Always sanitized — whatever path produced this
+    /// scene, nothing out of the authoring ranges reaches the library.
     func makePreset(id: UUID = UUID(), now: Date = Date()) -> CompositionPreset {
-        CompositionPreset(
+        let scene = sanitizedForImport()
+        return CompositionPreset(
             id: id,
-            name: name,
-            icon: icon,
-            accentColorHex: accentColorHex,
+            name: scene.name,
+            icon: scene.icon,
+            accentColorHex: scene.accentColorHex,
             isBuiltIn: false,
-            category: category == .myCreations ? .myCreations : category,
-            seasonMonths: seasonMonths,
-            palette: palette,
-            motion: motion,
-            envelope: envelope,
-            reaction: reaction,
+            category: scene.category == .myCreations ? .myCreations : scene.category,
+            seasonMonths: scene.seasonMonths,
+            palette: scene.palette,
+            motion: scene.motion,
+            envelope: scene.envelope,
+            reaction: scene.reaction,
             createdAt: now,
             updatedAt: now,
             aiPrompt: nil,
             providerModel: nil,
-            preferredTransport: preferredTransport,
-            sequence: sequence
+            preferredTransport: scene.preferredTransport,
+            sequence: scene.sequence
         )
+    }
+
+    /// The scene with every numeric field clamped to the range the Composer
+    /// itself can author (the same ranges the AI path clamps to).
+    ///
+    /// A share link is UNTRUSTED input — anyone can hand-craft one — and the
+    /// decoded layers go straight into the engine, the sequencer and the
+    /// preview renderers. Unclamped, a crafted value trapped the app
+    /// (`temperature - 153` overflow, a negative chase offset making
+    /// `0..<heads` an invalid range, `bars * beatsPerBar` overflow, an `Int`
+    /// conversion of `beatIndex / quantizeBeats`) or ran past the authoring
+    /// flash ceiling (envelope BPM, motion speed, beat-locked cycles).
+    func sanitizedForImport() -> SharedScene {
+        var scene = self
+        scene.palette = palette.sanitizedForImport()
+        scene.motion = motion.sanitizedForImport()
+        scene.envelope = envelope.sanitizedForImport()
+        scene.reaction = reaction.sanitizedForImport()
+        if let months = seasonMonths {
+            let valid = months.filter { (1...12).contains($0) }
+            scene.seasonMonths = valid.isEmpty ? nil : valid
+        }
+        if var sequence {
+            sequence.steps = sequence.steps.map { $0.sanitizedForImport() }
+            scene.sequence = sequence
+        }
+        return scene
+    }
+}
+
+// MARK: - Import sanitation (per layer)
+
+private func clampedForImport(_ value: Double, _ lower: Double, _ upper: Double) -> Double {
+    Swift.min(Swift.max(value, lower), upper)
+}
+
+extension CodableColor {
+    /// The CIE xy domain; out-of-gamut points are the renderer's to clamp.
+    func sanitizedForImport() -> CodableColor {
+        CodableColor(x: clampedForImport(x, 0, 1), y: clampedForImport(y, 0, 1))
+    }
+}
+
+extension PaletteConfig {
+    func sanitizedForImport() -> PaletteConfig {
+        var p = self
+        p.color1 = color1.sanitizedForImport()
+        p.color2 = color2.sanitizedForImport()
+        p.color3 = color3?.sanitizedForImport()
+        p.hueShift = clampedForImport(hueShift, -180, 180)
+        p.saturation = clampedForImport(saturation, 0, 100)
+        p.temperature = Swift.min(500, Swift.max(153, temperature))
+        return p
+    }
+}
+
+extension MotionConfig {
+    func sanitizedForImport() -> MotionConfig {
+        var m = self
+        m.speed = clampedForImport(speed, 0, 100)
+        m.spread = clampedForImport(spread, 0, 100)
+        m.offset = clampedForImport(offset, 0, 100)
+        // -1 = Auto; anything else is a direction in degrees.
+        m.motionAngle = motionAngle < 0 ? -1 : motionAngle.truncatingRemainder(dividingBy: 360)
+        return m
+    }
+}
+
+extension EnvelopeConfig {
+    func sanitizedForImport() -> EnvelopeConfig {
+        var e = self
+        e.bpm = clampedForImport(bpm, 20, 240)
+        e.depth = clampedForImport(depth, 0, 100)
+        e.attack = clampedForImport(attack, 0, 100)
+        e.decay = clampedForImport(decay, 0, 100)
+        e.dutyCycle = clampedForImport(dutyCycle, 10, 90)
+        e.minBrightness = clampedForImport(minBrightness, 0, 50)
+        e.maxBrightness = clampedForImport(maxBrightness, 50, 100)
+        return e
+    }
+}
+
+extension ReactionConfig {
+    func sanitizedForImport() -> ReactionConfig {
+        var r = self
+        r.sensitivity = clampedForImport(sensitivity, 0, 100)
+        r.smoothing = clampedForImport(smoothing, 0, 100)
+        r.intensity = clampedForImport(intensity, 0, 100)
+        r.threshold = clampedForImport(threshold, 0, 100)
+        r.punchDecay = clampedForImport(punchDecay, 0, 100)
+        r.colorStepPerTrigger = clampedForImport(colorStepPerTrigger, 0, 1)
+        // The Beat panel's own choices: steps every ¼…4 beats, and a motion
+        // lock of Off or 1…8 beats per cycle.
+        r.quantizeBeats = clampedForImport(quantizeBeats, 0.25, 4)
+        r.motionBeatsPerCycle = motionBeatsPerCycle <= 0
+            ? 0 : clampedForImport(motionBeatsPerCycle, 1, 8)
+        return r
+    }
+}
+
+extension CompositionSequence.Step {
+    /// The Perform step editor's own ranges: 2…32 bars (1 is the decode
+    /// floor), fades of 0…16 beats.
+    func sanitizedForImport() -> CompositionSequence.Step {
+        var s = self
+        s.palette = palette.sanitizedForImport()
+        s.motion = motion.sanitizedForImport()
+        s.envelope = envelope.sanitizedForImport()
+        s.reaction = reaction.sanitizedForImport()
+        s.bars = Swift.min(32, Swift.max(1, bars))
+        s.crossfadeBeats = Swift.min(16, Swift.max(0, crossfadeBeats))
+        return s
     }
 }
 
@@ -191,7 +305,9 @@ enum ScenePayloadCodec {
         guard let envelope = try? decoder.decode(ShareEnvelope.self, from: json) else {
             throw ScenePayloadError.malformedPayload
         }
-        return envelope.scene
+        // Untrusted input: clamped HERE, so the import preview never renders
+        // a crafted value either (makePreset sanitizes again, idempotently).
+        return envelope.scene.sanitizedForImport()
     }
 
     /// Cheap "is this ours?" test for `onOpenURL`, which also sees widget links.
