@@ -362,9 +362,16 @@ actor BridgeAnimationEngine {
         // Each rule sets individual light states directly — no scene activation.
         // This avoids the error 608 from scene recall on groups.
         //
-        // CHAIN: schedule sets sensor→0 → step-0 rules fire → set lights + advance to 1
-        //   → step-1 rules fire → ... → last step's rules WAIT
-        //   → schedule fires again → sets sensor→0 → repeat
+        // CHAIN: schedule sets sensor→0 → step-0 rules fire AT ONCE (dx) → set
+        //   lights + advance to 1 → step-1 rules fire `stepInterval` s LATER
+        //   (ddx) → ... → last step's rules fire and WAIT
+        //   → schedule fires again (every steps × stepInterval) → sensor→0 → repeat
+        //
+        // Only step 0 may use `dx`. Every later step used to as well, and since
+        // each rule advances the counter the instant it fires, the whole chain
+        // ran back-to-back in milliseconds on every schedule tick: the lights
+        // settled on the LAST step and the Zigbee network took N × lights
+        // commands in one burst. See `stepConditions`.
         //
         // The v1 API hard-caps a rule at 8 actions. A step with N lights needs
         // N light PUTs + 1 sensor advance, so any 8+ light room used to abort
@@ -379,17 +386,8 @@ actor BridgeAnimationEngine {
         for step in 0..<stepCount {
             let nextStep = (step + 1) % stepCount
 
-            let conditions: [[String: Any]] = [
-                [
-                    "address": "/sensors/\(sensorID)/state/status",
-                    "operator": "eq",
-                    "value": "\(step)"
-                ],
-                [
-                    "address": "/sensors/\(sensorID)/state/lastupdated",
-                    "operator": "dx"
-                ]
-            ]
+            let conditions = Self.stepConditions(
+                sensorID: sensorID, step: step, stepIntervalSeconds: stepInterval)
 
             // Build actions: one PUT per light
             var lightActions: [[String: Any]] = []
@@ -686,6 +684,50 @@ actor BridgeAnimationEngine {
             return .live
         }
         return .notRunning(residue: residue(of: m, in: inv))
+    }
+
+    // MARK: - Rule conditions (pure)
+
+    /// The two conditions every rule of `step` carries: the counter equals the
+    /// step, and the counter's `lastupdated` changed.
+    ///
+    /// Step 0 triggers IMMEDIATELY (`dx`) — it is what the schedule tick and
+    /// `activate` kick off. Every later step triggers `stepIntervalSeconds`
+    /// AFTER the counter last changed (`ddx`, Hue v1 "delayed dx"): the
+    /// previous step's rule advanced the counter when it fired, so this is
+    /// what spaces the steps out. `ddx` is re-armed by any later change to the
+    /// attribute, and `eq` must still hold when it expires, so a schedule tick
+    /// that resets the counter mid-cycle cancels the pending step instead of
+    /// firing it late. v1 allows one dx/ddx per rule — each rule has exactly one.
+    ///
+    /// Two conditions per rule either way, so `BridgeStoredRequirement` is
+    /// unchanged.
+    nonisolated static func stepConditions(
+        sensorID: String, step: Int, stepIntervalSeconds: Int
+    ) -> [[String: Any]] {
+        var changed: [String: Any] = [
+            "address": "/sensors/\(sensorID)/state/lastupdated",
+        ]
+        if step == 0 {
+            changed["operator"] = "dx"
+        } else {
+            changed["operator"] = "ddx"
+            changed["value"] = ruleDelay(seconds: stepIntervalSeconds)
+        }
+        return [
+            [
+                "address": "/sensors/\(sensorID)/state/status",
+                "operator": "eq",
+                "value": "\(step)"
+            ],
+            changed,
+        ]
+    }
+
+    /// v1 rule time pattern `PThh:mm:ss` (the relative-time form `ddx` takes).
+    nonisolated static func ruleDelay(seconds: Int) -> String {
+        let s = max(0, seconds)
+        return String(format: "PT%02d:%02d:%02d", s / 3600, (s % 3600) / 60, s % 60)
     }
 
     // MARK: - Timing Calculation

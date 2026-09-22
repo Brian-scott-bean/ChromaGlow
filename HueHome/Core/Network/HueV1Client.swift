@@ -41,7 +41,8 @@ struct BridgeStoredRequirement: Equatable {
     /// One rule per ≤7-light chunk, per step.
     var ruleResources: Int { steps * Self.ceilDiv(lights, 7) }
 
-    /// Every rule carries the same two conditions (status `eq`, `lastupdated dx`).
+    /// Every rule carries two conditions: status `eq`, plus `lastupdated`
+    /// `dx` (step 0) or `ddx` (every later step — the step delay).
     var ruleConditions: Int { ruleResources * 2 }
 
     /// Every light contributes one action in every step, plus one
