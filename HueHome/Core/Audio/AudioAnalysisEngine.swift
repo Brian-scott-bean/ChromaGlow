@@ -283,16 +283,28 @@ final class AudioAnalysisEngine {
             }
             let sampleRate = Float(format.sampleRate)
 
-            input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
+            input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, when in
                 // Audio thread: extract features, publish, fan out. No Tasks,
                 // no actor hops, no allocations beyond the extractor's warm-up.
                 if let data = buffer.floatChannelData?[0] {
                     let hostTime = CACurrentMediaTime()
+                    // When the audio was CAPTURED — the buffer's own host
+                    // time, not this callback's, which lands a whole buffer
+                    // plus the tap's dispatch delay later. It anchors the
+                    // tempo ring (and so BeatClock's grid); the arrival time
+                    // keeps stamping the features the onset punch decays from.
+                    let frameCount = Int(buffer.frameLength)
+                    let captureTime = AudioFeatureExtractor.captureMidpoint(
+                        bufferStart: when.isHostTimeValid
+                            ? AVAudioTime.seconds(forHostTime: when.hostTime) : nil,
+                        frameCount: frameCount,
+                        sampleRate: Double(sampleRate))
                     if let features = extractor.process(
                         data: data,
-                        frameCount: Int(buffer.frameLength),
+                        frameCount: frameCount,
                         sampleRate: sampleRate,
-                        hostTime: hostTime
+                        hostTime: hostTime,
+                        captureTime: captureTime
                     ) {
                         AudioAnalysisEngine.publish(features)
                     }

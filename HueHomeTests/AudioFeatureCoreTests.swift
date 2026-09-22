@@ -208,6 +208,42 @@ final class AudioFeatureExtractorTests: XCTestCase {
         XCTAssertGreaterThan(snap.envelope.max() ?? 0, 0, "flux spikes must land in the ring")
     }
 
+    /// The tempo ring anchors BeatClock's grid, which is extrapolated into the
+    /// future — so it must carry when the audio was CAPTURED (the buffer's
+    /// midpoint), not when the tap callback ran a whole buffer later. The
+    /// published features keep the arrival time the onset punch decays from.
+    func testTheTempoRingIsStampedWithCaptureTimeAndFeaturesWithArrival() throws {
+        let mid = try XCTUnwrap(AudioFeatureExtractor.captureMidpoint(
+            bufferStart: 100, frameCount: 4800, sampleRate: 48_000))
+        XCTAssertEqual(mid, 100.05, accuracy: 1e-12, "start + half of a 100 ms buffer")
+        XCTAssertNil(AudioFeatureExtractor.captureMidpoint(bufferStart: nil, frameCount: 4800,
+                                                           sampleRate: 48_000),
+                     "no valid AVAudioTime → no capture time (callers fall back)")
+        XCTAssertNil(AudioFeatureExtractor.captureMidpoint(bufferStart: .nan, frameCount: 4800,
+                                                           sampleRate: 48_000))
+        XCTAssertNil(AudioFeatureExtractor.captureMidpoint(bufferStart: 100, frameCount: 4800,
+                                                           sampleRate: 0))
+
+        let ex = AudioFeatureExtractor()
+        var phase: Float = 0
+        let buffer = sineBuffer(hz: 300, amplitude: 0.1, phase: &phase)
+        let features = try XCTUnwrap(buffer.withUnsafeBufferPointer { buf in
+            ex.process(data: buf.baseAddress!, frameCount: frames, sampleRate: sampleRate,
+                       hostTime: 200.12, captureTime: 200.0116)
+        })
+        XCTAssertEqual(features.timestamp, 200.12, "features carry the arrival time")
+        XCTAssertEqual(ex.onsetEnvelopeSnapshot().endTime, 200.0116, accuracy: 1e-12,
+                       "the tempo ring carries the capture time")
+
+        // Without a capture time the ring falls back to the arrival time.
+        let fallback = AudioFeatureExtractor()
+        buffer.withUnsafeBufferPointer { buf in
+            _ = fallback.process(data: buf.baseAddress!, frameCount: frames,
+                                 sampleRate: sampleRate, hostTime: 300.5)
+        }
+        XCTAssertEqual(fallback.onsetEnvelopeSnapshot().endTime, 300.5, accuracy: 1e-12)
+    }
+
     /// The buffer a DEVICE delivers, not the 1024 frames `installTap` asks for:
     /// iOS hands the tap ~100 ms (4800 frames at 48 kHz), which `analyze()`
     /// reduces to a 4096-point FFT. The ring holds one entry per BUFFER, so its
