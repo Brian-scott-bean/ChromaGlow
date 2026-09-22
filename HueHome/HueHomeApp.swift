@@ -377,6 +377,13 @@ struct AppRootView: View {
                         if music.activeService == .demo { music.deactivate() }
                         orchestrator.exitDemoMode()
                         isDemoMode = false
+                        // Re-derive pairing: it was computed once, at first
+                        // appear. A bridge joined DURING demo (an invite
+                        // accepted from the demo shell) left isPaired false,
+                        // so leaving demo dropped the new home on the setup
+                        // screen instead of opening it.
+                        isPaired = !bridges.isEmpty
+                            || (try? KeychainManager.shared.loadAPIToken()) != nil
                         // exitDemoMode wipes clients/rooms/SSE, and the
                         // MainTabView .task won't re-fire (view identity
                         // unchanged while isPaired stays true) — rebuild, or
@@ -390,6 +397,13 @@ struct AppRootView: View {
                                 orchestrator.startAllDayScenesIfNeeded()
                             }
                         }
+                    }
+                    // A real bridge joined while in demo (the invite sheets run in
+                    // the demo shell): leave demo so the joined home actually
+                    // loads — otherwise the app stayed on sample data.
+                    .onChange(of: bridges.count) { oldCount, newCount in
+                        guard newCount > oldCount, orchestrator.isDemoMode else { return }
+                        NotificationCenter.default.post(name: .hueDemoExited, object: nil)
                     }
                     // ── Background automation drain ──────────────────────────────────
                     // willPresent only fires when app is foregrounded at trigger time.
