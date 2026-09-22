@@ -12399,3 +12399,62 @@ final class MultiBridgeRoutingTests: XCTestCase {
         }
     }
 }
+
+// MARK: - Studio audit fixes (2026-09-22)
+
+extension MultiBridgeRoutingTests {
+
+    /// A REST-only room on bridge A with two resolvable lights.
+    private func auditRoomA(id: String = "room-a") -> RoomDisplayItem {
+        RoomDisplayItem(
+            kind: .room,
+            id: id, name: "Bedroom A", archetype: nil,
+            isOn: true, brightness: 50,
+            groupedLightID: "gl-\(id)", lightCount: 2,
+            bridgeID: "bridge-a",
+            childResourceRefs: [(rid: "A1", rtype: "light"), (rid: "A2", rtype: "light")]
+        )
+    }
+
+    /// Audit #1 — switching a running composition's transport re-ran apply,
+    /// which rebuilt the box from the STORED preset: every unsaved Composer
+    /// edit (and a "+ Create" draft's whole work) was discarded.
+    func testTransportSwitchCarriesTheLiveComposerState() async throws {
+        bridgeA.stageLights([p7Light("A1", device: "DA1"), p7Light("A2", device: "DA2")])
+        let look = runtimeOnlyPreset(named: "Carry Look")
+        let vm = makeP7FVM(presets: [look])
+        let room = auditRoomA()
+        vm.selectedRoom = room
+        let card = vm.studioCard(for: look)
+        await vm.apply(card, roomOverride: room, preferEntertainmentOverride: false)
+        let before = try XCTUnwrap(
+            vm.testActiveCompositionBox(bridgeID: "bridge-a", roomID: room.id),
+            "precondition: the look is playing (status: \(vm.statusMessage))")
+
+        // Unsaved live edits.
+        before.palette.color1 = CodableColor(x: 0.2, y: 0.6)
+        before.motion.speed = 77
+        before.envelope.depth = 12
+        let editedPalette = before.palette
+        let running = try XCTUnwrap(vm.runningEffect(for: room))
+
+        await vm.switchCompositionTransport(running, preferEntertainment: false)
+
+        let after = try XCTUnwrap(
+            vm.testActiveCompositionBox(bridgeID: "bridge-a", roomID: room.id),
+            "the restarted look has a box (status: \(vm.statusMessage))")
+        XCTAssertFalse(after === before, "the look really restarted into a new instance")
+        XCTAssertNotEqual(vm.runningEffect(for: room)?.identity, running.identity)
+        XCTAssertEqual(after.palette, editedPalette, "the unsaved palette survives the restart")
+        XCTAssertEqual(after.motion.speed, 77)
+        XCTAssertEqual(after.envelope.depth, 12)
+
+        // The carry is spent: an ordinary re-apply is still a fresh start
+        // from the saved document.
+        await vm.apply(card, roomOverride: room, preferEntertainmentOverride: false)
+        let fresh = try XCTUnwrap(
+            vm.testActiveCompositionBox(bridgeID: "bridge-a", roomID: room.id))
+        XCTAssertEqual(fresh.palette, look.palette)
+        XCTAssertEqual(fresh.motion.speed, look.motion.speed)
+    }
+}
