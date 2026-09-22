@@ -64,7 +64,16 @@ final class AudioAnalysisEngine {
 
     /// Extractor + estimator are touched per the single-writer contracts
     /// documented on each type (tap thread / tempo task respectively).
-    private let extractor = AudioFeatureExtractor()
+    ///
+    /// The extractor is REPLACED on every engine start rather than reset.
+    /// Neither `removeTap` nor `stop()` promises that a tap block already in
+    /// flight has returned, so `stopEngine`'s old `extractor.reset()` could run
+    /// on the main actor while that block was inside `process()` — and a fast
+    /// stop → start put the old engine's last block and the new engine's first
+    /// on one extractor from two threads, against its one-tap-thread contract.
+    /// A fresh instance per engine gives each tap its own extractor: a
+    /// straggler finishes on the one it started with, which nothing reads.
+    private var extractor = AudioFeatureExtractor()
     private let tempoEstimator = TempoEstimator()
 
     // ── Published features (audio thread writes, anyone reads) ──
@@ -84,9 +93,34 @@ final class AudioAnalysisEngine {
         return f
     }
 
-    nonisolated private static func publish(_ features: AudioFeatures) {
+    /// The capture session allowed to publish features (guarded by
+    /// `featuresLock`). A straggling tap block of a STOPPED engine could
+    /// otherwise publish after `stopEngine` went silent, and its stale levels
+    /// would haunt `latestFeatures()` for the whole off period.
+    nonisolated(unsafe) private static var publishingGeneration: UInt64 = 0
+
+    /// Open a new publishing session for an engine about to install its tap.
+    nonisolated private static func beginPublishing() -> UInt64 {
         featuresLock.lock()
-        _latest = features
+        defer { featuresLock.unlock() }
+        publishingGeneration &+= 1
+        return publishingGeneration
+    }
+
+    nonisolated private static func publish(_ features: AudioFeatures, generation: UInt64) {
+        featuresLock.lock()
+        if generation == publishingGeneration { _latest = features }
+        featuresLock.unlock()
+    }
+
+    /// Close the current session and go silent in ONE critical section, so no
+    /// tap block of the stopped engine can land after the silence.
+    nonisolated private static func endPublishing() {
+        featuresLock.lock()
+        publishingGeneration &+= 1
+        _latest = .silent
+        _tempoBPM = 0
+        _tempoConfidence = 0
         featuresLock.unlock()
     }
 
@@ -245,7 +279,9 @@ final class AudioAnalysisEngine {
 
         let engine = AVAudioEngine()
         let input = engine.inputNode
-        let extractor = self.extractor
+        let extractor = AudioFeatureExtractor()
+        self.extractor = extractor
+        let generation = Self.beginPublishing()
 
         do {
             let session = AVAudioSession.sharedInstance()
@@ -306,7 +342,7 @@ final class AudioAnalysisEngine {
                         hostTime: hostTime,
                         captureTime: captureTime
                     ) {
-                        AudioAnalysisEngine.publish(features)
+                        AudioAnalysisEngine.publish(features, generation: generation)
                     }
                 }
                 AudioAnalysisEngine.tapsLock.lock()
@@ -356,9 +392,9 @@ final class AudioAnalysisEngine {
                 log.debug("Session deactivate: \(error.localizedDescription)")
             }
         }
-        extractor.reset()
-        Self.publish(.silent)
-        Self.publishTempo(bpm: 0, confidence: 0)
+        // No `extractor.reset()`: the next start builds a fresh extractor (see
+        // the property), so nothing here touches one a tap block may be using.
+        Self.endPublishing()
     }
 
     // MARK: - Hardware reconfiguration
