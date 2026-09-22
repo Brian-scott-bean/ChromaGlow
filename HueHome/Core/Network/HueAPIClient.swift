@@ -75,10 +75,21 @@ class HueAPIClient: @unchecked Sendable {
     // MARK: URLSession (pinned bridge trust — H-01/D-016)
     // BridgePinnedTrustDelegate evaluates the chain and requires the pinned
     // bridge identity on every challenge; it never trust-alls.
-    // Eager, not lazy: this class is @unchecked Sendable, and a lazy var's
-    // first touch from two threads is a data race (audit L-03).
-    private let session: URLSession =
+    //
+    // ONE session for every instance. Each client used to build its own and
+    // none was ever invalidated — and an un-invalidated URLSession lives until
+    // the process exits, so every rebuilt client (re-pair, addBridge, the
+    // `BridgeAPIClient` per registry pass) leaked one. Sharing is safe for
+    // pinning: the delegate was already the one shared instance, and it
+    // decides every challenge from the pin store by the presented leaf's
+    // identity — nothing about trust is per-session state. Hosts are still
+    // pooled per host:port by URLSession, as before.
+    //
+    // `static let` is lazily initialized with a thread-safe one-time guard,
+    // so there is no first-touch race here (audit L-03).
+    private static let sharedSession: URLSession =
         URLSession(configuration: .default, delegate: BridgePinnedTrustDelegate.shared, delegateQueue: nil)
+    private var session: URLSession { Self.sharedSession }
 
     // ──────────────────────────────────────────────
     // MARK: - Bootstrap
