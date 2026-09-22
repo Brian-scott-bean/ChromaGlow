@@ -50,8 +50,11 @@ struct MainTabView: View {
     /// re-tap on the active tab (or programmatic back) can pop one page.
     @State private var navRegistry = TabNavRegistry()
     /// Home's navigation stack. Owned here so a widget deep link can push a room.
-    /// `DashboardView` supplies the matching `.navigationDestination(for:)`.
-    @State private var homePath: [RoomDisplayItem] = []
+    /// `DashboardView` supplies the room `.navigationDestination(for:)`; the
+    /// pushed RoomDetailView supplies the light one. Type-erased on purpose:
+    /// a `[RoomDisplayItem]` path cannot hold the `LightDisplayItem` a light
+    /// card pushes, so the LightControl screen never opened from Home.
+    @State private var homePath = NavigationPath()
     /// A home-join invite being presented (tapped link / scanned QR while paired).
     @State private var presentedInvite: InvitePresentation?
     /// A token-bearing guest invite being presented (Phase 2).
@@ -234,7 +237,7 @@ struct MainTabView: View {
         withAnimation(HueAnimation.toggle) { selectedTab = .home }
 
         guard let id = deepLink.pendingGroupID else {
-            homePath = []
+            homePath = NavigationPath()
             return
         }
         guard let room = resolveGroup(id) else {
@@ -247,7 +250,7 @@ struct MainTabView: View {
             }
             return
         }
-        homePath = [room]
+        homePath = NavigationPath([room])
         deepLink.pendingGroupID = nil
     }
 
@@ -289,7 +292,7 @@ struct MainTabView: View {
 
     private func retryPendingDeepLink() {
         guard let id = deepLink.pendingGroupID, let room = resolveGroup(id) else { return }
-        homePath = [room]
+        homePath = NavigationPath([room])
         deepLink.pendingGroupID = nil
     }
 
