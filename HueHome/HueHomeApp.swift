@@ -325,12 +325,11 @@ struct AppRootView: View {
                             AutomationScheduler.shared.scheduleAll(appAutomations)
 
                             // ── Pending automation (cold-start: user tapped notification) ──
-                            if let presetID = UserDefaults.standard.string(forKey: "pendingAutomationPresetID") {
-                                UserDefaults.standard.removeObject(forKey: "pendingAutomationPresetID")
+                            // Expiring buffer: a stale tap is discarded, never replayed.
+                            if let presetID = PendingAutomation.take(forKey: PendingAutomation.presetKey) {
                                 await orchestrator.applyAutomationPreset(id: presetID)
                             }
-                            if let effectID = UserDefaults.standard.string(forKey: "pendingAutomationEffectID") {
-                                UserDefaults.standard.removeObject(forKey: "pendingAutomationEffectID")
+                            if let effectID = PendingAutomation.take(forKey: PendingAutomation.effectKey) {
                                 await orchestrator.applyAutomationEffect(id: effectID)
                             }
                         }
@@ -418,12 +417,10 @@ struct AppRootView: View {
                         // deleting an area. Nothing here ever re-asked, so the
                         // stale verdict outlived the change (packet 7 follow-up).
                         orchestrator.refreshEntertainmentAvailability(reason: .userInitiated)
-                        if let presetID = UserDefaults.standard.string(forKey: "pendingAutomationPresetID") {
-                            UserDefaults.standard.removeObject(forKey: "pendingAutomationPresetID")
+                        if let presetID = PendingAutomation.take(forKey: PendingAutomation.presetKey) {
                             Task { await orchestrator.applyAutomationPreset(id: presetID) }
                         }
-                        if let effectID = UserDefaults.standard.string(forKey: "pendingAutomationEffectID") {
-                            UserDefaults.standard.removeObject(forKey: "pendingAutomationEffectID")
+                        if let effectID = PendingAutomation.take(forKey: PendingAutomation.effectKey) {
                             Task { await orchestrator.applyAutomationEffect(id: effectID) }
                         }
                     }
