@@ -23,6 +23,22 @@ private final class BulkSpyClient: BridgeAPIClient, @unchecked Sendable {
     private var _attemptsByID: [String: Int] = [:]
     private var _groupedEffectCount = 0
     private var _perLightEffectCount = 0
+    private var _effectWrites: [RecordedEffectWrite] = []
+
+    struct RecordedEffectWrite: Equatable {
+        let id: String
+        let on: Bool?
+        let brightness: Double?
+        let mirek: Int?
+        let hasXY: Bool
+        let duration: Int
+    }
+
+    /// Every grouped_light effect write, in call order.
+    var effectWrites: [RecordedEffectWrite] {
+        lock.lock(); defer { lock.unlock() }
+        return _effectWrites
+    }
 
     /// grouped_light ids that fail on EVERY attempt.
     var persistentlyFailingIDs: Set<String> = []
@@ -54,7 +70,11 @@ private final class BulkSpyClient: BridgeAPIClient, @unchecked Sendable {
         id: String, on: Bool?, brightness: Double?,
         xy: (Double, Double)?, mirek: Int?, duration: Int
     ) async throws {
-        lock.lock(); _groupedEffectCount += 1; lock.unlock()
+        lock.lock()
+        _groupedEffectCount += 1
+        _effectWrites.append(RecordedEffectWrite(id: id, on: on, brightness: brightness,
+                                                 mirek: mirek, hasXY: xy != nil, duration: duration))
+        lock.unlock()
         guard recordAttempt(id: id) else { throw HueAPIError.httpError(429) }
     }
 
@@ -194,6 +214,89 @@ final class GatedBulkWriteTests: XCTestCase {
         let failure = try XCTUnwrap(orchestrator.lastBulkFailure)
         XCTAssertEqual(failure.operation, "Automation preset")
         XCTAssertEqual(failure.roomNames, ["Room 1"])
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Effect automations apply the effect's OWN look
+    // ──────────────────────────────────────────────
+
+    private func effect(_ id: String) throws -> HueEffect {
+        try XCTUnwrap(EffectLibrary.all.first { $0.id == id }, "catalog effect '\(id)' expected")
+    }
+
+    /// Wind Down is a slow dim to 3% at the warmest white — it used to set
+    /// the house to 70% / 300 mirek in 400 ms.
+    func testWindDownPlanIsASlowDimToNearDark() throws {
+        let plan = AutomationEffectPlan.plan(for: try effect("winddown"))
+        XCTAssertEqual(plan, .writes([
+            AutomationGroupWrite(on: true, brightness: 3, mirek: 500, xy: nil,
+                                 durationMs: 1_200_000),
+        ]))
+    }
+
+    /// Sunset fades to darkness over its full 30 minutes, warming as it
+    /// goes — one bridge-side transition, so the off survives the app.
+    func testSunsetPlanFadesToOffOverItsDuration() throws {
+        let plan = AutomationEffectPlan.plan(for: try effect("sunset"))
+        XCTAssertEqual(plan, .writes([
+            AutomationGroupWrite(on: false, brightness: nil, mirek: 490, xy: nil,
+                                 durationMs: 1_800_000),
+        ]))
+    }
+
+    /// Sunrise snaps to its dim warm start, then ramps to bright daylight.
+    func testSunrisePlanSnapsToStartThenRamps() throws {
+        let plan = AutomationEffectPlan.plan(for: try effect("sunrise"))
+        XCTAssertEqual(plan, .writes([
+            AutomationGroupWrite(on: true, brightness: 1, mirek: 490, xy: nil, durationMs: 0),
+            AutomationGroupWrite(on: true, brightness: 90, mirek: 230, xy: nil,
+                                 durationMs: 1_800_000),
+        ]))
+    }
+
+    func testOneShotPlansUseTheirOwnLook() throws {
+        XCTAssertEqual(AutomationEffectPlan.plan(for: try effect("movie")), .writes([
+            AutomationGroupWrite(on: true, brightness: 30, mirek: 380, xy: nil, durationMs: 2000),
+        ]))
+        // Romance has a colour swatch, no warmth slider → a gamut-C xy write.
+        guard case .writes(let steps) = AutomationEffectPlan.plan(for: try effect("romance")),
+              let only = steps.first, steps.count == 1 else {
+            return XCTFail("romance must be one colour write")
+        }
+        XCTAssertEqual(only.brightness, 20)
+        XCTAssertNil(only.mirek)
+        let xy = try XCTUnwrap(only.xy, "romance is a colour, not a white")
+        XCTAssertGreaterThan(xy.x, 0.35, "a pink/red xy, not the white point")
+        XCTAssertEqual(only.durationMs, 3000)
+    }
+
+    func testEveryPickableEffectPlanStaysInsideHueLimits() {
+        for effect in EffectLibrary.all where !effect.requiresForeground {
+            guard case .writes(let steps) = AutomationEffectPlan.plan(for: effect) else { continue }
+            for step in steps {
+                XCTAssertLessThanOrEqual(step.durationMs, AutomationEffectPlan.maxTransitionMs, effect.id)
+                XCTAssertGreaterThanOrEqual(step.durationMs, 0, effect.id)
+                if let m = step.mirek { XCTAssertTrue((153...500).contains(m), effect.id) }
+                if let b = step.brightness { XCTAssertTrue((0...100).contains(b), effect.id) }
+            }
+        }
+    }
+
+    /// End to end through the gated fan-out: the bridge receives Wind Down's
+    /// look, not the old shared 70 % / 300 mirek / 400 ms.
+    func testApplyAutomationEffectSendsTheEffectsOwnLook() async {
+        let (orchestrator, client) = makeBulkSUT(roomCount: 2)
+
+        await orchestrator.applyAutomationEffect(id: "winddown")
+
+        let writes = client.effectWrites
+        XCTAssertEqual(writes.count, 2, "one ramp write per room")
+        for write in writes {
+            XCTAssertEqual(write.on, true)
+            XCTAssertEqual(write.brightness, 3)
+            XCTAssertEqual(write.mirek, 500)
+            XCTAssertEqual(write.duration, 1_200_000)
+        }
     }
 
     // ──────────────────────────────────────────────

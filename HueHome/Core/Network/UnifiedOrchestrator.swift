@@ -2357,26 +2357,27 @@ final class UnifiedOrchestrator {
         log.info("Automation executing effect '\(effect.name)' on all rooms")
 
         // M-08: pace per-bridge and surface failures (see gatedBulkWrite).
-        let strategy = effect.strategy
-        await gatedBulkWrite(operation: "Automation effect") { client, glID in
-            switch strategy {
-            case .bridgeNative(let effectName):
+        // The look comes from the effect's OWN catalog defaults
+        // (AutomationEffectPlan) — never a shared hard-coded state.
+        switch AutomationEffectPlan.plan(for: effect) {
+        case .nativeEffect(let effectName):
+            await gatedBulkWrite(operation: "Automation effect") { client, glID in
                 // Use grouped_light directly — more reliable than fetching per-light IDs.
                 // fetchLightIDsForGroup can return empty on some bridge versions,
                 // causing the old code to silently fall back to a brightness-only PUT.
                 try await client.setGroupedLightNativeEffect(id: glID, effect: effectName)
-            case .oneShot, .gradual:
-                try await client.setGroupedLightEffect(
-                    id: glID, on: true, brightness: 70,
-                    xy: nil, mirek: 300, duration: 400
-                )
-            case .appDriven:
-                // App-driven effects need a foreground Task loop — not possible
-                // from a notification. Apply a static warm fallback instead.
-                try await client.setGroupedLightEffect(
-                    id: glID, on: true, brightness: 70,
-                    xy: nil, mirek: nil, duration: 400
-                )
+            }
+        case .writes(let steps):
+            for (index, step) in steps.enumerated() {
+                // A gradual start snap must land before its ramp begins.
+                if index > 0 { try? await Task.sleep(for: .milliseconds(300)) }
+                await gatedBulkWrite(operation: "Automation effect") { client, glID in
+                    try await client.setGroupedLightEffect(
+                        id: glID, on: step.on, brightness: step.brightness,
+                        xy: step.xy.map { ($0.x, $0.y) }, mirek: step.mirek,
+                        duration: step.durationMs
+                    )
+                }
             }
         }
         log.info("Automation effect '\(effect.name)' applied to \(self.allRooms.count) rooms")
