@@ -61,7 +61,8 @@ final class AudioFeatureExtractor: @unchecked Sendable {
     private static let agcRefFloor: Float = 0.02
     /// Onset debounce — two onsets can't be closer than this (seconds).
     private static let onsetRefractory: Double = 0.06
-    /// Ring capacity: 256 hops ≈ 6 s at ~43 Hz.
+    /// Ring capacity: 256 hops — ≈ 6 s of 1024-frame buffers at 44.1 kHz,
+    /// ≈ 25 s of the ~100 ms buffers a device actually delivers.
     private static let ringCapacity = 256
     /// Adaptive-threshold window: ~1 s of hops.
     private static let thresholdWindow = 43
@@ -126,7 +127,13 @@ final class AudioFeatureExtractor: @unchecked Sendable {
         }
         let halfN    = frame.halfN
         let hzPerBin = frame.hzPerBin
-        let dt = Float(lastHopTime > 0 ? max(0.001, hostTime - lastHopTime) : Double(frame.fftN) / Double(sampleRate))
+        // One analysis hop == one tap BUFFER, so a hop lasts the buffer's
+        // length — not the FFT's. `analyze()` rounds DOWN to a power of two,
+        // and iOS delivers ~100 ms buffers whatever `installTap` asked for
+        // (4800 frames at 48 kHz → a 4096-point FFT), so the FFT length
+        // overstated the hop rate by 4800 / 4096 ≈ 17 %.
+        let hopSeconds = Double(frameCount) / Double(sampleRate)
+        let dt = Float(lastHopTime > 0 ? max(0.001, hostTime - lastHopTime) : hopSeconds)
         lastHopTime = hostTime
 
         var features = AudioFeatures()
@@ -202,7 +209,12 @@ final class AudioFeatureExtractor: @unchecked Sendable {
         ring[ringWriteIndex] = flux
         ringWriteIndex = (ringWriteIndex + 1) % Self.ringCapacity
         ringCount = min(ringCount + 1, Self.ringCapacity)
-        ringHopRate = Double(sampleRate) / Double(frame.fftN)
+        // The ring holds one entry per BUFFER, so its rate is buffers per
+        // second. TempoEstimator turns lags into BPM (`60 · hopRate / lag`)
+        // and the beat offset into seconds (`offset / hopRate`) with this
+        // number — stating the FFT's rate here read 120 BPM as ~141 on a
+        // real device, and ~187 on a Bluetooth HFP route.
+        ringHopRate = 1.0 / hopSeconds
         ringEndTime = hostTime
         os_unfair_lock_unlock(&ringLock)
 

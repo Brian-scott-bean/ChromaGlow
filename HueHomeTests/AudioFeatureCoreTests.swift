@@ -207,6 +207,45 @@ final class AudioFeatureExtractorTests: XCTestCase {
         XCTAssertEqual(snap.hopRate, Double(sampleRate) / Double(frames), accuracy: 0.01)
         XCTAssertGreaterThan(snap.envelope.max() ?? 0, 0, "flux spikes must land in the ring")
     }
+
+    /// The buffer a DEVICE delivers, not the 1024 frames `installTap` asks for:
+    /// iOS hands the tap ~100 ms (4800 frames at 48 kHz), which `analyze()`
+    /// reduces to a 4096-point FFT. The ring holds one entry per BUFFER, so its
+    /// rate is 10 Hz. Stating the FFT's rate (48000 / 4096 = 11.72 Hz) read a
+    /// 120 BPM click track as ~141 BPM and put the last beat ~15 % too close to
+    /// the envelope's end.
+    func testDeviceSizedBuffersStateTheBufferRateAndReadTheRealTempo() throws {
+        let rate: Float = 48_000
+        let bufferFrames = 4800
+        let ex = AudioFeatureExtractor()
+        var rng = LCG(state: 7)
+        // A click every 5 buffers = every 0.5 s = 120 BPM. Each click is a
+        // ~20 ms noise burst early in its buffer, inside the 4096-point window;
+        // the buffers between are silent, so the envelope is a clean spike train.
+        for hop in 0..<80 {
+            var buffer = [Float](repeating: 0, count: bufferFrames)
+            if hop % 5 == 0 {
+                for i in 800..<1760 { buffer[i] = Float(rng.next() * 2 - 1) * 0.5 }
+            }
+            let hostTime = Double(hop) * Double(bufferFrames) / Double(rate)
+            buffer.withUnsafeBufferPointer { buf in
+                _ = ex.process(data: buf.baseAddress!, frameCount: bufferFrames,
+                               sampleRate: rate, hostTime: hostTime)
+            }
+        }
+        let snap = ex.onsetEnvelopeSnapshot()
+        XCTAssertEqual(snap.envelope.count, 80)
+        XCTAssertEqual(snap.hopRate, 10.0, accuracy: 1e-9,
+                       "one ring entry per 4800-frame buffer at 48 kHz is 10 entries per second")
+
+        let estimate = try XCTUnwrap(TempoEstimator().update(onsetEnvelope: snap.envelope,
+                                                             hopRate: snap.hopRate))
+        XCTAssertEqual(estimate.bpm, 120, accuracy: 3.0,
+                       "a 120 BPM click in device-sized buffers must read ~120, not ~141")
+        // The last click is buffer 75 of 0…79: four buffers before the end.
+        XCTAssertEqual(estimate.lastBeatOffset, 0.4, accuracy: 0.1 + 1e-9,
+                       "the beat offset is stated in seconds at the buffer rate")
+    }
 }
 
 // MARK: - BeatClock
