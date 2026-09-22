@@ -2375,8 +2375,21 @@ final class UnifiedOrchestrator {
         }
         log.info("Automation executing preset '\(preset.id)' — brightness=\(preset.brightness) mirek=\(preset.mirek)")
 
-        // Optimistic update so cards reflect the change instantly
-        allRooms = allRooms.map { room in
+        // Family Sharing: a preset turns lights on AND re-dims/recolors them,
+        // so a granted bridge needs onOff + adjust. gatedBulkWrite already
+        // skips bridges without onOff; a power-only grant is skipped here.
+        func presetBridge(_ bridgeID: String?) -> Bool {
+            let features = guestFeatures(for: bridgeID)
+            return features.canPower && features.canAdjust
+        }
+        let skippedGroupedLightIDs = Set(roomsByBridge.flatMap { bridgeID, rooms in
+            presetBridge(bridgeID) ? [] : rooms.compactMap(\.groupedLightID)
+        })
+
+        // Optimistic update so cards reflect the change instantly. The
+        // per-bridge dictionary is updated too — rebuildAllRooms() rebuilds
+        // allRooms FROM it, so an allRooms-only write was discarded at once.
+        func applyingPreset(_ room: RoomDisplayItem) -> RoomDisplayItem {
             var r = room
             r.isOn       = true
             r.brightness = preset.brightness
@@ -2385,12 +2398,17 @@ final class UnifiedOrchestrator {
             r.dominantColorY = nil
             return r
         }
+        allRooms = allRooms.map { presetBridge($0.bridgeID) ? applyingPreset($0) : $0 }
+        for bridgeID in roomsByBridge.keys where presetBridge(bridgeID) {
+            roomsByBridge[bridgeID] = roomsByBridge[bridgeID]?.map(applyingPreset)
+        }
         rebuildAllRooms()
 
         // M-08: pace per-bridge (~10 cmd/sec) and surface failures — an
         // unpaced N-room burst hit the bridge throttle and silently dropped
         // rooms, leaving them in their old state with no feedback.
         await gatedBulkWrite(operation: "Automation preset") { client, glID in
+            guard !skippedGroupedLightIDs.contains(glID) else { return }
             try await client.setGroupedLightEffect(
                 id:         glID,
                 on:         true,
@@ -10945,6 +10963,14 @@ final class UnifiedOrchestrator {
         brightness: Double
     ) async {
         guard let bridgeID = room.bridgeID, let api = clients[bridgeID] else { return }
+        // Family Sharing: a wash re-dims and recolors (and turns lights on) —
+        // adjust-level access. The Dashboard withholds the long-press from
+        // rooms without it; this backstops any other caller.
+        let features = guestFeatures(for: bridgeID)
+        guard features.canAdjust, features.canPower else {
+            showToast("Not available with guest access")
+            return
+        }
 
         if rule == .none {
             let xy = HueColorUtils.xyFrom(hue: rootHue, saturation: saturation, brightness: 1.0)

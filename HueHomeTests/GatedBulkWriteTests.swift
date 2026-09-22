@@ -398,6 +398,56 @@ final class GatedBulkWriteTests: XCTestCase {
         XCTAssertNil(PendingAutomation.take(forKey: key, now: tappedAt, defaults: defaults))
     }
 
+    /// The optimistic card update must survive the rebuild that follows it
+    /// (it used to write allRooms only, which rebuildAllRooms() rebuilt from
+    /// the untouched per-bridge dictionary — discarding it immediately).
+    func testAutomationPresetOptimisticUpdateSticks() async throws {
+        let (orchestrator, _) = makeBulkSUT(roomCount: 2)
+        let preset = try XCTUnwrap(AutomationPreset.find("relax"))
+
+        await orchestrator.applyAutomationPreset(id: "relax")
+
+        XCTAssertEqual(orchestrator.allRooms.count, 2)
+        XCTAssertTrue(orchestrator.allRooms.allSatisfy { $0.brightness == preset.brightness },
+                      "cards must show the preset, not the pre-preset cache")
+        XCTAssertTrue(orchestrator.allRooms.allSatisfy { $0.dominantMirek == preset.mirek })
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Family Sharing: presets/washes are adjust-level access
+    // ──────────────────────────────────────────────
+
+    private func powerOnlyGrant() -> [String: GuestGrantSnapshot] {
+        ["bridge-1": GuestGrantSnapshot(allowedGroupIDs: ["room-1", "room-2"],
+                                        features: [GuestFeature.onOff],
+                                        profileName: "Alex")]
+    }
+
+    func testAutomationPresetSkipsPowerOnlyGrantedBridge() async {
+        let (orchestrator, client) = makeBulkSUT(roomCount: 2)
+        orchestrator.testSetGuestGrants(powerOnlyGrant())
+
+        await orchestrator.applyAutomationPreset(id: "relax")
+
+        XCTAssertTrue(client.attemptsByID.isEmpty,
+                      "a power-only guest's rooms must not be re-dimmed or recolored")
+        XCTAssertNil(orchestrator.lastBulkFailure, "a skip is not a failure")
+        XCTAssertTrue(orchestrator.allRooms.allSatisfy { $0.brightness == 80 },
+                      "skipped rooms keep their cards — no optimistic lie")
+    }
+
+    func testColorWashRefusesGrantWithoutAdjust() async throws {
+        let (orchestrator, client) = makeBulkSUT(roomCount: 1)
+        orchestrator.testSetGuestGrants(powerOnlyGrant())
+        let room = try XCTUnwrap(orchestrator.allRooms.first)
+
+        await orchestrator.applyColorWash(to: room, rule: .none, rootHue: 0.5,
+                                          saturation: 1, brightness: 80)
+
+        XCTAssertEqual(client.groupedEffectCount, 0)
+        XCTAssertEqual(orchestrator.toastMessage, "Not available with guest access")
+    }
+
     // ──────────────────────────────────────────────
     // MARK: - M-14: same-color frames collapse to one grouped_light PUT
     // ──────────────────────────────────────────────
