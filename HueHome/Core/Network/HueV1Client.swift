@@ -210,10 +210,17 @@ class HueV1Client: @unchecked Sendable {
     var bridgeIP: String { ip }
 
     // Shared pinned bridge trust (H-01/D-016) — same delegate as HueAPIClient.
-    // Eager, not lazy: this class is @unchecked Sendable, and a lazy var's
-    // first touch from two threads is a data race (audit L-03).
-    private let session: URLSession =
+    //
+    // ONE session for every instance. `makeV1Client()` builds a fresh client
+    // on every bridge-animation reconcile pass (~60 s) and every save/stop,
+    // and each used to carry its own never-invalidated URLSession — which
+    // lives until the process exits. Sharing is safe for pinning: the delegate
+    // is the one shared instance and decides every challenge from the pin
+    // store by the presented leaf's identity, with no per-session trust state.
+    // `static let` has a thread-safe one-time initializer (audit L-03).
+    private static let sharedSession: URLSession =
         URLSession(configuration: .default, delegate: BridgePinnedTrustDelegate.shared, delegateQueue: nil)
+    private var session: URLSession { Self.sharedSession }
 
     init(ip: String, token: String) {
         self.ip = ip
