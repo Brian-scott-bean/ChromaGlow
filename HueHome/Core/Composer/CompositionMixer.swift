@@ -26,13 +26,25 @@ final class PerformanceMixBox: @unchecked Sendable {
         case whiteBurst
     }
 
-    /// Beat-exact auto-fade: crossfade DERIVED from the shared clock each
-    /// frame (never accumulated), so it lands on the bar even if UI hitches.
+    /// Beat-exact auto-fade: crossfade DERIVED each frame (never
+    /// accumulated) from the host time elapsed since the start, measured in
+    /// the clock's beats — so it lands on time even if UI hitches.
+    ///
+    /// Anchored on HOST time, not on the clock's beat count: Tap and Resync
+    /// re-anchor `beatEpoch`, and a fade whose start was a beat count since
+    /// the old epoch read negative progress afterwards and froze mid-fade.
     struct AutoFade {
         let fromValue: Double
         let toValue: Double
-        let startBeats: Double     // continuous beats at start
+        let startHostTime: Double  // host time at start
         let totalBeats: Double     // fade length in beats
+
+        /// 0 at the start, 1 after `totalBeats` beats at the current tempo.
+        func progress(hostNow: Double, beat: BeatSnapshot) -> Double {
+            guard beat.bpm > 0 else { return 1 }
+            let elapsedBeats = (hostNow - startHostTime) / beat.beatInterval
+            return elapsedBeats / max(0.001, totalBeats)
+        }
     }
 
     /// Deck A: the live composition's own param box (identity ties the mix
@@ -87,10 +99,9 @@ final class PerformanceMixBox: @unchecked Sendable {
             autoFade = nil
             return
         }
-        let beatsNow = (hostNow - beat.beatEpoch) / beat.beatInterval
         autoFade = AutoFade(fromValue: crossfade,
                             toValue: crossfade < 0.5 ? 1.0 : 0.0,
-                            startBeats: beatsNow,
+                            startHostTime: hostNow,
                             totalBeats: beats)
     }
 }
@@ -119,8 +130,7 @@ enum CompositionMixer {
         var xf = min(1, max(0, mix.crossfade))
         if let auto = mix.autoFade {
             if beat.bpm > 0 {
-                let beatsNow = (hostNow - beat.beatEpoch) / beat.beatInterval
-                let t = (beatsNow - auto.startBeats) / max(0.001, auto.totalBeats)
+                let t = auto.progress(hostNow: hostNow, beat: beat)
                 if t >= 1 {
                     xf = auto.toValue
                     mix.crossfade = auto.toValue

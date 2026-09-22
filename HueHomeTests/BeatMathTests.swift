@@ -444,6 +444,32 @@ final class CompositionMixerTests: XCTestCase {
         XCTAssertNil(final.presets.first(where: { $0.id == preset.id })?.sequence)
     }
 
+    /// Audit #10 — the fade's progress was a beat count since `beatEpoch`,
+    /// which Tap/Resync re-anchor: after a re-anchor the fade read negative
+    /// progress and froze mid-way. Progress now runs from the host start.
+    func testAutoFadeKeepsProgressingAcrossAClockReanchor() {
+        let mix = PerformanceMixBox(deckA: box())
+        mix.deckB = box(hueShift: 90)
+        let clock = BeatSnapshot(bpm: 120, beatEpoch: 0, beatsPerBar: 4)   // 0.5 s beats
+        mix.startAutoFade(beats: 8, beat: clock, hostNow: 1000)             // 4 s fade
+
+        _ = CompositionMixer.renderMixed(time: 1, channelIDs: channels, mix: mix,
+                                         beat: clock, hostNow: 1001)
+        XCTAssertEqual(mix.crossfade, 0.25, accuracy: 1e-9, "a quarter of the way")
+
+        // A tap re-anchors the epoch to "now" at the same tempo.
+        let tapped = BeatSnapshot(bpm: 120, beatEpoch: 1001.5, beatsPerBar: 4)
+        _ = CompositionMixer.renderMixed(time: 1, channelIDs: channels, mix: mix,
+                                         beat: tapped, hostNow: 1002)
+        XCTAssertEqual(mix.crossfade, 0.5, accuracy: 1e-9,
+                       "the fade keeps moving after the re-anchor instead of freezing")
+
+        _ = CompositionMixer.renderMixed(time: 1, channelIDs: channels, mix: mix,
+                                         beat: tapped, hostNow: 1004.01)
+        XCTAssertEqual(mix.crossfade, 1.0)
+        XCTAssertNil(mix.autoFade, "and it lands")
+    }
+
     func testAutoFadeBeatsVariantWithoutClockLandsInstantly() {
         let mix = PerformanceMixBox(deckA: box())
         mix.deckB = box(hueShift: 90)
