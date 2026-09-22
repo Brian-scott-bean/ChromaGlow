@@ -597,6 +597,46 @@ final class EntertainmentOwnershipTests: XCTestCase {
             "proved inactive means the evidence has done its job")
     }
 
+    /// P7-06c — the prune acts on a snapshot read BEFORE the stale stops
+    /// suspended. A session that starts in that gap (register + record, then
+    /// activate) still reads "inactive" in the snapshot; pruning its record
+    /// would leave a later launch unable to recognise it as ours.
+    @MainActor
+    func testThePruneNeverForgetsTheRecordOfASessionThatStartedMidPass() async {
+        let bridge = spy()
+        bridge.stubConfigsJSON = activeJSON(["cfg-stale"], inactive: ["cfg-new"])
+        ownership.recordPersisted(bridgeID: "bridge-1", configID: "cfg-stale")
+        let orchestrator = orchestrator(["bridge-1": bridge])
+
+        // While the stale stop is in flight, a new session begins exactly as
+        // `startSession` does it: register, then record — before activating.
+        bridge.onPutOnce { [ownership] configID, action in
+            guard action == "stop", configID == "cfg-stale" else { return }
+            ownership!.registerProcess(bridgeID: "bridge-1", configID: "cfg-new")
+            ownership!.recordPersisted(bridgeID: "bridge-1", configID: "cfg-new")
+        }
+
+        await orchestrator.deactivateStuckEntertainmentSessions()
+
+        XCTAssertEqual(stops(bridge), ["cfg-stale"])
+        XCTAssertTrue(ownership.isPersisted(bridgeID: "bridge-1", configID: "cfg-new"),
+            "a live owner vetoes the prune — the snapshot's 'inactive' predates its start")
+        XCTAssertFalse(ownership.isPersisted(bridgeID: "bridge-1", configID: "cfg-stale"))
+    }
+
+    func testForgetUnlessProcessOwnedIsVetoedOnlyByALiveOwner() {
+        ownership.recordPersisted(bridgeID: "b1", configID: "cfg-x")
+        ownership.registerProcess(bridgeID: "b1", configID: "cfg-x")
+        XCTAssertFalse(ownership.forgetPersistedUnlessProcessOwned(bridgeID: "b1", configID: "cfg-x"))
+        XCTAssertTrue(ownership.isPersisted(bridgeID: "b1", configID: "cfg-x"))
+
+        ownership.releaseProcess(bridgeID: "b1", configID: "cfg-x")
+        XCTAssertTrue(ownership.forgetPersistedUnlessProcessOwned(bridgeID: "b1", configID: "cfg-x"))
+        XCTAssertFalse(ownership.isPersisted(bridgeID: "b1", configID: "cfg-x"))
+        XCTAssertFalse(ownership.forgetPersistedUnlessProcessOwned(bridgeID: "b1", configID: "cfg-x"),
+            "nothing left to forget")
+    }
+
     /// P7-06b — a record whose configuration the bridge no longer lists at all.
     @MainActor
     func testAPersistedRecordForAnAbsentConfigurationIsPruned() async {
