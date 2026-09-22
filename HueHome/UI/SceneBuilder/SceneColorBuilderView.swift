@@ -61,6 +61,11 @@ struct SceneColorBuilderView: View {
     // Debounce
     @State private var previewTask: Task<Void, Never>?
 
+    /// Edit mode reads the scene's own stored actions before anything is
+    /// editable (see `seedFromSceneIfEditing`).
+    private enum SceneSeed: Equatable { case notNeeded, loading, loaded, failed }
+    @State private var sceneSeed: SceneSeed = .notNeeded
+
     private let amber = Color(red: 1.0, green: 0.76, blue: 0.20)
 
     private var isEditMode: Bool { existingSceneID != nil }
@@ -69,7 +74,10 @@ struct SceneColorBuilderView: View {
 
     private var canSave: Bool {
         let name = sceneName.trimmingCharacters(in: .whitespaces)
-        return !name.isEmpty && name.count <= 32 && !lights.isEmpty
+        // Never save an edit that wasn't seeded from the scene itself — the
+        // live room state it would fall back to may be the PREVIOUS look.
+        let seedOK = sceneSeed != .loading && sceneSeed != .failed
+        return !name.isEmpty && name.count <= 32 && !lights.isEmpty && seedOK
     }
 
     /// True when ANY selected light is color-capable (show the pad).
@@ -94,30 +102,43 @@ struct SceneColorBuilderView: View {
                 ambientBackground
 
                 ScrollView(showsIndicators: false) {
-                    VStack(spacing: 20) {
-                        nameField
-                            .padding(.top, 12)
+                    // While an edit's scene is being read, the controls are
+                    // NOT in the hierarchy: they mount afterwards with the
+                    // seeded values as their initial state, so the pad's
+                    // live-sync onChange handlers never fire for the seed
+                    // (which would paint every light the first light's color).
+                    if sceneSeed == .loading {
+                        ProgressView("Reading scene…")
+                            .tint(amber)
+                            .foregroundStyle(.white.opacity(0.6))
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 120)
+                    } else {
+                        VStack(spacing: 20) {
+                            nameField
+                                .padding(.top, 12)
 
-                        harmonyPicker
+                            harmonyPicker
 
-                        lightStrip
+                            lightStrip
 
-                        if selectedSupportsColor {
-                            colorControls
-                            myColorsStrip
+                            if selectedSupportsColor {
+                                colorControls
+                                myColorsStrip
+                            }
+
+                            if selectedHasAmbiance {
+                                colorTempSection
+                            }
+
+                            brightnessSection
+
+                            saveButton
+                                .padding(.top, 8)
+                                .padding(.bottom, 48)
                         }
-
-                        if selectedHasAmbiance {
-                            colorTempSection
-                        }
-
-                        brightnessSection
-
-                        saveButton
-                            .padding(.top, 8)
-                            .padding(.bottom, 48)
+                        .padding(.horizontal, 20)
                     }
-                    .padding(.horizontal, 20)
                 }
             }
             .navigationTitle(isEditMode ? "Edit Scene" : "New Scene")
@@ -135,6 +156,7 @@ struct SceneColorBuilderView: View {
             }
             .preferredColorScheme(.dark)
             .onAppear { setupInitialState() }
+            .task { await seedFromSceneIfEditing() }
             .alert("Error", isPresented: .constant(errorMessage != nil)) {
                 Button("OK") { errorMessage = nil }
             } message: {
@@ -611,7 +633,8 @@ struct SceneColorBuilderView: View {
     // ══════════════════════════════════════════════════════════════
 
     private func setupInitialState() {
-        lights = initialLights
+        // An edit whose scene already arrived keeps its seeded lights.
+        if sceneSeed != .loaded { lights = initialLights }
         originalLights = initialLights
         selectedLightIDs = Set(initialLights.map(\.id))
 
@@ -620,20 +643,83 @@ struct SceneColorBuilderView: View {
             sceneName = name
         }
 
+        seedPad(from: lights)
+    }
+
+    /// Point the pad, warmth slider, and brightness slider at a light set.
+    private func seedPad(from seedLights: [LightDisplayItem]) {
         // Seed color from first light
-        if let first = initialLights.first, let x = first.colorX, let y = first.colorY {
+        if let first = seedLights.first, let x = first.colorX, let y = first.colorY {
             let (h, s, b) = HueColorUtils.hsb(fromX: x, y: y, brightness: first.brightness)
             currentHue = h
             currentSaturation = s
             currentBrightness = max(0.1, b)
         }
-        if let first = initialLights.first, let mirek = first.colorTempMirek {
+        if let first = seedLights.first, let mirek = first.colorTempMirek {
             currentMirek = mirek
         }
         // Seed brightness slider from average of all lights
-        if !initialLights.isEmpty {
-            let avg = initialLights.reduce(0.0) { $0 + $1.brightness } / Double(initialLights.count)
+        if !seedLights.isEmpty {
+            let avg = seedLights.reduce(0.0) { $0 + $1.brightness } / Double(seedLights.count)
             displayBrightness = max(1, avg)
+        }
+    }
+
+    /// Edit mode: seed every light from the scene's OWN stored actions.
+    ///
+    /// The callers activate the scene and open the builder straight away, so
+    /// `initialLights` (the room's live state) is usually still the PREVIOUS
+    /// look — the activation refresh lands ~0.5 s later — and saving then
+    /// overwrote the scene with it. Reading the scene removes that race; a
+    /// failed read blocks saving rather than falling back to live state.
+    private func seedFromSceneIfEditing() async {
+        guard let sceneID = existingSceneID, !orchestrator.isDemoMode else { return }
+        sceneSeed = .loading
+        guard let api = orchestrator.hueClient(for: bridgeID) else {
+            sceneSeed = .failed
+            errorMessage = "Couldn't reach the bridge to read this scene. Close and try again."
+            return
+        }
+        do {
+            let detail = try await api.fetchSceneDetail(id: sceneID)
+            let seeded = Self.seeded(initialLights, from: detail.actions ?? [])
+            lights = seeded
+            seedPad(from: seeded)
+            sceneSeed = .loaded
+        } catch {
+            sceneSeed = .failed
+            errorMessage = "Couldn't read this scene from the bridge, so it can't be edited safely. Close and try again."
+        }
+    }
+
+    /// Pure: each light takes its stored scene action; lights the scene
+    /// doesn't mention keep their live state. Mirrors how `updateScene`
+    /// writes back (xy wins when present, else CT) so an untouched edit
+    /// saves the scene unchanged: a color action clears mirek, a CT action
+    /// clears xy.
+    nonisolated static func seeded(_ lights: [LightDisplayItem],
+                                   from actions: [SceneActionDetail]) -> [LightDisplayItem] {
+        var byLight: [String: SceneActionState] = [:]
+        for action in actions where action.target.rtype == "light" {
+            if byLight[action.target.rid] == nil { byLight[action.target.rid] = action.action }
+        }
+        return lights.map { light in
+            guard let action = byLight[light.id] else { return light }
+            var seeded = light
+            if let on = action.on?.on { seeded.isOn = on }
+            if let brightness = action.dimming?.brightness {
+                seeded.brightness = min(100, max(1, brightness))
+            }
+            if let xy = action.color?.xy {
+                seeded.colorX = xy.x
+                seeded.colorY = xy.y
+                seeded.colorTempMirek = nil
+            } else if let mirek = action.color_temperature?.mirek {
+                seeded.colorTempMirek = mirek
+                seeded.colorX = nil
+                seeded.colorY = nil
+            }
+            return seeded
         }
     }
 
