@@ -252,6 +252,8 @@ final class BeatClockServiceDriveTests: XCTestCase {
     func testUnpinDuringStaleHoldFallsToAudio() {
         let clock = BeatClock()
         clock.driveFromTrack(bpm: 120, position: position(ms: 0, at: 100), now: 100)
+        // Two taps: a single tap measures no tempo and no longer pins.
+        clock.tap(now: 100.5)
         clock.tap(now: 101)   // pin freezes the drive refresh
         clock.unpin(now: 120) // 20 s later: the hold's lease is long dead
         XCTAssertEqual(clock.source, .audio,
@@ -263,7 +265,10 @@ final class BeatClockServiceDriveTests: XCTestCase {
     func testPinnedBlocksServiceHoldPhaseNudge() {
         let clock = BeatClock()
         clock.driveFromTrack(bpm: 120, position: position(ms: 0, at: 100), now: 100)  // epoch 100
-        clock.tap(now: 100.2)   // pin re-anchors the epoch; serviceHold stays set
+        // Two taps (a single tap measures no tempo and no longer pins): the
+        // pin re-anchors the epoch at 100.7; serviceHold stays set.
+        clock.tap(now: 100.2)
+        clock.tap(now: 100.7)
         let pinnedEpoch = BeatClock.snapshot().beatEpoch
         let pinnedConfidence = clock.confidence
         // Confident mic estimate 100 ms off the pinned grid — before the fix
