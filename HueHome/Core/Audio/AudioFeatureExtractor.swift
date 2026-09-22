@@ -113,14 +113,22 @@ final class AudioFeatureExtractor: @unchecked Sendable {
 
     // MARK: - Process one hop
 
-    /// Analyze one audio buffer. `hostTime` is the capture time in the
-    /// CACurrentMediaTime timebase (injectable for tests).
+    /// Analyze one audio buffer. `hostTime` is when the hop ARRIVED, in the
+    /// CACurrentMediaTime timebase (injectable for tests) — it stamps the
+    /// published features, whose onset punch decays from it.
+    ///
+    /// `captureTime`, when known, is when the buffer's audio was CAPTURED
+    /// (see `captureMidpoint`) and stamps the tempo ring instead: the ring's
+    /// end time is where BeatClock anchors the beat grid it then extrapolates
+    /// into the future, so arrival latency there (a whole ~100 ms buffer plus
+    /// the tap's dispatch delay) was a beat grid that ran that much late.
     /// Returns nil for sub-64-frame buffers.
     func process(
         data: UnsafePointer<Float>,
         frameCount: Int,
         sampleRate: Float,
-        hostTime: Double
+        hostTime: Double,
+        captureTime: Double? = nil
     ) -> AudioFeatures? {
         guard let frame = spectrum.analyze(data: data, frameCount: frameCount, sampleRate: sampleRate) else {
             return nil
@@ -215,10 +223,23 @@ final class AudioFeatureExtractor: @unchecked Sendable {
         // number — stating the FFT's rate here read 120 BPM as ~141 on a
         // real device, and ~187 on a Bluetooth HFP route.
         ringHopRate = 1.0 / hopSeconds
-        ringEndTime = hostTime
+        ringEndTime = captureTime ?? hostTime
         os_unfair_lock_unlock(&ringLock)
 
         return features
+    }
+
+    /// The capture time of a tap buffer, from its `AVAudioTime` start: the
+    /// buffer's MIDPOINT, `start + duration / 2`. A hop's flux describes the
+    /// whole buffer, so the midpoint is the unbiased stamp for an onset that
+    /// can fall anywhere in it (the start or the end would be up to a whole
+    /// ~100 ms buffer early or late). Nil when there is no valid start time,
+    /// in which case callers fall back to the arrival time as before.
+    static func captureMidpoint(bufferStart: Double?, frameCount: Int,
+                                sampleRate: Double) -> Double? {
+        guard let bufferStart, bufferStart.isFinite, bufferStart > 0,
+              sampleRate.isFinite, sampleRate > 0, frameCount > 0 else { return nil }
+        return bufferStart + Double(frameCount) / sampleRate / 2
     }
 
     /// Copy the onset envelope (oldest → newest) for the tempo pass.
