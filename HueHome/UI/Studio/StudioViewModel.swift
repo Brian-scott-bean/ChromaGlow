@@ -52,6 +52,16 @@ struct StudioCard: Identifiable, Hashable {
         self.isAIGenerated = isAIGenerated
     }
 
+    /// The same card under another display name — every other field,
+    /// identity included, carried through.
+    func renamed(to newName: String) -> StudioCard {
+        StudioCard(id: id, name: newName, tagline: tagline, icon: icon,
+                   accentColor: accentColor, requiresForeground: requiresForeground,
+                   params: params, strategy: strategy,
+                   compositionLayerActivity: compositionLayerActivity,
+                   compositionTier: compositionTier, isAIGenerated: isAIGenerated)
+    }
+
     /// True for cards that use the Entertainment API (Strobe, Party, Thunderstorm).
     /// These affect the entire entertainment area, not just the selected room.
     var isEntertainmentScoped: Bool {
@@ -4563,6 +4573,18 @@ final class StudioViewModel {
         }
         for rowKey in rowKeys {
             guard var row = runningEffects[rowKey] else { continue }
+            // A recovered bridge-stored MIRROR keeps its own honest card (no
+            // sliders, no layer chips, its own id) — only the name follows the
+            // preset, exactly as `hydrateRecoveredBridgeStored` resolves it.
+            // Swapping in the live card turned the mirror into a fake live
+            // look, and publishing it added a second Now-Playing row beside
+            // the one the orchestrator (its sole publisher) already shows.
+            if let recoveredKey = row.recovered {
+                row.card = row.card.renamed(to: fresh.name)
+                runningEffects[rowKey] = row
+                orchestrator?.refreshRecoveredDisplayName(key: recoveredKey, name: fresh.name)
+                continue
+            }
             let freshCard = studioCard(for: fresh)
             // A rename replaces the row's CARD and nothing else. Rebuilding the
             // row from a field list dropped `recovered`, `v2CapableLightIDs`

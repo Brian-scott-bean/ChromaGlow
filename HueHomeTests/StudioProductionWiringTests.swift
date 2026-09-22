@@ -1330,6 +1330,52 @@ final class StudioProductionWiringTests: XCTestCase {
                        "a rename is not a new run — the identity carries over")
     }
 
+    /// Audit #5 — a recovered bridge-stored MIRROR matched the rename by its
+    /// preset id: the rename swapped in the LIVE preset card (sliders, layer
+    /// chips, the preset's card id) and published it, so the mirror looked
+    /// editable and the Dashboard gained a duplicate Now-Playing row.
+    func testRenamingAPresetKeepsARecoveredMirrorsCardAndPublishesNothing() throws {
+        let url = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("rename-mirror-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = CompositionStore(fileURL: url, loadsSynchronously: true)
+        vm.injectForTesting(compositionStore: store)
+        let preset = compositionPreset()
+        store.save(preset)
+
+        let manifestID = UUID()
+        let recoveredID = StudioViewModel.recoveredCardID(manifestID: manifestID)
+        let mirrorCard = StudioCard(
+            id: recoveredID, name: preset.name,
+            tagline: "Running on the bridge — recovered at launch",
+            icon: "externaldrive.connected.to.line.below", accentColor: .cyan,
+            requiresForeground: false, params: [],
+            strategy: .composition(presetID: preset.id),
+            compositionLayerActivity: nil, compositionTier: .bridgeOptimized)
+        let a = room("room-a")
+        let identity = startRunning(mirrorCard, on: a)
+        let key = StudioSelectionKey(room: a)
+        let manifest = UnifiedOrchestrator.RecoveredBridgeAnimationKey(
+            bridgeID: "bridge-a", manifestID: manifestID)
+        vm.runningEffects[key]?.recovered = manifest
+        let entriesBefore = orchestrator.activeEffectEntries.count
+
+        vm.renameCompositionPreset(id: preset.id, to: "Midnight Drift")
+
+        let row = try XCTUnwrap(vm.runningEffects[key])
+        XCTAssertEqual(row.card.id, recoveredID, "the mirror keeps its own honest card")
+        XCTAssertEqual(row.card.name, "Midnight Drift", "…under the preset's new name")
+        XCTAssertTrue(row.card.params.isEmpty, "no sliders appear on a row with no runtime")
+        XCTAssertEqual(row.card.compositionTier, .bridgeOptimized)
+        XCTAssertEqual(row.recovered, manifest)
+        XCTAssertEqual(row.identity, identity)
+        XCTAssertEqual(orchestrator.activeEffectEntries.count, entriesBefore,
+                       "the orchestrator is a mirror's sole Now-Playing publisher")
+        XCTAssertFalse(orchestrator.activeEffectEntries.contains {
+            $0.effectID == vm.studioCard(for: preset).id
+        }, "no live-card duplicate row")
+    }
+
     // ── A same-card restart is not a new target ─────────────────
 
     /// Re-applying the SAME card on the SAME place (a reset's re-apply, a
