@@ -123,6 +123,52 @@ final class HueIntentEntityTests: XCTestCase {
                        "welcome-home is a behavior contract, not a preset chip")
     }
 
+    // ── Whole-home fan-out fails fast on an unreachable bridge ──
+
+    private final class AttemptLog: @unchecked Sendable {
+        private let lock = NSLock()
+        private var ips: [String] = []
+        func record(_ ip: String) { lock.lock(); ips.append(ip); lock.unlock() }
+        func count(_ ip: String) -> Int { lock.lock(); defer { lock.unlock() }; return ips.filter { $0 == ip }.count }
+    }
+
+    private func fanOutFixture() -> [WidgetRoomSnapshot] {
+        (1...4).map { snapshot(id: "down-\($0)", name: "Down \($0)", bridgeID: "DOWN") }
+            + [snapshot(id: "up", name: "Up", bridgeID: "UP")]
+    }
+
+    private func fixtureCredentials(_ bridgeID: String?) -> WidgetBridgeCredentials? {
+        WidgetBridgeCredentials(bridgeID: bridgeID ?? "", ip: bridgeID == "DOWN" ? "192.0.2.9" : "192.0.2.1",
+                                token: "t")
+    }
+
+    /// Each PUT has an 8 s timeout: an unreachable bridge used to cost 8 s
+    /// PER ROOM, sequentially, and Siri gave up long before the dialog.
+    func testFanOutStopsTryingABridgeAfterItsFirstTransportFailure() async {
+        let log = AttemptLog()
+        let outcomes = await AllLightsIntent.fanOut(to: fanOutFixture(),
+                                                    credentials: fixtureCredentials) { _, creds in
+            log.record(creds.ip)
+            if creds.ip == "192.0.2.9" { throw URLError(.timedOut) }
+        }
+        XCTAssertEqual(log.count("192.0.2.9"), 1, "one timeout fails the bridge's remaining rooms")
+        XCTAssertEqual(outcomes.filter { !$0.ok }.count, 4)
+        XCTAssertEqual(outcomes.filter(\.ok).map(\.name), ["Up"], "other bridges are unaffected")
+    }
+
+    /// An HTTP rejection is a reachable bridge saying no — keep going.
+    func testFanOutKeepsTryingAfterAnHTTPRejection() async {
+        let log = AttemptLog()
+        _ = await AllLightsIntent.fanOut(to: fanOutFixture(),
+                                         credentials: fixtureCredentials) { _, creds in
+            log.record(creds.ip)
+            if creds.ip == "192.0.2.9" { throw URLError(.badServerResponse) }
+        }
+        XCTAssertEqual(log.count("192.0.2.9"), 4)
+        XCTAssertFalse(LightingPresetIntent.isTransportFailure(URLError(.badServerResponse)))
+        XCTAssertTrue(LightingPresetIntent.isTransportFailure(URLError(.cannotConnectToHost)))
+    }
+
     // ── Family Sharing feature limits (out-of-app surfaces) ──
 
     func testFeatureLookupIsUnrestrictedForOwnedAndLegacyBridges() {
