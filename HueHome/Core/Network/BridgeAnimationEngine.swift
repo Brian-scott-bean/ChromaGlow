@@ -358,6 +358,13 @@ actor BridgeAnimationEngine {
         )
         log.info("[BridgeAnim] Created sensor: \(sensorID)")
 
+        // Everything created from here on, so a failure below can remove it
+        // before rethrowing. A failed upload used to leave its sensor, its
+        // rules so far, and (on the last step) its schedule on the bridge with
+        // no manifest naming them — invisible to the app, unstoppable except
+        // by the `CG_` purge, and eating the capacity the preflight measured.
+        var created = BridgeAnimationResidue(sensorID: sensorID)
+
         // ─── 6. Create rules (chunked per step, M-05) ───
         // Each rule sets individual light states directly — no scene activation.
         // This avoids the error 608 from scene recall on groups.
@@ -415,6 +422,7 @@ actor BridgeAnimationEngine {
                     )
                 }
                 guard actions.count <= 8, !actions.isEmpty else {
+                    await rollbackPartialUpload(created, v1Client: v1Client)
                     throw BridgeAnimationError.uploadFailed(
                         "rule for step \(step) chunk \(chunkIndex) has \(actions.count) actions (v1 max 8)")
                 }
@@ -428,10 +436,12 @@ actor BridgeAnimationEngine {
                         actions: actions
                     )
                     ruleIDs.append(ruleID)
+                    created.ruleIDs.append(ruleID)
                     log.info("[BridgeAnim] Created rule \(step).\(chunkIndex): \(ruleID) (\(actions.count) actions) → \(isLastChunk && step < stepCount - 1 ? "advance to \(nextStep)" : "no advance")")
                 } catch {
                     log.error("[BridgeAnim] ❌ Rule \(step).\(chunkIndex) creation FAILED: \(error.localizedDescription)")
                     log.error("[BridgeAnim] Rule had \(actions.count) actions for \(v1LightIDs.count) lights")
+                    await rollbackPartialUpload(created, v1Client: v1Client)
                     throw error
                 }
             }
@@ -458,6 +468,7 @@ actor BridgeAnimationEngine {
             log.info("[BridgeAnim] Created schedule: \(scheduleID) (every \(cycleTotalSeconds)s)")
         } catch {
             log.error("[BridgeAnim] ❌ Schedule creation FAILED: \(error.localizedDescription)")
+            await rollbackPartialUpload(created, v1Client: v1Client)
             throw error
         }
 
@@ -528,6 +539,38 @@ actor BridgeAnimationEngine {
     func activate(manifest: BridgeAnimationManifest, v1Client: HueV1Client) async throws {
         try await v1Client.setSensorStatus(id: manifest.sensorID, status: 0)
         log.info("[BridgeAnim] ⚡ Animation started! \(manifest.stepCount) steps, \(manifest.intervalSeconds)s each, \(manifest.cycleDurationSeconds)s cycle")
+    }
+
+    /// Best-effort removal of what a FAILED upload had already created, in
+    /// the same dependency order `stop` uses (schedule → rules → sensor).
+    ///
+    /// Runs in an unstructured task so a CANCELLED upload still cleans up:
+    /// URLSession's async API honours the caller's cancellation, and an
+    /// unstructured task does not inherit it. Never throws — the caller
+    /// rethrows the upload's own error; anything that could not be removed is
+    /// logged and stays findable by the `CG_` purge.
+    private func rollbackPartialUpload(
+        _ created: BridgeAnimationResidue, v1Client: HueV1Client
+    ) async {
+        guard !created.isEmpty else { return }
+        let remaining: BridgeAnimationResidue = await Task {
+            var left = BridgeAnimationResidue()
+            if let id = created.scheduleID {
+                do { try await v1Client.deleteSchedule(id: id) } catch { left.scheduleID = id }
+            }
+            for id in created.ruleIDs {
+                do { try await v1Client.deleteRule(id: id) } catch { left.ruleIDs.append(id) }
+            }
+            if let id = created.sensorID {
+                do { try await v1Client.deleteSensor(id: id) } catch { left.sensorID = id }
+            }
+            return left
+        }.value
+        if remaining.isEmpty {
+            log.info("[BridgeAnim] Rolled back the failed upload's sensor and \(created.ruleIDs.count) rule(s)")
+        } else {
+            log.warning("[BridgeAnim] ⚠ Rollback of the failed upload left \(remaining.ruleIDs.count) rule(s), schedule=\(remaining.scheduleID ?? "-"), sensor=\(remaining.sensorID ?? "-") on the bridge")
+        }
     }
 
     /// Stop a bridge-stored animation and clean up its resources, REPORTING

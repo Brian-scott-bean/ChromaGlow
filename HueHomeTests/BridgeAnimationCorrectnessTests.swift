@@ -58,12 +58,27 @@ private final class AnimationSpyV1Client: HueV1Client, @unchecked Sendable {
         return "51"
     }
 
+    /// Refuse the Nth rule creation (1-based) — a bridge that fails partway.
+    var failRuleNumber: Int?
+    /// Refuse the schedule — the last creation that can fail the upload.
+    var failSchedule = false
+
+    /// Every delete this spy was asked for, in order ("rule:3", "sensor:51").
+    private var _deletes: [String] = []
+    var deletes: [String] {
+        lock.lock(); defer { lock.unlock() }
+        return _deletes
+    }
+
     override func createRule(
         name: String,
         conditions: [[String: Any]],
         actions: [[String: Any]]
     ) async throws -> String {
         lock.lock(); defer { lock.unlock() }
+        if let failRuleNumber, nextRuleID + 1 == failRuleNumber {
+            throw HueV1ClientError.apiError(type: 7, address: "/rules", description: "refused")
+        }
         _rules.append(RuleRecord(name: name, conditions: conditions, actions: actions))
         _creations.append("rule")
         nextRuleID += 1
@@ -72,7 +87,22 @@ private final class AnimationSpyV1Client: HueV1Client, @unchecked Sendable {
 
     override func createRecurringSchedule(
         name: String, intervalSeconds: Int, command: [String: Any], autoDelete: Bool
-    ) async throws -> String { "77" }
+    ) async throws -> String {
+        if failSchedule {
+            throw HueV1ClientError.apiError(type: 7, address: "/schedules", description: "refused")
+        }
+        return "77"
+    }
+
+    override func deleteRule(id: String) async throws {
+        lock.lock(); _deletes.append("rule:\(id)"); lock.unlock()
+    }
+    override func deleteSensor(id: String) async throws {
+        lock.lock(); _deletes.append("sensor:\(id)"); lock.unlock()
+    }
+    override func deleteSchedule(id: String) async throws {
+        lock.lock(); _deletes.append("schedule:\(id)"); lock.unlock()
+    }
 
     override func createResourcelink(
         name: String, description: String, links: [String]
@@ -553,6 +583,49 @@ final class BridgeAnimationCorrectnessTests: XCTestCase {
         XCTAssertTrue(spy.rules.contains { rule in
             rule.conditions.contains { ($0["operator"] as? String) == "ddx" }
         })
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - A failed upload leaves nothing on the bridge
+    // ──────────────────────────────────────────────
+
+    /// The upload throws BEFORE any manifest exists, so nothing else can ever
+    /// name what it created. It must remove its own partial work.
+    func testAFailedRuleCreationRemovesEverythingTheUploadCreated() async throws {
+        let spy = AnimationSpyV1Client(ip: "192.0.2.1", token: "t")
+        spy.failRuleNumber = 3
+
+        do {
+            _ = try await upload(lights: 9, spy: spy)
+            XCTFail("the third rule was refused — the upload must fail")
+        } catch let error as HueV1ClientError {
+            guard case .apiError(let type, _, _) = error else { return XCTFail("\(error)") }
+            XCTAssertEqual(type, 7, "the upload's OWN error is rethrown, not a rollback error")
+        }
+        XCTAssertEqual(spy.deletes, ["rule:1", "rule:2", "sensor:51"],
+            "rules first, then the sensor they read — exactly what was created, nothing else")
+    }
+
+    func testAFailedScheduleCreationRemovesEveryRuleAndTheSensor() async throws {
+        let spy = AnimationSpyV1Client(ip: "192.0.2.1", token: "t")
+        spy.failSchedule = true
+
+        do {
+            _ = try await upload(lights: 3, spy: spy)
+            XCTFail("the schedule was refused — the upload must fail")
+        } catch {}
+        let ruleCount = spy.rules.count
+        XCTAssertGreaterThan(ruleCount, 0)
+        XCTAssertEqual(spy.deletes,
+                       (1...ruleCount).map { "rule:\($0)" } + ["sensor:51"])
+        XCTAssertFalse(spy.creations.contains { $0.hasPrefix("sensorStatus:") },
+            "a failed upload never starts anything")
+    }
+
+    func testASuccessfulUploadDeletesNothing() async throws {
+        let spy = AnimationSpyV1Client(ip: "192.0.2.1", token: "t")
+        _ = try await upload(lights: 3, spy: spy)
+        XCTAssertTrue(spy.deletes.isEmpty)
     }
 
     func testRuleDelayUsesTheV1RelativeTimePattern() {
