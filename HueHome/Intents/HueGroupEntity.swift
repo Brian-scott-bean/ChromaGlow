@@ -57,9 +57,11 @@ struct HueGroupEntityQuery: EntityStringQuery {
         WidgetDataStore.shared.groups.map(HueGroupEntity.init(snapshot:))
     }
 
-    func defaultResult() async -> HueGroupEntity? {
-        WidgetDataStore.shared.groups.first.map(HueGroupEntity.init(snapshot:))
-    }
+    /// Deliberately NO default. The system fills an unspoken parameter from
+    /// this: returning the first room meant "Make my lights red" coloured
+    /// whichever room sorted first instead of Siri asking, and the preset
+    /// intent's OPTIONAL scope (nil = whole home) could arrive as that room.
+    func defaultResult() async -> HueGroupEntity? { nil }
 
     /// Spoken-name matching: exact beats everything, then containment —
     /// both case- and diacritic-insensitive ("cafe" finds "Café"). Pure.

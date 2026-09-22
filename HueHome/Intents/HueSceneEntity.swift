@@ -63,7 +63,7 @@ struct HueSceneEntityQuery: EntityStringQuery {
         WidgetDataStore.shared.scenes.map(HueSceneEntity.init(snapshot:))
     }
 
-    func defaultResult() async -> HueSceneEntity? {
-        WidgetDataStore.shared.scenes.first.map(HueSceneEntity.init(snapshot:))
-    }
+    /// Deliberately NO default — a misheard scene name must make Siri ask,
+    /// never recall whichever scene happens to be first (see HueGroupEntityQuery).
+    func defaultResult() async -> HueSceneEntity? { nil }
 }
