@@ -83,6 +83,22 @@ struct WidgetBridgeRouting: Codable {
     let ip: String
 }
 
+/// Family Sharing: what a guest grant allows on one bridge, published so the
+/// out-of-app surfaces (widgets, Control Center, Siri, watch) honour the same
+/// feature limits Dashboard/RoomDetail do. Only GRANTED bridges have an
+/// entry; a missing entry (the owner's own bridge, or a snapshot written
+/// before this existed) is unrestricted — the pre-existing behaviour.
+struct WidgetGuestFeatures: Codable, Equatable, Sendable {
+    let canPower: Bool
+    let canAdjust: Bool
+    let canRecallScenes: Bool
+
+    static let unrestricted = WidgetGuestFeatures(canPower: true, canAdjust: true, canRecallScenes: true)
+
+    /// A preset / level / colour write turns lights ON and sets their state.
+    var canPowerAndAdjust: Bool { canPower && canAdjust }
+}
+
 // MARK: - WidgetDataStore
 
 final class WidgetDataStore: @unchecked Sendable {
@@ -105,6 +121,7 @@ final class WidgetDataStore: @unchecked Sendable {
         static let updatedAt = "hue_widget_updated_at"
         static let largePage = "hue_widget_large_page"   // current page of the paginated Large widget
         static let structure = "hue_widget_structure_v1" // identity list of the last published snapshot
+        static let guestFeatures = "hue_widget_guest_features_v1" // [bridgeID: WidgetGuestFeatures], granted bridges only
         // Legacy plaintext-secret keys (pre-D-018) — scrubbed, never written.
         static let legacyBridges = "hue_widget_bridges_v1"
         static let legacyToken   = "hue_widget_token"
@@ -236,9 +253,12 @@ final class WidgetDataStore: @unchecked Sendable {
 
     /// Optimistically mark every room and zone on or off (used by All-Off and the
     /// All-Lights control). `brightness` is applied only when non-nil.
-    func markAllGroups(on isOn: Bool, brightness: Double? = nil) {
+    /// `onlyGroupIDs` limits the patch to the groups actually written (a
+    /// guest grant can exclude some) — never paint a change that didn't happen.
+    func markAllGroups(on isOn: Bool, brightness: Double? = nil, onlyGroupIDs: Set<String>? = nil) {
         func patched(_ list: [WidgetRoomSnapshot]) -> [WidgetRoomSnapshot] {
             list.map { g -> WidgetRoomSnapshot in
+                if let onlyGroupIDs, !onlyGroupIDs.contains(g.id) { return g }
                 var c = g
                 c.isOn = isOn
                 if let brightness { c.brightness = brightness }
@@ -247,6 +267,24 @@ final class WidgetDataStore: @unchecked Sendable {
         }
         if let d = try? JSONEncoder().encode(patched(rooms)) { ud?.set(d, forKey: Key.rooms) }
         if let d = try? JSONEncoder().encode(patched(zones)) { ud?.set(d, forKey: Key.zones) }
+    }
+
+    /// Publish the per-bridge guest feature limits (granted bridges only).
+    /// Returns true when the stored map changed — the caller re-pushes the
+    /// watch on a feature-only change, which the room diff alone would miss.
+    @discardableResult
+    func write(guestFeatures: [String: WidgetGuestFeatures]) -> Bool {
+        if guestFeatures.isEmpty {
+            let hadAny = ud?.data(forKey: Key.guestFeatures) != nil
+            ud?.removeObject(forKey: Key.guestFeatures)
+            return hadAny
+        }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(guestFeatures) else { return false }
+        guard data != ud?.data(forKey: Key.guestFeatures) else { return false }
+        ud?.set(data, forKey: Key.guestFeatures)
+        return true
     }
 
     /// Remove the pre-D-018 plaintext token copies from the App Group.
@@ -265,6 +303,7 @@ final class WidgetDataStore: @unchecked Sendable {
         ud?.removeObject(forKey: Key.bridgeIP)
         ud?.removeObject(forKey: Key.updatedAt)
         ud?.removeObject(forKey: Key.largePage)
+        ud?.removeObject(forKey: Key.guestFeatures)
         scrubLegacyPlaintextSecrets()
         SharedKeychainStore.delete(account: SharedKeychainStore.bridgeCredentialsAccount)
     }
@@ -308,6 +347,27 @@ final class WidgetDataStore: @unchecked Sendable {
               let decoded = try? JSONDecoder().decode([String: WidgetBridgeCredentials].self, from: data)
         else { return [:] }
         return decoded
+    }
+
+    /// Per-bridge guest feature limits (granted bridges only).
+    var guestFeatures: [String: WidgetGuestFeatures] {
+        guard let data = ud?.data(forKey: Key.guestFeatures),
+              let decoded = try? JSONDecoder().decode([String: WidgetGuestFeatures].self, from: data)
+        else { return [:] }
+        return decoded
+    }
+
+    /// What a surface may do to a group on `bridgeID`. Unrestricted for
+    /// owned bridges and nil ids (legacy single-bridge snapshots).
+    func features(for bridgeID: String?) -> WidgetGuestFeatures {
+        Self.features(for: bridgeID, in: guestFeatures)
+    }
+
+    /// Pure lookup (tests + callers that already hold the map).
+    static func features(for bridgeID: String?,
+                         in map: [String: WidgetGuestFeatures]) -> WidgetGuestFeatures {
+        guard let bridgeID, let features = map[bridgeID] else { return .unrestricted }
+        return features
     }
 
     /// Non-secret routing metadata (display/pairing state — no Keychain hit).

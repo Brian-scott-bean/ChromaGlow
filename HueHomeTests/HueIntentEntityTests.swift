@@ -123,6 +123,42 @@ final class HueIntentEntityTests: XCTestCase {
                        "welcome-home is a behavior contract, not a preset chip")
     }
 
+    // ── Family Sharing feature limits (out-of-app surfaces) ──
+
+    func testFeatureLookupIsUnrestrictedForOwnedAndLegacyBridges() {
+        let map = ["GRANTED": WidgetGuestFeatures(canPower: true, canAdjust: false, canRecallScenes: false)]
+        XCTAssertEqual(WidgetDataStore.features(for: "OWNED", in: map), .unrestricted)
+        XCTAssertEqual(WidgetDataStore.features(for: nil, in: map), .unrestricted)
+        XCTAssertFalse(WidgetDataStore.features(for: "GRANTED", in: map).canAdjust)
+    }
+
+    func testPermittedDropsGroupsTheGrantDoesNotAllow() {
+        let map = ["GUEST": WidgetGuestFeatures(canPower: true, canAdjust: false, canRecallScenes: true)]
+        let groups = [snapshot(id: "owned", bridgeID: "OWNER"),
+                      snapshot(id: "guest", bridgeID: "GUEST")]
+
+        XCTAssertEqual(LightingPresetIntent.permitted(groups, features: map) { $0.canPowerAndAdjust }
+                        .map(\.id), ["owned"],
+                       "a preset (on + level) must skip a power-only guest bridge")
+        XCTAssertEqual(AllLightsIntent.permitted(groups, features: map) { $0.canPower }
+                        .map(\.id), ["owned", "guest"],
+                       "power-only writes still reach the guest bridge")
+    }
+
+    /// The published map mirrors the in-app reading of a grant, fail-closed.
+    func testGrantSnapshotsMapToPublishedFeatureLimits() {
+        let mapped = UnifiedOrchestrator.widgetGuestFeatures(from: [
+            "B1": GuestGrantSnapshot(allowedGroupIDs: ["r"], features: [GuestFeature.onOff],
+                                     profileName: "Alex"),
+            "B2": GuestGrantSnapshot(allowedGroupIDs: ["r"], features: Set(GuestFeature.all),
+                                     profileName: "Sam"),
+        ])
+        XCTAssertEqual(mapped["B1"], WidgetGuestFeatures(canPower: true, canAdjust: false,
+                                                         canRecallScenes: false))
+        XCTAssertEqual(mapped["B2"], .unrestricted)
+        XCTAssertNil(mapped["OWNED"], "owned bridges publish no entry")
+    }
+
     // ── Scene entity mapping ──────────────────────────────
 
     func testSceneSnapshotMapsToEntity() {

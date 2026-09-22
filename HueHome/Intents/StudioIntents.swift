@@ -125,6 +125,10 @@ struct StartStudioEffectIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
+        // Family Sharing: effects restyle the lights — same grant as a preset.
+        guard WidgetDataStore.shared.features(for: group.bridgeID).canPowerAndAdjust else {
+            throw IntentError.notPermitted(group.name)
+        }
         DeepLinkCoordinator.shared.requestStudioAction(
             .effect(effectID: effect.rawValue, groupID: group.id)
         )
@@ -153,6 +157,9 @@ struct StartCompositionIntent: AppIntent {
     func perform() async throws -> some IntentResult & ProvidesDialog {
         guard let presetID = UUID(uuidString: composition.id) else {
             throw IntentError.unknownEntity("Composer scene")
+        }
+        guard WidgetDataStore.shared.features(for: group.bridgeID).canPowerAndAdjust else {
+            throw IntentError.notPermitted(group.name)
         }
         DeepLinkCoordinator.shared.requestStudioAction(
             .composition(presetID: presetID, groupID: group.id)

@@ -472,6 +472,7 @@ final class WatchSessionManager: NSObject, WCSessionDelegate, @unchecked Sendabl
         zones: [WidgetRoomSnapshot],
         scenes: [WidgetSceneSnapshot] = [],
         bridges: [String: WidgetBridgeCredentials],
+        guestFeatures: [String: WidgetGuestFeatures] = [:],
         unpaired: Bool = false
     ) {
         guard WCSession.default.activationState == .activated,
@@ -480,7 +481,8 @@ final class WatchSessionManager: NSObject, WCSessionDelegate, @unchecked Sendabl
         guard let roomsData = try? JSONEncoder().encode(rooms),
               let zonesData = try? JSONEncoder().encode(zones),
               let scenesData = try? JSONEncoder().encode(scenes),
-              let bridgesData = try? JSONEncoder().encode(bridges) else { return }
+              let bridgesData = try? JSONEncoder().encode(bridges),
+              let featuresData = try? JSONEncoder().encode(guestFeatures) else { return }
         let fallback = bridges.values.first
         // The token travels only inside wc_bridges_v1 (persisted to the watch
         // Keychain, D-018); the raw wc_token legacy key is gone so no watch
@@ -492,6 +494,9 @@ final class WatchSessionManager: NSObject, WCSessionDelegate, @unchecked Sendabl
             "wc_zones_v1" : zonesData,
             "wc_scenes_v1": scenesData,
             "wc_bridges_v1": bridgesData,
+            // Family Sharing feature limits per GRANTED bridge (empty = all
+            // bridges owned/unrestricted). Non-secret.
+            "wc_features_v1": featuresData,
             "wc_bridge_ip": fallback?.ip ?? "",
             "wc_unpaired" : unpaired
         ]
