@@ -245,7 +245,7 @@ struct RoomDetailView: View {
 
             // Load data concurrently. SSE runs forever so it must NOT block the group.
             // Instead, launch SSE separately and use the group for finite fetches only.
-            async let _: Void = vm.runSSE(eventStream: orchestrator.subscribeToLightEvents())
+            async let sse: Void = vm.runSSE(eventStream: orchestrator.subscribeToLightEvents())
             await withTaskGroup(of: Void.self) { group in
                 if !seedIsFresh { group.addTask { await vm.loadLights() } }
                 group.addTask { await vm.loadScenes() }
@@ -253,6 +253,12 @@ struct RoomDetailView: View {
             }
             // Load room-level state after lights are loaded (needs light data for cross-check)
             await vm.loadRoomState()
+            // Hold the SSE child for the view's lifetime. An async let that is
+            // never awaited is CANCELLED when this scope exits — which ended the
+            // stream (and live updates, including the fresh-seed shortcut's
+            // "SSE keeps it live") the moment the finite loads above finished.
+            // .task cancellation (the view going away) still ends it.
+            await sse
         }
         .preferredColorScheme(.dark)
         .overlay(alignment: .top) {
