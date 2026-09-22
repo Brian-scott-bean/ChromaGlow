@@ -222,7 +222,7 @@ struct DashboardView: View {
 
                 summaryHeader
 
-                if let suggestion = timeSuggestion {
+                if let suggestion = timeSuggestion, canApplyPresets {
                     TimeSuggestionBanner(suggestion: suggestion) {
                         applyPreset(suggestion.preset)
                     }
@@ -241,9 +241,13 @@ struct DashboardView: View {
 
                 // Presets row deliberately bleeds past the trailing edge so
                 // chips can scroll under the screen border (Apple-style rail).
-                presetsBar
-                    .padding(.horizontal, -Self.horizontalInset)
-                    .padding(.leading, Self.horizontalInset)
+                // Presets re-dim and recolor: hidden when no visible room
+                // grants adjust (the orchestrator skips those rooms anyway).
+                if canApplyPresets {
+                    presetsBar
+                        .padding(.horizontal, -Self.horizontalInset)
+                        .padding(.leading, Self.horizontalInset)
+                }
 
                 if orchestrator.activeEffectName != nil {
                     nowPlayingBar
@@ -271,7 +275,10 @@ struct DashboardView: View {
                             onToggle: { desiredOn in orchestrator.setRoom(room, isOn: desiredOn) },
                             onBrightness: { newBrightness in orchestrator.setBrightness(newBrightness, for: room) },
                             onNavigate: { orchestrator.signalNavigationStarted() },
-                            onLongPress: { colorPopoverRoom = room },
+                            // The color popover repaints the room — adjust-level
+                            // access; a power-only guest gets no long-press.
+                            onLongPress: orchestrator.guestFeatures(for: room.bridgeID).canAdjust
+                                ? { colorPopoverRoom = room } : nil,
                             features: orchestrator.guestFeatures(for: room.bridgeID)
                         )
                         .equatable()
@@ -295,7 +302,8 @@ struct DashboardView: View {
                                     onToggle: { desiredOn in orchestrator.setRoom(zone, isOn: desiredOn) },
                                     onBrightness: { newBrightness in orchestrator.setBrightness(newBrightness, for: zone) },
                                     onNavigate: { orchestrator.signalNavigationStarted() },
-                                    onLongPress: { colorPopoverRoom = zone },
+                                    onLongPress: orchestrator.guestFeatures(for: zone.bridgeID).canAdjust
+                                        ? { colorPopoverRoom = zone } : nil,
                                     features: orchestrator.guestFeatures(for: zone.bridgeID)
                                 )
                                 .equatable()
@@ -434,6 +442,17 @@ struct DashboardView: View {
     private typealias LightPreset = DashboardLightPreset
 
     private let presets: [LightPreset] = LightingPreset.all.map(LightPreset.init)
+
+    /// Family Sharing: true when at least one visible room/zone may take a
+    /// preset. A preset turns lights on AND re-dims/recolors them (onOff +
+    /// adjust) — a phone whose every room lacks either gets no preset
+    /// surfaces (applyAutomationPreset skips those rooms regardless).
+    private var canApplyPresets: Bool {
+        (orchestrator.allRooms + orchestrator.allZones).contains {
+            let features = orchestrator.guestFeatures(for: $0.bridgeID)
+            return features.canPower && features.canAdjust
+        }
+    }
 
     private var presetsBar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
