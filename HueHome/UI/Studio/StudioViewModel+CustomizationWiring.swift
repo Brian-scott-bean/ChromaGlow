@@ -236,8 +236,16 @@ extension StudioViewModel {
     }
 
     private func applyCurrentLookCore(to room: RoomDisplayItem) async {
+        let source = applyCurrentLookSource
         guard let card = seedApplyCurrentLook() else { return }
+        // A composition's live state is its box, not the value scopes: the
+        // copy-once has to carry the box too, or "Apply <look> here" started
+        // the SAVED design and dropped every unsaved Composer edit. The new
+        // instance gets its own copy, so the two never link afterwards.
+        let key = StudioSelectionKey(room: room)
+        if let source { requestCompositionCarry(to: key, from: source) }
         await applyCore(card, roomOverride: room, preferEntertainmentOverride: nil)
+        settleCompositionCarry(at: key)
     }
 
     /// Card lookup across every catalog the browser can apply.
