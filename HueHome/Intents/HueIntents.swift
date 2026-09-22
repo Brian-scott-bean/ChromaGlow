@@ -85,8 +85,12 @@ struct GroupBrightnessIntent: AppIntent {
     @Parameter(title: "Room or Zone")
     var group: HueGroupEntity
 
-    @Parameter(title: "Brightness", default: 80,
-               inclusiveRange: (lowerBound: 1, upperBound: 100))
+    /// No default: the "Dim <room>" / "Set <room> brightness" shortcuts
+    /// carry no number, and a default of 80 meant Siri never asked — every
+    /// "Dim Bedroom" set the room to 80%, usually BRIGHTER. Siri now prompts.
+    @Parameter(title: "Brightness",
+               inclusiveRange: (lowerBound: 1, upperBound: 100),
+               requestValueDialog: IntentDialog("What brightness, from 1 to 100 percent?"))
     var brightness: Int
 
     func perform() async throws -> some IntentResult & ProvidesDialog {
