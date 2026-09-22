@@ -1305,10 +1305,21 @@ final class UnifiedOrchestrator {
     }
 
     /// Exit demo mode and reset all state.
+    ///
+    /// Mirrors forgetAllBridges' snapshot reset: demo `loadAllScenes` sets
+    /// `hasLoadedScenesOnce`, and a surviving flag made the first real
+    /// publish treat the (demo) live list as truth — demo scenes reached the
+    /// widgets, the watch and Siri's scene phrases.
     func exitDemoMode() {
         isDemoMode = false
+        widgetWriteTask?.cancel()
+        widgetWriteTask = nil
         allRooms = []
         roomsByBridge = [:]
+        zonesByBridge = [:]
+        allZones = []
+        globalScenes = []
+        hasLoadedScenesOnce = false
         connectionStatus = [:]
         clients = [:]
         sseTasks.values.forEach { $0.cancel() }
@@ -2996,6 +3007,11 @@ final class UnifiedOrchestrator {
 
     func testRoomsByBridge() -> [String: [RoomDisplayItem]] { roomsByBridge }
     func testZonesByBridge() -> [String: [RoomDisplayItem]] { zonesByBridge }
+
+    /// Widget/watch publish seams: whether a debounced snapshot publish is
+    /// pending, and whether the scene publisher treats the live list as truth.
+    var testHasPendingWidgetWrite: Bool { widgetWriteTask != nil }
+    var testHasLoadedScenesOnce: Bool { hasLoadedScenesOnce }
     #endif
 
     /// Coalesce SSE-driven rebuilds behind one trailing ~150 ms task. A resetting
@@ -3045,9 +3061,17 @@ final class UnifiedOrchestrator {
     /// last mutation burst, rather than one write per SSE event.
     private func scheduleWidgetWrite() {
         widgetWriteTask?.cancel()
+        // Demo data never leaves the app: the widget, watch and Siri surfaces
+        // all read this snapshot, and they keep acting on it after demo ends.
+        guard !isDemoMode else {
+            widgetWriteTask = nil
+            return
+        }
         widgetWriteTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(500))
-            guard !Task.isCancelled, let self else { return }
+            // Re-check at fire time: demo may have been entered during the
+            // debounce, and allRooms/globalScenes are demo data by now.
+            guard !Task.isCancelled, let self, !self.isDemoMode else { return }
             let roomSnaps = self.allRooms.map { r in
                 WidgetRoomSnapshot(
                     id:             r.id,

@@ -56,6 +56,29 @@ final class OrchestratorCacheDemoTests: XCTestCase {
         XCTAssertTrue(orchestrator.isDemoMode)
     }
 
+    /// Demo scenes must never reach the widget/watch/Siri snapshot, and
+    /// leaving demo must not leave the publisher believing the demo list was
+    /// a real scene load (hasLoadedScenesOnce survived and published it).
+    func testDemoScenesNeverPublishAndExitResetsSceneState() async {
+        let orchestrator = makeOrchestratorCacheDemoSUT()
+        orchestrator.enterDemoMode()
+
+        await orchestrator.loadAllScenes()
+
+        XCTAssertFalse(orchestrator.globalScenes.isEmpty, "demo scenes populate the in-app list")
+        XCTAssertFalse(orchestrator.testHasPendingWidgetWrite,
+                       "demo must never schedule a widget/watch snapshot publish")
+
+        orchestrator.exitDemoMode()
+
+        XCTAssertTrue(orchestrator.globalScenes.isEmpty)
+        XCTAssertFalse(orchestrator.testHasLoadedScenesOnce,
+                       "the next real publish must preserve the stored scenes until a REAL load")
+        XCTAssertTrue(orchestrator.allZones.isEmpty)
+        XCTAssertTrue(orchestrator.testZonesByBridge().isEmpty)
+        XCTAssertFalse(orchestrator.testHasPendingWidgetWrite)
+    }
+
     @MainActor
     private func makeOrchestratorCacheDemoSUT() -> UnifiedOrchestrator {
         UnifiedOrchestrator()
