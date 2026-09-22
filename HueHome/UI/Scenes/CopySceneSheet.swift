@@ -38,7 +38,12 @@ struct CopySceneSheet: View {
     @State private var isWorking = false
     @State private var errorMessage: String?
 
-    private var groups: [RoomDisplayItem] { orchestrator.allRooms + orchestrator.allZones }
+    /// Copy/move targets. A copy POSTs a new scene on the target's bridge, so
+    /// granted (guest) bridges are never offered (copyScene backstops it).
+    private var groups: [RoomDisplayItem] {
+        (orchestrator.allRooms + orchestrator.allZones)
+            .filter { !orchestrator.isGuestGrantedBridge($0.bridgeID) }
+    }
     private var multiBridge: Bool {
         Set(groups.compactMap(\.bridgeID)).count > 1
     }

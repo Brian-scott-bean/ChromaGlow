@@ -35,6 +35,22 @@ struct EntertainmentConfigBuilderView: View {
     /// config is enumerated from — and POSTed to — the intended bridge.
     @State private var selectedBridgeID: String?
 
+    /// Family Sharing: a new area is POSTed to the bridge itself, so granted
+    /// (guest) bridges are never offered — only bridges this phone owns.
+    private var ownedBridgeIDs: [String] {
+        orchestrator.allBridgeIDs.filter { !orchestrator.isGuestGrantedBridge($0) }.sorted()
+    }
+
+    /// The selected bridge's client — nil when nothing owned is selected.
+    /// Never falls through `hueClient(for: nil)`, whose single-bridge
+    /// fallback would hand back a granted bridge's client.
+    private var selectedOwnedClient: HueAPIClient? {
+        guard let selectedBridgeID, !orchestrator.isGuestGrantedBridge(selectedBridgeID) else {
+            return nil
+        }
+        return orchestrator.hueClient(for: selectedBridgeID)
+    }
+
     private let amber = Color(red: 1.0, green: 0.76, blue: 0.20)
     private let maxLights = 10
 
@@ -71,7 +87,7 @@ struct EntertainmentConfigBuilderView: View {
         }
         .task {
             if selectedBridgeID == nil {
-                selectedBridgeID = orchestrator.allBridgeIDs.sorted().first
+                selectedBridgeID = ownedBridgeIDs.first
             }
             await loadLights()
         }
@@ -92,7 +108,7 @@ struct EntertainmentConfigBuilderView: View {
             VStack(spacing: 0) {
 
                 // ── Bridge (multi-bridge homes only) ────────
-                if orchestrator.allBridgeIDs.count > 1 {
+                if ownedBridgeIDs.count > 1 {
                     bridgePickerSection
                         .padding(.horizontal, 20)
                         .padding(.top, 16)
@@ -102,7 +118,7 @@ struct EntertainmentConfigBuilderView: View {
                 // ── Name ────────────────────────────────────
                 nameSection
                     .padding(.horizontal, 20)
-                    .padding(.top, orchestrator.allBridgeIDs.count > 1 ? 0 : 16)
+                    .padding(.top, ownedBridgeIDs.count > 1 ? 0 : 16)
                     .padding(.bottom, 20)
 
                 // ── Light Picker ────────────────────────────
@@ -135,7 +151,7 @@ struct EntertainmentConfigBuilderView: View {
         VStack(alignment: .leading, spacing: 8) {
             sectionLabel("Bridge")
             Menu {
-                ForEach(orchestrator.allBridgeIDs.sorted(), id: \.self) { bridgeID in
+                ForEach(ownedBridgeIDs, id: \.self) { bridgeID in
                     Button {
                         guard bridgeID != selectedBridgeID else { return }
                         selectedBridgeID = bridgeID
@@ -373,7 +389,7 @@ struct EntertainmentConfigBuilderView: View {
         defer { isLoading = false }
 
         // M-18: enumerate lights from the selected bridge, not the first one.
-        guard let client = orchestrator.hueClient(for: selectedBridgeID) else { return }
+        guard let client = selectedOwnedClient else { return }
         do {
             let (ip, token) = try client.credentials()
 
@@ -438,7 +454,7 @@ struct EntertainmentConfigBuilderView: View {
 
         // M-18: POST the new entertainment_configuration to the SAME bridge
         // the lights were enumerated from.
-        guard let client = orchestrator.hueClient(for: selectedBridgeID) else {
+        guard let client = selectedOwnedClient else {
             errorMessage = "No bridge connection"
             isSaving = false
             return

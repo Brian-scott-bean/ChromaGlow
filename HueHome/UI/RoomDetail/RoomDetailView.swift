@@ -87,7 +87,8 @@ struct RoomDetailView: View {
             if vm.isSelecting {
                 VStack {
                     Spacer()
-                    BulkActionBar(vm: vm) { showBulkScene = true }
+                    // Bulk "Scene" creates a bridge scene — owner surface only.
+                    BulkActionBar(vm: vm) { if !isGrantedBridge { showBulkScene = true } }
                         .padding(.bottom, 100)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
@@ -562,7 +563,9 @@ struct RoomDetailView: View {
         } label: {
             Label("Identify", systemImage: "rays")
         }
-        if !vm.isSelecting {
+        // Multi-select exists to bulk-edit and save scenes — owner surface,
+        // same gate as the LIGHTS header's Select button.
+        if !vm.isSelecting && !isGrantedBridge {
             Button {
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
                     armedColor = nil   // paint mode and select mode are exclusive
@@ -720,8 +723,9 @@ struct RoomDetailView: View {
                 }
                 Spacer()
 
-                // Select / Done for scene multi-select
-                if vm.scenes.count > 1 {
+                // Select / Done for scene multi-select (bulk delete/edit —
+                // never on a granted bridge: guests recall, they don't edit).
+                if vm.scenes.count > 1 && !isGrantedBridge {
                     Button(vm.isSelectingScenes ? "Done" : "Select") {
                         if vm.isSelectingScenes { vm.exitSceneSelectMode() } else { vm.enterSceneSelectMode() }
                     }
@@ -731,7 +735,7 @@ struct RoomDetailView: View {
                                      : .white.opacity(0.5))
                 }
 
-                if !vm.isSelectingScenes {
+                if !vm.isSelectingScenes && !isGrantedBridge {
                     Button {
                         HapticManager.shared.light()
                         showCreateScene = true
@@ -776,15 +780,20 @@ struct RoomDetailView: View {
                                     vm.activateScene(scene)
                                 }
                                 .contextMenu {
-                                    Button {
-                                        // Edit: activate scene first to seed light colors, then open builder
-                                        vm.activateScene(scene)
-                                        // Small delay so lights update before builder opens
-                                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-                                            sceneToEdit = scene
+                                    // Edit/Rename/Delete write the owner's bridge
+                                    // scenes — never offered on a granted bridge
+                                    // (design §5). Favorite is local-only.
+                                    if !isGrantedBridge {
+                                        Button {
+                                            // Edit: activate scene first to seed light colors, then open builder
+                                            vm.activateScene(scene)
+                                            // Small delay so lights update before builder opens
+                                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                                                sceneToEdit = scene
+                                            }
+                                        } label: {
+                                            Label("Edit Scene", systemImage: "slider.horizontal.3")
                                         }
-                                    } label: {
-                                        Label("Edit Scene", systemImage: "slider.horizontal.3")
                                     }
                                     Button {
                                         toggleFavorite(scene)
@@ -794,17 +803,19 @@ struct RoomDetailView: View {
                                             systemImage: isFav ? "star.slash" : "star"
                                         )
                                     }
-                                    Button {
-                                        sceneRenameDraft = scene.name
-                                        sceneToRename    = scene
-                                    } label: {
-                                        Label("Rename", systemImage: "pencil")
-                                    }
-                                    Divider()
-                                    Button(role: .destructive) {
-                                        vm.deleteScene(scene)
-                                    } label: {
-                                        Label("Delete Scene", systemImage: "trash")
+                                    if !isGrantedBridge {
+                                        Button {
+                                            sceneRenameDraft = scene.name
+                                            sceneToRename    = scene
+                                        } label: {
+                                            Label("Rename", systemImage: "pencil")
+                                        }
+                                        Divider()
+                                        Button(role: .destructive) {
+                                            vm.deleteScene(scene)
+                                        } label: {
+                                            Label("Delete Scene", systemImage: "trash")
+                                        }
                                     }
                                 }
                             }
@@ -981,9 +992,10 @@ struct RoomDetailView: View {
 
     @ToolbarContentBuilder
     private var toolbarItems: some ToolbarContent {
-        // + button — New Scene / New Automation
+        // + button — New Scene / New Automation. Both write the owner's
+        // bridge (scene POST, schedule) — never on a granted bridge.
         ToolbarItem(placement: .navigationBarTrailing) {
-            if !vm.isSelecting {
+            if !vm.isSelecting && !isGrantedBridge {
                 Button {
                     showAddMenu = true
                     HapticManager.shared.light()
@@ -995,9 +1007,11 @@ struct RoomDetailView: View {
             }
         }
         // ··· (more) button — Edit / Delete room or zone
-        // Hidden during multi-select so it doesn't compete with Select/Done.
+        // Hidden during multi-select so it doesn't compete with Select/Done,
+        // and on a granted bridge: a guest must never rename or delete the
+        // owner's rooms/zones.
         ToolbarItem(placement: .navigationBarTrailing) {
-            if !vm.isSelecting {
+            if !vm.isSelecting && !isGrantedBridge {
                 Button {
                     showRoomMenu = true
                     HapticManager.shared.light()

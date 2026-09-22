@@ -811,6 +811,13 @@ struct SceneColorBuilderView: View {
     private func save() async {
         let name = sceneName.trimmingCharacters(in: .whitespaces)
         guard !name.isEmpty else { return }
+        // Family Sharing backstop: the create path POSTs straight to the
+        // bridge client (no orchestrator refusal on the way), so a granted
+        // bridge is refused here as well as at every entry point.
+        guard !orchestrator.isGuestGrantedBridge(bridgeID) else {
+            errorMessage = "Not available with guest access"
+            return
+        }
 
         isSaving = true
         errorMessage = nil

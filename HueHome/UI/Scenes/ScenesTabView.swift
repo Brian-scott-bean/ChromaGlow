@@ -294,7 +294,7 @@ struct ScenesTabView: View {
                 // Studio scenes — Composer creations whose layers make them
                 // scenes. Tapping one creates a REAL bridge scene in a room
                 // you pick, so it joins that room's list right here.
-                if !studioScenePresets.isEmpty {
+                if !studioScenePresets.isEmpty && !studioSceneTargetRooms.isEmpty {
                     studioScenesShelf
                         .padding(.bottom, 8)
                 }
@@ -314,6 +314,14 @@ struct ScenesTabView: View {
     }
 
     // ── Studio scenes shelf ───────────────────────────────
+
+    /// Rooms/zones a Studio scene may be added to. Adding one POSTs a new
+    /// bridge scene, so a granted (guest) bridge's rooms are never offered —
+    /// on a guest-only phone that empties the list and hides the shelf.
+    private var studioSceneTargetRooms: [RoomDisplayItem] {
+        (orchestrator.allRooms + orchestrator.allZones)
+            .filter { !orchestrator.isGuestGrantedBridge($0.bridgeID) }
+    }
 
     /// Fresh read-only snapshot of scene-like Composer creations. Off-main
     /// read, filtered by the same classifier the Studio decks use; the hidden
@@ -405,7 +413,7 @@ struct ScenesTabView: View {
         NavigationStack {
             List {
                 Section {
-                    ForEach(orchestrator.allRooms + orchestrator.allZones) { room in
+                    ForEach(studioSceneTargetRooms) { room in
                         Button {
                             guard !studioAddBusy else { return }
                             studioAddBusy = true

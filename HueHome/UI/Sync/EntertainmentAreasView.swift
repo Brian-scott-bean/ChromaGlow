@@ -33,6 +33,13 @@ struct EntertainmentAreasView: View {
         let config: EntertainmentConfig
     }
 
+    /// Family Sharing: areas are created, renamed, and deleted on the
+    /// bridge itself, so a granted (guest) bridge is never listed or
+    /// offered here — only bridges this phone owns.
+    private var ownedBridgeIDs: [String] {
+        orchestrator.allBridgeIDs.filter { !orchestrator.isGuestGrantedBridge($0) }
+    }
+
     var body: some View {
         ZStack {
             HuePalette.Noir.background.ignoresSafeArea()
@@ -71,12 +78,14 @@ struct EntertainmentAreasView: View {
         .preferredColorScheme(.dark)
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
-                Button {
-                    showBuilder = true
-                } label: {
-                    Image(systemName: "plus")
-                        .fontWeight(.semibold)
-                        .foregroundStyle(amber)
+                if !ownedBridgeIDs.isEmpty {
+                    Button {
+                        showBuilder = true
+                    } label: {
+                        Image(systemName: "plus")
+                            .fontWeight(.semibold)
+                            .foregroundStyle(amber)
+                    }
                 }
             }
         }
@@ -206,22 +215,24 @@ struct EntertainmentAreasView: View {
                 .font(.system(size: 13))
                 .foregroundStyle(.white.opacity(0.5))
                 .multilineTextAlignment(.center)
-            Button {
-                showBuilder = true
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "plus.circle.fill")
-                    Text("New Entertainment Area")
-                        .fontWeight(.semibold)
+            if !ownedBridgeIDs.isEmpty {
+                Button {
+                    showBuilder = true
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "plus.circle.fill")
+                        Text("New Entertainment Area")
+                            .fontWeight(.semibold)
+                    }
+                    .font(.system(size: 14))
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 11)
+                    .background(Capsule().fill(amber))
                 }
-                .font(.system(size: 14))
-                .foregroundStyle(.black)
-                .padding(.horizontal, 18)
-                .padding(.vertical, 11)
-                .background(Capsule().fill(amber))
+                .buttonStyle(.plain)
+                .padding(.top, 6)
             }
-            .buttonStyle(.plain)
-            .padding(.top, 6)
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 60)
@@ -236,7 +247,7 @@ struct EntertainmentAreasView: View {
         errorMessage = nil
         var result: [String: [EntertainmentConfig]] = [:]
         var failures: [String] = []
-        for bridgeID in orchestrator.allBridgeIDs {
+        for bridgeID in ownedBridgeIDs {
             // This screen is where areas are created, renamed, and deleted, and
             // it fetches its own inventory — so it is exactly where we know the
             // orchestrator's cached one has gone wrong. Nothing invalidated it
@@ -259,7 +270,8 @@ struct EntertainmentAreasView: View {
     }
 
     private func rename(_ target: AreaRef, to name: String) async {
-        guard let client = orchestrator.hueClient(for: target.bridgeID) else { return }
+        guard !orchestrator.isGuestGrantedBridge(target.bridgeID),
+              let client = orchestrator.hueClient(for: target.bridgeID) else { return }
         do {
             try await manager.rename(configID: target.config.id, to: name, client: client)
             // Invalidate at the mutation, not only inside `load()`: the rename
@@ -273,7 +285,8 @@ struct EntertainmentAreasView: View {
     }
 
     private func delete(_ target: AreaRef) async {
-        guard let client = orchestrator.hueClient(for: target.bridgeID) else { return }
+        guard !orchestrator.isGuestGrantedBridge(target.bridgeID),
+              let client = orchestrator.hueClient(for: target.bridgeID) else { return }
         do {
             try await manager.delete(configID: target.config.id, client: client)
             // Same reason as rename: the area is gone from the bridge, so any

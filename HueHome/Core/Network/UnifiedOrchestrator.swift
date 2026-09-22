@@ -10996,6 +10996,13 @@ final class UnifiedOrchestrator {
     /// mapped) so the scene matches what the Composer shows. Returns the new
     /// scene's id, or nil with no side effects.
     func addStudioSceneToRoom(preset: CompositionPreset, room: RoomDisplayItem) async -> String? {
+        // Defense in depth (Family Sharing): this POSTs a new scene, and
+        // guests never create scenes on a granted bridge. The shelf hides
+        // granted rooms; this backstops any surface that doesn't.
+        guard !isGuestGrantedBridge(room.bridgeID) else {
+            showToast("Not available with guest access")
+            return nil
+        }
         guard BridgeDynamicSceneExporter.ineligibilityReason(for: preset) == nil,
               let bridgeID = room.bridgeID,
               let api = clients[bridgeID],
@@ -11110,6 +11117,12 @@ final class UnifiedOrchestrator {
     /// Update an existing scene's name and per-light actions.
     /// Used by the Scene Color Builder in edit mode.
     func updateScene(sceneID: String, bridgeID: String, name: String, lights: [LightDisplayItem]) async throws {
+        // Defense in depth (Family Sharing): editing overwrites the owner's
+        // scene — never on a granted bridge, whatever surface asked.
+        guard !isGuestGrantedBridge(bridgeID) else {
+            showToast("Not available with guest access")
+            throw HueAPIError.missingCredentials
+        }
         guard let client = clients[bridgeID] else {
             throw HueAPIError.missingCredentials
         }
