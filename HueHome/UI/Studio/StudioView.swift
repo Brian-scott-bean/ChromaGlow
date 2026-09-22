@@ -1672,11 +1672,9 @@ struct StudioView: View {
         expandMixer()   // deliberate activation
         transportSwitchInFlightRoomIDs.insert(roomID)
         Task {
-            await vm.apply(
-                effect.card,
-                roomOverride: effect.room,
-                preferEntertainmentOverride: preferEntertainment
-            )
+            // Carries the live Composer state: a plain re-apply rebuilt the
+            // box from the STORED preset and discarded every unsaved edit.
+            await vm.switchCompositionTransport(effect, preferEntertainment: preferEntertainment)
             transportSwitchInFlightRoomIDs.remove(roomID)
         }
         HapticManager.shared.light()

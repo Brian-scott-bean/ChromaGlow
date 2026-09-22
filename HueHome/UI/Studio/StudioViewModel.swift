@@ -1629,6 +1629,75 @@ final class StudioViewModel {
         activeCompositionGamuts.removeValue(forKey: key)
     }
 
+    // ── Live-state carry (transport switch, Apply Current Look) ──
+    //
+    // `applyCore` builds a composition's box from the STORED preset. That is
+    // right for a fresh start and wrong for a restart of a look the user is
+    // still editing: switching a running composition's transport discarded
+    // every unsaved Composer edit (and a "+ Create" draft's whole work), and
+    // Apply Current Look copied the value scopes but never the box.
+    //
+    // A carry names the exact running INSTANCE whose live configs the next
+    // start of the same preset on one target begins from. It is bound to that
+    // instance's identity, so a stop, a Revert (rekey) or a replacement makes
+    // it inert; it survives an apply that defers behind a lifecycle prompt so
+    // the confirmation's replay can honour it, and the start spends it.
+
+    struct CompositionCarry {
+        let presetID: UUID
+        let source: RunningLookIdentity
+    }
+
+    @ObservationIgnored private var compositionCarries: [StudioSelectionKey: CompositionCarry] = [:]
+
+    /// Ask the next start of `source`'s preset on `key` to begin from
+    /// `source`'s live box. A source with no live box (a one-shot, a
+    /// recovered mirror, an app-driven look) clears any request instead.
+    func requestCompositionCarry(to key: StudioSelectionKey, from source: RunningEffect) {
+        guard case .composition(let presetID) = source.card.strategy,
+              source.recovered == nil,
+              activeCompositionBoxes[source.identity.selectionKey] != nil else {
+            compositionCarries.removeValue(forKey: key)
+            return
+        }
+        compositionCarries[key] = CompositionCarry(presetID: presetID, source: source.identity)
+    }
+
+    /// Drop an unspent request once its apply has settled — unless that apply
+    /// is waiting behind a prompt whose confirmation will replay it.
+    func settleCompositionCarry(at key: StudioSelectionKey) {
+        guard !hasPendingLifecyclePrompt else { return }
+        compositionCarries.removeValue(forKey: key)
+    }
+
+    /// Spend the request for `key`: a COPY of the source instance's live
+    /// configs when `card` starts the same preset and that exact instance is
+    /// still running with its box, nil otherwise. Must run before the
+    /// replacement stop, which evicts a same-target source's box.
+    private func takeCompositionCarry(to key: StudioSelectionKey,
+                                      for card: StudioCard) -> CompositionParamBox? {
+        guard let carry = compositionCarries.removeValue(forKey: key),
+              case .composition(let presetID) = card.strategy,
+              presetID == carry.presetID,
+              runningEffects[carry.source.selectionKey]?.identity == carry.source,
+              let source = activeCompositionBoxes[carry.source.selectionKey] else { return nil }
+        return CompositionParamBox(palette: source.palette, motion: source.motion,
+                                   envelope: source.envelope, reaction: source.reaction)
+    }
+
+    /// Restart a running composition on the other transport, carrying its
+    /// live Composer state into the new instance.
+    func switchCompositionTransport(_ effect: RunningEffect, preferEntertainment: Bool) async {
+        await serialized { [weak self] in
+            guard let self else { return }
+            let key = StudioSelectionKey(room: effect.room)
+            self.requestCompositionCarry(to: key, from: effect)
+            await self.applyCore(effect.card, roomOverride: effect.room,
+                                 preferEntertainmentOverride: preferEntertainment)
+            self.settleCompositionCarry(at: key)
+        }
+    }
+
     // ── Harmony rule (Slice 3 review round, A-1 / A-2 / A-3) ──
     //
     // The rule the chip row shows is PER-TARGET session memory. The document
@@ -1639,7 +1708,12 @@ final class StudioViewModel {
 
     /// The chip state for a target — seeded from the preset's saved rule.
     func seedHarmonyRule(for identity: RunningLookIdentity, from preset: CompositionPreset) {
-        let rule = preset.palette.harmonyRule.flatMap(HarmonyRule.init(rawValue:)) ?? .none
+        seedHarmonyRule(for: identity, palette: preset.palette)
+    }
+
+    /// Same, from a palette — a carried live box's rule, not the saved one.
+    func seedHarmonyRule(for identity: RunningLookIdentity, palette: PaletteConfig) {
+        let rule = palette.harmonyRule.flatMap(HarmonyRule.init(rawValue:)) ?? .none
         sessionMemory.update(identity.targetKey) { $0.activeHarmonyRule = rule }
     }
 
@@ -3035,6 +3109,11 @@ final class StudioViewModel {
             preparedEntertainment = preparation
         }
 
+        // A requested live-state carry is spent HERE, before the replacement
+        // stop below evicts the same-target source box it copies from.
+        let carriedCompositionBox = takeCompositionCarry(to: StudioSelectionKey(room: room),
+                                                         for: card)
+
         // ── Stop any effect already running on THIS room ─────────────
         if let existing = runningEffect(for: room) {
             let existingCard = existing.card
@@ -3372,7 +3451,7 @@ final class StudioViewModel {
                 await micHeadStart
                 let dominantGamut = await gamutTask
                 activeCompositionGamuts[StudioSelectionKey(room: room)] = dominantGamut
-                let box = CompositionParamBox(preset: preset)
+                let box = carriedCompositionBox ?? CompositionParamBox(preset: preset)
                 activeCompositionBoxes[StudioSelectionKey(room: room)] = box
                 let presetPreferEntertainment: Bool?
                 switch preset.preferredTransport {
@@ -3418,8 +3497,9 @@ final class StudioViewModel {
                     room: room, card: card,
                     execution: .composition(presetID: presetID))
                 // The saved rule is the document's; the chip for THIS target
-                // starts from it (A-1) — never from a global restore slot.
-                seedHarmonyRule(for: identity, from: preset)
+                // starts from it (A-1) — never from a global restore slot. A
+                // carried box brings its own live rule with it.
+                seedHarmonyRule(for: identity, palette: box.palette)
                 runningEffects[StudioSelectionKey(room: room)] = RunningEffect(
                     cardID: card.id, card: card, room: room,
                     lightIDs: newLightIDs, isEntertainment: isEnt,
