@@ -12240,13 +12240,26 @@ extension UnifiedOrchestrator {
             // Prune records the bridge has proved are no longer active: the
             // configuration is inactive or absent entirely, so there is
             // nothing to stop and nothing left to remember.
+            //
+            // The proof is the snapshot, which was read BEFORE the stale stops
+            // above suspended — and a session can start in that gap: its
+            // client registers and records it (concurrently, on its own actor)
+            // and only then activates it, so the snapshot still calls it
+            // inactive. Forgetting that record would strip the one piece of
+            // evidence that lets a later launch recognise the session as ours
+            // if this process dies. A live process owner therefore vetoes the
+            // prune, checked atomically with the removal.
             let stillActive = snapshot.processOwned
                 .union(snapshot.persistedOwned)
                 .union(snapshot.foreign)
             for id in entertainmentOwnership.persistedConfigIDs(onBridge: bridgeID)
             where !stillActive.contains(id) {
-                entertainmentOwnership.forgetPersisted(bridgeID: bridgeID, configID: id)
-                log.info("Pruned ownership record for inactive entertainment config \(id) on \(bridgeID)")
+                if entertainmentOwnership.forgetPersistedUnlessProcessOwned(
+                    bridgeID: bridgeID, configID: id) {
+                    log.info("Pruned ownership record for inactive entertainment config \(id) on \(bridgeID)")
+                } else {
+                    log.info("Did not prune \(id) on \(bridgeID) — a live session owns it, or it is already gone")
+                }
             }
         }
     }

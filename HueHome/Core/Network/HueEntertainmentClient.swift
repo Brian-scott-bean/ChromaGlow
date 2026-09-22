@@ -279,6 +279,28 @@ final class EntertainmentSessionOwnership: @unchecked Sendable {
         writeLocked()
     }
 
+    /// Forget a persisted record ONLY if no live client in this process owns
+    /// that exact bridge + configuration — decided and applied under one lock.
+    ///
+    /// For pruning on stale evidence: the cleanup pass's "this configuration
+    /// is inactive" comes from a bridge read taken BEFORE the pass's own
+    /// suspensions, and `startSession` (on its client's actor, concurrently)
+    /// can register + record in between. Checking `isProcessOwned` and then
+    /// calling `forgetPersisted` would be two facts with a gap between them.
+    /// Returns whether the record was forgotten.
+    @discardableResult
+    func forgetPersistedUnlessProcessOwned(bridgeID: String, configID: String) -> Bool {
+        let key = EntertainmentSessionKey(bridgeID: bridgeID, configID: configID)
+        lock.lock()
+        defer { lock.unlock() }
+        guard processRefCounts[key] == nil else { return false }
+        let before = persisted.count
+        persisted.removeAll { $0.bridgeID == bridgeID && $0.configID == configID }
+        guard persisted.count != before else { return false }
+        writeLocked()
+        return true
+    }
+
     func isPersisted(bridgeID: String, configID: String) -> Bool {
         lock.lock()
         defer { lock.unlock() }
