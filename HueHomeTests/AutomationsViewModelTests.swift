@@ -52,4 +52,25 @@ final class AutomationsViewModelTests: XCTestCase {
 
         XCTAssertEqual(vm.automations.map(\.enabled), [true, true, true])
     }
+
+    // Family Sharing: a granted bridge's behavior_instances belong to the
+    // owner — the tab must never fetch (or offer to toggle) them.
+    func testConfigureSkipsGuestGrantedBridges() {
+        let orchestrator = UnifiedOrchestrator()
+        let owned = BridgeAPIClient(bridgeID: "bridge-own", bridgeName: "Own",
+                                    ip: "192.0.2.10", token: "test-token")
+        let granted = BridgeAPIClient(bridgeID: "bridge-guest", bridgeName: "Guest",
+                                      ip: "192.0.2.11", token: "test-token")
+        orchestrator.injectForTesting(clients: ["bridge-own": owned, "bridge-guest": granted])
+        orchestrator.testSetGuestGrants([
+            "bridge-guest": GuestGrantSnapshot(allowedGroupIDs: ["room-a"],
+                                               features: Set(GuestFeature.all),
+                                               profileName: "Alex")
+        ])
+
+        let vm = AutomationsViewModel()
+        vm.configure(bridgeIDs: orchestrator.allBridgeIDs, orchestrator: orchestrator)
+
+        XCTAssertEqual(vm.configuredBridgeIDs, ["bridge-own"])
+    }
 }
