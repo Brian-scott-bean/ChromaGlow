@@ -243,11 +243,22 @@ struct CompositionEditorPanel: View {
                 prominence: .pads,
                 fallback: .gradient,
                 read: { $0.palette.mode },
-                write: { $0.palette.mode = $1 },
+                write: { box, mode in
+                    box.palette.mode = mode
+                    // A mode that ignores the colour fields has no harmony;
+                    // the document forgets the rule in the same fenced
+                    // commit — and ONLY the rule: the colours stay.
+                    if mode != .solid && mode != .gradient { box.palette.harmonyRule = nil }
+                },
                 afterCommit: { newMode in
-                    // Auto-dismiss harmony when switching to a mode that ignores color fields
+                    // Auto-dismiss the harmony chip when switching to a mode
+                    // that ignores color fields. NOT through the binding: its
+                    // setter is `setHarmonyRule(.none)`, the user's
+                    // destructive clear (color2 reset to red, color3 wiped),
+                    // so a mode change silently destroyed the gradient that
+                    // switching back to Gradient should have found intact.
                     if newMode != .solid && newMode != .gradient && activeHarmonyRule != .none {
-                        activeHarmonyRule = .none
+                        vm.clearHarmonyRuleWithoutEcho()
                     }
                 },
                 onDismissKeyboard: onDismissKeyboard)

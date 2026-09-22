@@ -1711,6 +1711,34 @@ final class StudioProductionWiringTests: XCTestCase {
         XCTAssertEqual(vm.liveSpatialPositions(for: effect, box: box, angle: 0), [1.0, 0.0, 0.5])
         XCTAssertEqual(vm.liveSpatialPositions(for: effect, box: box, angle: 180), [0.0, 1.0, 0.5])
     }
+
+    /// Audit #6 — switching the palette mode away from solid/gradient
+    /// dismissed the harmony chip through the `activeHarmonyRule` binding,
+    /// whose setter is the user's DESTRUCTIVE `setHarmonyRule(.none)` (color2
+    /// reset to red, color3 wiped) — so switching back found the gradient gone.
+    func testAPaletteModeChangeDismissesHarmonyWithoutDestroyingTheGradient() throws {
+        let code = try productionCode("HueHome/UI/Composer/CompositionEditorPanel.swift")
+        XCTAssertFalse(code.contains("activeHarmonyRule = .none"),
+                       "the mode change must not clear through the destructive binding")
+        XCTAssertTrue(code.contains("vm.clearHarmonyRuleWithoutEcho()"))
+
+        // …and the non-destructive clear leaves the colours alone.
+        let a = room("room-1", bridge: "bridge-a")
+        let card = compositionCard()
+        vm.selectedRoom = a
+        let identity = startRunning(card, on: a)
+        let box = CompositionParamBox(preset: compositionPreset())
+        box.palette.color2 = CodableColor(x: 0.17, y: 0.7)
+        box.palette.color3 = CodableColor(x: 0.15, y: 0.06)
+        vm.testInstallCompositionBox(box, at: StudioSelectionKey(room: a))
+        vm.sessionMemory.update(identity.targetKey) { $0.activeHarmonyRule = .triadic }
+
+        vm.clearHarmonyRuleWithoutEcho()
+
+        XCTAssertEqual(vm.sessionMemory.state(for: identity.targetKey).activeHarmonyRule, .none)
+        XCTAssertEqual(box.palette.color2, CodableColor(x: 0.17, y: 0.7))
+        XCTAssertEqual(box.palette.color3, CodableColor(x: 0.15, y: 0.06))
+    }
 }
 
 /// Holds a `RestSender` busy on demand, so "this closure is still pending"
