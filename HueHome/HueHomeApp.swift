@@ -5,6 +5,7 @@
 import SwiftUI
 import SwiftData
 import WatchConnectivity
+import OSLog
 
 @main
 struct HueHomeApp: App {
@@ -458,6 +459,25 @@ final class WatchSessionManager: NSObject, WCSessionDelegate, @unchecked Sendabl
 
     static let shared = WatchSessionManager()
 
+    private let log = Logger(subsystem: "com.lightshade.app", category: "WatchSession")
+
+    /// Persisted "the latest push asked the watch to UNPAIR" (forget-all).
+    /// A resync must repeat the unpair — never replace it with a snapshot —
+    /// even across a relaunch, and even if the original push was dropped
+    /// because the session wasn't activated yet.
+    static let unpairPendingKey = "watch.unpairPending"
+
+    /// What a resync (activation completed / watch app installed) sends.
+    enum ResyncAction: Equatable { case unpair, snapshot, none }
+
+    /// Pure resync decision. Never INFERS an unpair from an empty credential
+    /// map (L-30: indistinguishable from a transient Keychain failure) — with
+    /// nothing stored and no explicit unpair pending, it sends nothing.
+    static func resyncAction(unpairPending: Bool, hasStoredBridges: Bool) -> ResyncAction {
+        if unpairPending { return .unpair }
+        return hasStoredBridges ? .snapshot : .none
+    }
+
     private override init() {
         super.init()
         guard WCSession.isSupported() else { return }
@@ -475,6 +495,9 @@ final class WatchSessionManager: NSObject, WCSessionDelegate, @unchecked Sendabl
         guestFeatures: [String: WidgetGuestFeatures] = [:],
         unpaired: Bool = false
     ) {
+        // Record the intent BEFORE the session guard: a push dropped here
+        // (not activated yet, watch app not installed) is re-sent by resync().
+        UserDefaults.standard.set(unpaired, forKey: Self.unpairPendingKey)
         guard WCSession.default.activationState == .activated,
               WCSession.default.isPaired,
               WCSession.default.isWatchAppInstalled else { return }
@@ -505,14 +528,53 @@ final class WatchSessionManager: NSObject, WCSessionDelegate, @unchecked Sendabl
         if let pinsData = BridgePinStore.shared.encodedPins() {
             context[BridgePinStore.storageKey] = pinsData
         }
-        try? WCSession.default.updateApplicationContext(context)
+        do {
+            try WCSession.default.updateApplicationContext(context)
+        } catch {
+            // Default (private) privacy — never .public on error text (H-03).
+            log.error("Watch context push failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// Re-send the current state. Pushes used to happen ONLY on a widget
+    /// content change, so a watch that activated late, or a watch app
+    /// installed after pairing, sat empty until the phone's rooms changed.
+    /// Rebuilt from the published App Group snapshot (the same data the last
+    /// publish sent) — never from demo data, which is never published.
+    func resync() {
+        let store = WidgetDataStore.shared
+        let bridges = store.bridges
+        switch Self.resyncAction(
+            unpairPending: UserDefaults.standard.bool(forKey: Self.unpairPendingKey),
+            hasStoredBridges: !bridges.isEmpty
+        ) {
+        case .unpair:
+            push(rooms: [], zones: [], bridges: [:], unpaired: true)
+        case .snapshot:
+            push(rooms: store.rooms, zones: store.zones, scenes: store.scenes,
+                 bridges: bridges, guestFeatures: store.guestFeatures)
+        case .none:
+            break
+        }
     }
 
     // MARK: - WCSessionDelegate
 
     func session(_ session: WCSession,
                  activationDidCompleteWith activationState: WCSessionActivationState,
-                 error: Error?) {}
+                 error: Error?) {
+        if let error {
+            log.error("WCSession activation failed: \(error.localizedDescription)")
+        }
+        guard activationState == .activated else { return }
+        DispatchQueue.main.async { self.resync() }
+    }
+
+    /// Paired/installed state changed (e.g. the watch app was just installed).
+    func sessionWatchStateDidChange(_ session: WCSession) {
+        guard session.isPaired, session.isWatchAppInstalled else { return }
+        DispatchQueue.main.async { self.resync() }
+    }
 
     func sessionDidBecomeInactive(_ session: WCSession) {}
 
