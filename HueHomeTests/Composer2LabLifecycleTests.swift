@@ -414,6 +414,48 @@ final class Composer2LabLifecycleTests: XCTestCase {
         _ = CompositionEngine.render(time: 1, channelIDs: [0, 1, 2, 3, 4], params: box, hostNow: 200)
         XCTAssertTrue(feed.isMirroringLive(hostNow: 200.1))
         XCTAssertEqual(feed.displayFrames(hostNow: 200.1).count, 5, "the hero shows the frames the lights got")
-        XCTAssertFalse(feed.isMirroringLive(hostNow: 201))
+        XCTAssertTrue(feed.isMirroringLive(hostNow: 201), "a sparse Room-mode cadence still counts as live")
+        XCTAssertFalse(feed.isMirroringLive(hostNow: 203.5))
+        out.releaseLiveGeometry()
+        XCTAssertFalse(feed.isMirroringLive(hostNow: 200.2), "a stop hands the hero straight back to the preview")
+    }
+
+    /// Room mode renders a room every 120 ms or more, and several rooms
+    /// rotate. The preview must never advance the SHARED engine state on
+    /// its own clock between two live renders: the next live frame would
+    /// jump the engine time backwards, reset the state, and re-arm every
+    /// event schedule — so lightning never struck in Room mode.
+    func testPreviewNeverRewindsTheSharedEngineBetweenSparseLiveRenders() {
+        var composition = Composer2PresetLibrary.thunderstorm
+        // Fire an opportunity every second, always, so a reset is visible.
+        for i in composition.layers.indices where composition.layers[i].events != nil {
+            composition.layers[i].events?.timing = .fixed
+            composition.layers[i].events?.interval = 1
+            composition.layers[i].events?.probability = 1
+            composition.layers[i].events?.majorProbability = 0
+        }
+        let out = Composer2LiveOutput(composition: composition)
+        let feed = Composer2PreviewFeed(output: out)
+        let box = CompositionParamBox(preset: CompositionStore.builtInPresets[0])
+        box.frameSource = out
+        let channels = [0, 1, 2, 3, 4]
+        var host = 500.0
+        var liveTime = 0.0
+        var previewRuns = 0
+        // 30 s of a 0.6 s live cadence with a 20 fps hero in between.
+        while liveTime < 30 {
+            _ = CompositionEngine.render(time: liveTime, channelIDs: channels, params: box, hostNow: host)
+            for _ in 0..<12 {
+                host += 0.05
+                _ = feed.displayFrames(hostNow: host)
+                previewRuns += 1
+            }
+            liveTime += 0.6
+        }
+        XCTAssertGreaterThan(previewRuns, 500)
+        XCTAssertEqual(out.lastRenderTime ?? -1, liveTime - 0.6, accuracy: 1e-9,
+                       "only the live clock may move the shared engine")
+        let fired = out.state.layers.compactMap(\.events).map(\.firedCount).max() ?? 0
+        XCTAssertGreaterThanOrEqual(fired, 10, "the event schedule survived the whole run")
     }
 }

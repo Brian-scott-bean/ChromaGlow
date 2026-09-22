@@ -15,7 +15,18 @@ final class Composer2PreviewFeed {
     /// 1 normally; 0.5 under Reduce Motion.
     var timeScale: Double = 1
     /// How recently the live loop must have rendered for the hero to mirror it.
-    var liveMirrorWindow: Double = 0.4
+    ///
+    /// Generous on purpose: the live loop and the preview share ONE engine
+    /// state, and they run on different clocks (the orchestrator's elapsed
+    /// time vs. the preview's own). Room mode renders a room only every
+    /// 120 ms-plus, and with several rooms rotating (or a slow mailbox) the
+    /// gap between two live renders can exceed half a second. Evaluating the
+    /// shared state on the preview clock inside such a gap jumped the engine
+    /// time backwards on the next live frame, which reset the state — event
+    /// schedules included — so lightning could stop firing in Room mode.
+    /// Inside this window the hero holds the last live frames instead. A stop
+    /// (`releaseLiveGeometry`) zeroes the stamp, so previews resume at once.
+    var liveMirrorWindow: Double = 3.0
 
     private var gate = BeatMath.FlashSafety.OnsetGate()
     private var lastShown: [Composer2Frame] = []
