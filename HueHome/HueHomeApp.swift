@@ -535,7 +535,11 @@ final class WatchSessionManager: NSObject, WCSessionDelegate, @unchecked Sendabl
             // bridges owned/unrestricted). Non-secret.
             "wc_features_v1": featuresData,
             "wc_bridge_ip": fallback?.ip ?? "",
-            "wc_unpaired" : unpaired
+            "wc_unpaired" : unpaired,
+            // When this snapshot was composed. The watch stamps freshness
+            // from it and skips re-applying a context it already has
+            // (receivedApplicationContext is replayed on every launch).
+            "wc_sent_at"  : Date()
         ]
         // Bridge TLS pins ride along with credentials (D-016) so the watch's
         // pinned trust delegate can validate its direct bridge connections.
