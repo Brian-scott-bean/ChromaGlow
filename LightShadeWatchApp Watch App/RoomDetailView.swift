@@ -10,8 +10,20 @@ import WatchKit
 struct RoomDetailView: View {
     let room: WatchRoom
     @StateObject private var store = WatchStore.shared
-    @State private var brightness: Double = 50
+    /// Seeded from the cached brightness at creation, never by a later
+    /// programmatic assignment: `.onChange(of: brightness)` is the single
+    /// WRITE path, so the old `onAppear { brightness = … }` seeding (50 →
+    /// cached value) fired a PUT of `on: true` + the cached level on every
+    /// open — writing stale state back and turning lights on that were
+    /// switched off elsewhere since the last sync.
+    @State private var brightness: Double
     private let amber = Color(red: 1.0, green: 0.76, blue: 0.20)
+
+    init(room: WatchRoom) {
+        self.room = room
+        let cached = WatchStore.shared.allGroups.first { $0.id == room.id } ?? room
+        _brightness = State(initialValue: min(100, max(1, cached.brightness.rounded())))
+    }
 
     /// One tap of ⊖/⊕. The Crown still moves in 1% increments for fine trim.
     private static let tapStep: Double = 10
@@ -184,9 +196,6 @@ struct RoomDetailView: View {
         }
         .navigationTitle(room.name)
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear {
-            brightness = currentRoom.brightness
-        }
         .onDisappear { stopRepeating() }
     }
 
