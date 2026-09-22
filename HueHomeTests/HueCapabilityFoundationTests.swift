@@ -479,6 +479,44 @@ final class HueCapabilityFoundationTests: XCTestCase {
         }
     }
 
+    /// Audit #4 — a live direction edit (or Revert) on a Room-mode composition
+    /// wrote positions in the Entertainment area's CHANNEL order, but the REST
+    /// loop indexes by resolver light order with strips expanded. The
+    /// slot-order positions must be exactly what the REST start computes.
+    func testRoomModeSlotPositionsMatchTheRESTStartPath() throws {
+        let ids = ["b0", "strip", "b1"]
+        var lights = ids.map { light(id: $0) }
+        lights[1] = light(id: "strip", gradientPoints: 3)
+        let map = try XCTUnwrap(GradientChannelMap.build(orderedLightIDs: ids, lights: lights))
+        let positions: [String: (x: Double, z: Double)] = [
+            "b0": (x: -1.0, z: 0.2), "strip": (x: 0.3, z: -0.5), "b1": (x: 0.9, z: 0.8),
+        ]
+        let slots = CompositionRenderSlot.roomMode(
+            lightIDs: ids, gradientMap: map, lightPositions: positions,
+            bridgeID: "bridge-a", lights: lights)
+        XCTAssertEqual(slots.count, map.totalChannels)
+
+        for angle in [0.0, 45.0, 90.0, 200.0, 315.0] {
+            let startPath = CompositionEngine.expandToRenderChannels(
+                CompositionEngine.computeSpatialPositions(
+                    lightPositions: positions, orderedLightIDs: ids, motionAngle: angle),
+                map: map)
+            let live = CompositionEngine.computeSpatialPositions(
+                renderSlots: slots, motionAngle: angle)
+            XCTAssertEqual(live.count, startPath.count, "angle \(angle)")
+            for (index, pair) in zip(live, startPath).enumerated() {
+                XCTAssertEqual(pair.0, pair.1, accuracy: 1e-12, "angle \(angle) slot \(index)")
+            }
+        }
+
+        // A slot with no position means the start path fell back to index
+        // order — a live edit must not invent geometry.
+        let partial = CompositionRenderSlot.roomMode(
+            lightIDs: ids, gradientMap: map, lightPositions: ["b0": (x: 0, z: 0)],
+            bridgeID: "bridge-a", lights: lights)
+        XCTAssertEqual(CompositionEngine.computeSpatialPositions(renderSlots: partial, motionAngle: 90), [])
+    }
+
     func testExpandToRenderChannelsFailsSafeRatherThanMisaligning() throws {
         let lights = [light(id: "strip", gradientPoints: 3), light(id: "b")]
         let map = try XCTUnwrap(GradientChannelMap.build(

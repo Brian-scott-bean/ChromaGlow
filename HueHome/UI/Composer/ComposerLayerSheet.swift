@@ -804,12 +804,13 @@ struct ComposerSupportingControls: View {
     /// exactly once per user edit (CompositionParamBox is @Observable, but an
     /// onChange would also fire on programmatic writes like preset loads).
     private func recomputeSpatialPositions(angle: Double) {
-        guard let config = orchestrator.activeEntertainmentConfig(for: availability.room),
-              let session = availability.session else { return }
-        let newPositions = CompositionEngine.computeSpatialPositionsForEntertainment(
-            channels: config.channels,
-            motionAngle: angle
-        )
+        guard orchestrator.activeEntertainmentConfig(for: availability.room) != nil,
+              let session = availability.session,
+              let room = availability.room,
+              let effect = vm.runningEffect(for: room) else { return }
+        // In the row's own render order: channel order only when streaming,
+        // the Room-mode slot order (strips expanded) otherwise.
+        let newPositions = vm.liveSpatialPositions(for: effect, box: session.box, angle: angle)
         vm.commitComposerEdit(session) { box in
             box.motion.motionAngle = angle
             guard !newPositions.isEmpty else { return }

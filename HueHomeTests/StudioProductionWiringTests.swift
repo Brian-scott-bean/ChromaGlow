@@ -1646,6 +1646,25 @@ final class StudioProductionWiringTests: XCTestCase {
             }
         }
     }
+
+    // ── Studio audit fixes (2026-09-22) ─────────────────────────
+
+    /// Audit #4 — a Room-mode row's direction positions come from ITS render
+    /// slots (resolver light order), never the Entertainment channel order.
+    func testRoomModeDirectionPositionsFollowTheRowsRenderSlots() throws {
+        let a = room("room-1", bridge: "bridge-a")
+        let card = compositionCard()
+        startRunning(card, on: a, isEntertainment: false)
+        let box = CompositionParamBox(preset: compositionPreset())
+        box.renderSlots = CompositionRenderSlot.roomMode(
+            lightIDs: ["L1", "L2", "L3"], gradientMap: nil,
+            lightPositions: ["L1": (x: 1, z: 0), "L2": (x: -1, z: 0), "L3": (x: 0, z: 0)],
+            bridgeID: "bridge-a", lights: [])
+        let effect = try XCTUnwrap(vm.runningEffect(for: a))
+
+        XCTAssertEqual(vm.liveSpatialPositions(for: effect, box: box, angle: 0), [1.0, 0.0, 0.5])
+        XCTAssertEqual(vm.liveSpatialPositions(for: effect, box: box, angle: 180), [0.0, 1.0, 0.5])
+    }
 }
 
 /// Holds a `RestSender` busy on demand, so "this closure is still pending"
