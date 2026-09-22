@@ -123,6 +123,11 @@ struct SettingsView: View {
         .preferredColorScheme(.dark)
         .alert("Forget All Bridges?", isPresented: $showForgetAlert) {
             Button("Forget All", role: .destructive) {
+                // 0. Stop the orchestrator's debounced widget/watch publisher
+                // FIRST — a publish landing between the wipe below and the
+                // async teardown re-wrote the rooms and pushed the watch a
+                // newer `wc_unpaired = false` context over the unpair.
+                orchestrator.suspendWidgetPublishingForTeardown()
                 // 1. Wipe all per-bridge Keychain credentials
                 for bridge in bridges {
                     KeychainManager.shared.deleteCredentials(for: bridge.id)
