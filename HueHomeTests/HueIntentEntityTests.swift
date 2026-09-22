@@ -226,6 +226,18 @@ final class HueIntentEntityTests: XCTestCase {
         XCTAssertNil(mapped["OWNED"], "owned bridges publish no entry")
     }
 
+    // ── No silent default target ──────────────────────────
+
+    /// The system fills an unspoken parameter from defaultResult(); the
+    /// first room/scene there targeted the wrong room instead of prompting,
+    /// and turned the whole-home preset scope into one room.
+    func testSiriQueriesOfferNoDefaultTarget() async {
+        let group = await HueGroupEntityQuery().defaultResult()
+        let scene = await HueSceneEntityQuery().defaultResult()
+        XCTAssertNil(group)
+        XCTAssertNil(scene)
+    }
+
     // ── Scene entity mapping ──────────────────────────────
 
     func testSceneSnapshotMapsToEntity() {
