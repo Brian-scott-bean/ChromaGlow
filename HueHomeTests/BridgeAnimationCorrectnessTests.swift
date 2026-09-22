@@ -518,6 +518,51 @@ final class BridgeAnimationCorrectnessTests: XCTestCase {
     }
 
     // ──────────────────────────────────────────────
+    // MARK: - Step pacing: only step 0 fires immediately
+    // ──────────────────────────────────────────────
+
+    /// Every step used to trigger on `lastupdated dx` and advance the counter
+    /// the instant it fired, so the whole chain ran back-to-back on each
+    /// schedule tick and the lights settled on the last step. Step 0 keeps
+    /// `dx`; every later step waits exactly one step interval (`ddx`).
+    func testOnlyStepZeroFiresImmediatelyAndLaterStepsWaitOneInterval() async throws {
+        let spy = AnimationSpyV1Client(ip: "192.0.2.1", token: "t")
+        let manifest = try await upload(lights: 9, spy: spy)   // 2 chunks per step
+        let delay = BridgeAnimationEngine.ruleDelay(seconds: manifest.intervalSeconds)
+        XCTAssertGreaterThanOrEqual(manifest.stepCount, 2)
+
+        for rule in spy.rules {
+            XCTAssertEqual(rule.conditions.count, 2,
+                "two conditions per rule — the capacity requirement counts exactly that")
+            let step = try XCTUnwrap(rule.conditions.first {
+                ($0["operator"] as? String) == "eq"
+            }?["value"] as? String)
+            let trigger = try XCTUnwrap(rule.conditions.first {
+                ($0["address"] as? String) == "/sensors/51/state/lastupdated"
+            }, "every rule triggers on the counter's lastupdated")
+
+            if step == "0" {
+                XCTAssertEqual(trigger["operator"] as? String, "dx", "rule \(rule.name)")
+                XCTAssertNil(trigger["value"], "dx takes no value")
+            } else {
+                XCTAssertEqual(trigger["operator"] as? String, "ddx",
+                    "step \(step) must wait for its interval, not fire in the same burst")
+                XCTAssertEqual(trigger["value"] as? String, delay, "rule \(rule.name)")
+            }
+        }
+        XCTAssertTrue(spy.rules.contains { rule in
+            rule.conditions.contains { ($0["operator"] as? String) == "ddx" }
+        })
+    }
+
+    func testRuleDelayUsesTheV1RelativeTimePattern() {
+        XCTAssertEqual(BridgeAnimationEngine.ruleDelay(seconds: 3), "PT00:00:03")
+        XCTAssertEqual(BridgeAnimationEngine.ruleDelay(seconds: 15), "PT00:00:15")
+        XCTAssertEqual(BridgeAnimationEngine.ruleDelay(seconds: 75), "PT00:01:15")
+        XCTAssertEqual(BridgeAnimationEngine.ruleDelay(seconds: 3_661), "PT01:01:01")
+    }
+
+    // ──────────────────────────────────────────────
     // MARK: - M-05: 8+ light rooms chunk to ≤8 actions per rule
     // ──────────────────────────────────────────────
 
