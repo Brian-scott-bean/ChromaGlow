@@ -336,8 +336,11 @@ final class AudioAnalysisEngine {
     /// about to be re-activated, and bouncing it would tell other audio to
     /// resume and re-trigger the very route churn that caused the rebuild.
     private func stopEngine(deactivatingSession: Bool = true) {
+        // Cancel, but KEEP the handle: the next `startTempoTask` must await
+        // this task before it resets the estimator (see there). Clearing it
+        // here meant `previous` was always nil after a stop, so the drain
+        // never ran on exactly the stop → start path it exists for.
         tempoTask?.cancel()
-        tempoTask = nil
         if let configurationChangeObserver {
             NotificationCenter.default.removeObserver(configurationChangeObserver)
             self.configurationChangeObserver = nil
