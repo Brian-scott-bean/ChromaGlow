@@ -252,9 +252,18 @@ final class AudioAnalysisEngine {
             // .mixWithOthers: the DJ use case plays music from this phone —
             // capture must never duck or pause it. .measurement: raw input,
             // no system voice processing.
+            //
+            // .allowBluetoothA2DP, NOT .allowBluetoothHFP: HFP is the call
+            // profile — enabling it moves input to the headset mic and drops
+            // whatever the phone is playing to call-quality mono on the
+            // Bluetooth output, which is exactly the ducking-by-another-name
+            // .mixWithOthers promises never to do. A2DP keeps music at full
+            // quality on the headphones while the built-in mic listens to the
+            // room. (The option was .allowBluetooth, renamed HFP by the SDK —
+            // no record anywhere chose headset-mic input deliberately.)
             try session.setCategory(
                 .playAndRecord, mode: .measurement,
-                options: [.mixWithOthers, .allowBluetoothHFP, .defaultToSpeaker]
+                options: [.mixWithOthers, .allowBluetoothA2DP, .defaultToSpeaker]
             )
             try session.setActive(true, options: [])
 
