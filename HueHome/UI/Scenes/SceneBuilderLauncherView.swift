@@ -59,7 +59,10 @@ struct SceneBuilderLauncherView: View {
 
                     ScrollView(showsIndicators: false) {
                         VStack(spacing: 8) {
-                            ForEach(orchestrator.allRooms + orchestrator.allZones) { room in
+                            // The builder POSTs a new bridge scene — granted
+                            // (guest) bridges' rooms are never offered.
+                            ForEach((orchestrator.allRooms + orchestrator.allZones)
+                                .filter { !orchestrator.isGuestGrantedBridge($0.bridgeID) }) { room in
                                 roomChip(room)
                             }
                         }

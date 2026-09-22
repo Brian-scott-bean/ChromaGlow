@@ -76,7 +76,10 @@ struct CreateGlobalSceneView: View {
                             sectionLabel("ROOM")
                             ScrollView(.horizontal, showsIndicators: false) {
                                 HStack(spacing: 10) {
-                                    ForEach(orchestrator.allRooms + orchestrator.allZones) { room in
+                                    // Capturing creates a bridge scene — granted
+                                    // (guest) bridges' rooms are never offered.
+                                    ForEach((orchestrator.allRooms + orchestrator.allZones)
+                                        .filter { !orchestrator.isGuestGrantedBridge($0.bridgeID) }) { room in
                                         roomChip(room)
                                     }
                                 }

@@ -43,6 +43,39 @@ private final class GuestAccessSpyBridgeClient: BridgeAPIClient, @unchecked Send
     }
 }
 
+/// Counts every bridge touch the scene write paths make (fetch + write), so
+/// a guest refusal can be proven to happen BEFORE any bridge I/O.
+private final class GuestWriteSpyClient: BridgeAPIClient, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _ioCount = 0
+    private var _updateCount = 0
+    var ioCount: Int { lock.lock(); defer { lock.unlock() }; return _ioCount }
+    var updateCount: Int { lock.lock(); defer { lock.unlock() }; return _updateCount }
+    private func recordIO(update: Bool = false) {
+        lock.lock()
+        _ioCount += 1
+        if update { _updateCount += 1 }
+        lock.unlock()
+    }
+
+    init(bridgeID: String) {
+        super.init(bridgeID: bridgeID, bridgeName: "Bridge \(bridgeID)",
+                   ip: "192.0.2.9", token: "test-token")
+    }
+
+    override func fetchLights() async throws -> [HueLight] { recordIO(); return [] }
+    override func createSceneReturningID(_ request: CreateSceneRequest) async throws -> String {
+        recordIO(); return "new-scene"
+    }
+    override func updateScene(id: String, name: String, actions: [[String: Any]]) async throws {
+        recordIO(update: true)
+    }
+    override func fetchScenes() async throws -> [HueScene] { [] }
+    override func get(path: String, ip: String, token: String) async throws -> Data {
+        Data(#"{"errors":[],"data":[]}"#.utf8)
+    }
+}
+
 // MARK: - Fixtures
 
 private enum GuestAccessFixtures {
@@ -284,6 +317,59 @@ final class OrchestratorGuestAccessTests: XCTestCase {
         ])
         XCTAssertTrue(orchestrator.guestAccessInfo.isGuestOnly)
         XCTAssertEqual(orchestrator.guestAccessInfo.profileNames, ["Alex"])
+    }
+
+    // ── Scene write backstops (create / edit) ─────────────
+
+    private func grantedRoom(bridgeID: String = "bridge-1") -> RoomDisplayItem {
+        RoomDisplayItem(
+            kind: .room, id: "room-a", name: "Room A", archetype: nil,
+            isOn: true, brightness: 50, groupedLightID: "gl-room-a",
+            lightCount: 1, bridgeID: bridgeID,
+            childResourceRefs: [(rid: "light-room-a", rtype: "light")]
+        )
+    }
+
+    /// The Studio shelf hides granted rooms; the orchestrator must still
+    /// refuse — before fetching lights or POSTing anything.
+    func testAddStudioSceneToRoomRefusesGrantedBridgeBeforeAnyBridgeIO() async throws {
+        let orchestrator = UnifiedOrchestrator()
+        let spy = GuestWriteSpyClient(bridgeID: "bridge-1")
+        orchestrator.injectForTesting(clients: ["bridge-1": spy])
+        orchestrator.testSetGuestGrants(
+            ["bridge-1": GuestAccessFixtures.grant(groups: ["room-a"])]
+        )
+        let preset = try XCTUnwrap(CompositionStore.builtInPresets.first)
+
+        let sceneID = await orchestrator.addStudioSceneToRoom(preset: preset, room: grantedRoom())
+
+        XCTAssertNil(sceneID)
+        XCTAssertEqual(spy.ioCount, 0, "the refusal must precede every bridge call")
+        XCTAssertEqual(orchestrator.toastMessage, "Not available with guest access")
+    }
+
+    /// Editing a scene overwrites the owner's bridge scene: refused on a
+    /// granted bridge, honoured on the owner's own.
+    func testUpdateSceneRefusesGrantedBridgeAndWritesOwnedBridge() async throws {
+        let orchestrator = UnifiedOrchestrator()
+        let granted = GuestWriteSpyClient(bridgeID: "bridge-1")
+        let owned = GuestWriteSpyClient(bridgeID: "bridge-2")
+        orchestrator.injectForTesting(clients: ["bridge-1": granted, "bridge-2": owned])
+        orchestrator.testSetGuestGrants(
+            ["bridge-1": GuestAccessFixtures.grant(groups: ["room-a"])]
+        )
+
+        do {
+            try await orchestrator.updateScene(sceneID: "s1", bridgeID: "bridge-1",
+                                               name: "Edited", lights: [])
+            XCTFail("a granted bridge's scene must not be editable")
+        } catch {}
+        XCTAssertEqual(granted.updateCount, 0)
+        XCTAssertEqual(orchestrator.toastMessage, "Not available with guest access")
+
+        try await orchestrator.updateScene(sceneID: "s2", bridgeID: "bridge-2",
+                                           name: "Edited", lights: [])
+        XCTAssertEqual(owned.updateCount, 1, "the owner's own bridge still edits")
     }
 
     // ── Helpers ───────────────────────────────────────────
