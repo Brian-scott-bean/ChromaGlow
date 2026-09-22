@@ -45,6 +45,17 @@ final class AudioAnalysisEngine {
     private var demands: Set<AudioDemand> = []
     private var engineRunning = false
     private var audioEngine: AVAudioEngine?
+    /// The `.AVAudioEngineConfigurationChange` observer for the CURRENT
+    /// engine only — registered after its `start()`, removed by `stopEngine`.
+    private var configurationChangeObserver: NSObjectProtocol?
+
+    /// Capture is actually flowing: we started an engine AND it is still
+    /// running. A hardware configuration change (AirPods connecting, a
+    /// sample-rate change) stops and uninitializes the engine behind our
+    /// back, so `engineRunning` alone can claim a capture that is dead.
+    private var isCaptureLive: Bool {
+        engineRunning && audioEngine?.isRunning == true
+    }
     private var tempoTask: Task<Void, Never>?
     // nonisolated(unsafe): written only in init (before the singleton is
     // published), read only in deinit — same pattern as SyncModeEngine's
@@ -138,8 +149,9 @@ final class AudioAnalysisEngine {
         // A route change (Bluetooth/headphone hand-off, or the input route
         // coming back after a foreground restart) is the natural "input is
         // ready now" signal: recover capture that deferred on a 0 Hz / 0 ch
-        // format. Acts only while a demand is held and the engine isn't running
-        // — a route change on a healthy engine is left alone.
+        // format. Acts only while a demand is held and capture isn't live — a
+        // route change on a healthy engine is left alone, but one whose engine
+        // the system stopped (see `isCaptureLive`) is rebuilt.
         ncObservers.append(NotificationCenter.default.addObserver(
             forName: AVAudioSession.routeChangeNotification,
             object: nil, queue: .main
@@ -150,7 +162,7 @@ final class AudioAnalysisEngine {
             case .newDeviceAvailable, .oldDeviceUnavailable, .categoryChange,
                  .routeConfigurationChange, .override:
                 Task { @MainActor in
-                    guard let self, self.hasActiveDemand, !self.engineRunning else { return }
+                    guard let self, self.hasActiveDemand, !self.isCaptureLive else { return }
                     await self.startEngineIfNeeded()
                 }
             default:
@@ -200,6 +212,13 @@ final class AudioAnalysisEngine {
     @discardableResult
     private func startEngineIfNeeded() async -> Bool {
         guard !demands.isEmpty else { return false }
+        // An engine the system stopped under us (configuration change) is
+        // not capture: tear it down and rebuild rather than report `true`
+        // for a tap that will never fire again.
+        if engineRunning, !isCaptureLive {
+            log.info("Audio engine found stopped — rebuilding capture")
+            stopEngine(deactivatingSession: false)
+        }
         guard !engineRunning else { return true }
 
         // Permission (modern API; L-22 pattern).
@@ -278,6 +297,7 @@ final class AudioAnalysisEngine {
             try engine.start()
             audioEngine = engine
             engineRunning = true
+            observeConfigurationChange(of: engine)
             startTempoTask()
             log.info("Audio analysis engine started (demands: \(self.demands.count))")
             return true
@@ -291,21 +311,71 @@ final class AudioAnalysisEngine {
         }
     }
 
-    private func stopEngine() {
+    /// `deactivatingSession: false` is for a REBUILD only: the session is
+    /// about to be re-activated, and bouncing it would tell other audio to
+    /// resume and re-trigger the very route churn that caused the rebuild.
+    private func stopEngine(deactivatingSession: Bool = true) {
         tempoTask?.cancel()
         tempoTask = nil
+        if let configurationChangeObserver {
+            NotificationCenter.default.removeObserver(configurationChangeObserver)
+            self.configurationChangeObserver = nil
+        }
         engineRunning = false
         audioEngine?.inputNode.removeTap(onBus: 0)
         audioEngine?.stop()
         audioEngine = nil
-        do {
-            try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-        } catch {
-            log.debug("Session deactivate: \(error.localizedDescription)")
+        if deactivatingSession {
+            do {
+                try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            } catch {
+                log.debug("Session deactivate: \(error.localizedDescription)")
+            }
         }
         extractor.reset()
         Self.publish(.silent)
         Self.publishTempo(bpm: 0, confidence: 0)
+    }
+
+    // MARK: - Hardware reconfiguration
+
+    /// iOS posts `.AVAudioEngineConfigurationChange` when the I/O hardware's
+    /// channel count or sample rate changes (a Bluetooth route coming or
+    /// going, a sample-rate switch) — and it has already STOPPED and
+    /// uninitialized the engine by then. Nothing else says so: the route
+    /// change handler saw `engineRunning == true` and left the dead engine
+    /// alone, `latestFeatures()` kept serving the last hop's levels, and
+    /// `setDemand(true)` reported capture that was not happening.
+    ///
+    /// Scoped to THIS engine (`object:`), and re-checked by identity on the
+    /// main actor, so a notification that arrives after a rebuild cannot tear
+    /// down its successor.
+    private func observeConfigurationChange(of engine: AVAudioEngine) {
+        if let configurationChangeObserver {
+            NotificationCenter.default.removeObserver(configurationChangeObserver)
+        }
+        let engineID = ObjectIdentifier(engine)
+        configurationChangeObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: engine, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, let current = self.audioEngine,
+                      ObjectIdentifier(current) == engineID else { return }
+                await self.rebuildAfterConfigurationChange()
+            }
+        }
+    }
+
+    /// Tear the stopped engine down (which publishes `.silent`, so render
+    /// loops stop reacting to a frozen last hop) and, if anyone still needs
+    /// audio, bring capture back up on the new hardware format.
+    private func rebuildAfterConfigurationChange() async {
+        log.info("Audio engine configuration changed — rebuilding capture")
+        let rebuild = hasActiveDemand
+        stopEngine(deactivatingSession: !rebuild)
+        guard rebuild else { return }
+        await startEngineIfNeeded()
     }
 
     // MARK: - Tempo pass (~2 Hz)
