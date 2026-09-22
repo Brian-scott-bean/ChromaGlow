@@ -12511,4 +12511,45 @@ extension MultiBridgeRoutingTests {
         XCTAssertTrue(reused.alreadyInLibrary)
         XCTAssertEqual(vm.compositionStore.presets.count, libraryBefore + 1)
     }
+
+    /// Audit #9 — "Apply <look> here" copied the source's value scopes but a
+    /// composition's live state is its BOX: the new room started the saved
+    /// design, dropping every unsaved Composer edit.
+    func testApplyCurrentLookCarriesTheSourceCompositionsLiveBox() async throws {
+        bridgeA.stageLights([p7Light("A1", device: "DA1"), p7Light("A2", device: "DA2"),
+                             p7Light("A3", device: "DA3"), p7Light("A4", device: "DA4")])
+        let look = runtimeOnlyPreset(named: "Copy Look")
+        let vm = makeP7FVM(presets: [look])
+        let source = auditRoomA(id: "room-a")
+        let target = RoomDisplayItem(
+            kind: .room, id: "room-c", name: "Den A", archetype: nil,
+            isOn: true, brightness: 50, groupedLightID: "gl-room-c", lightCount: 2,
+            bridgeID: "bridge-a",
+            childResourceRefs: [(rid: "A3", rtype: "light"), (rid: "A4", rtype: "light")])
+        vm.selectedRoom = source
+        await vm.apply(vm.studioCard(for: look), roomOverride: source,
+                       preferEntertainmentOverride: false)
+        let sourceBox = try XCTUnwrap(
+            vm.testActiveCompositionBox(bridgeID: "bridge-a", roomID: source.id),
+            "precondition: the source look is playing (status: \(vm.statusMessage))")
+        sourceBox.palette.color1 = CodableColor(x: 0.2, y: 0.6)
+        sourceBox.envelope.depth = 12
+        let editedPalette = sourceBox.palette
+
+        vm.selectedRoom = target
+        XCTAssertEqual(vm.applyCurrentLookSource?.room.id, source.id, "precondition")
+        await vm.applyCurrentLook(to: target)
+
+        let copied = try XCTUnwrap(
+            vm.testActiveCompositionBox(bridgeID: "bridge-a", roomID: target.id),
+            "the look started here (status: \(vm.statusMessage))")
+        XCTAssertFalse(copied === sourceBox, "an independent instance, never a shared box")
+        XCTAssertEqual(copied.palette, editedPalette, "the unsaved edits came along")
+        XCTAssertEqual(copied.envelope.depth, 12)
+
+        // Independence after the copy.
+        copied.envelope.depth = 80
+        XCTAssertEqual(sourceBox.envelope.depth, 12)
+        XCTAssertNotNil(vm.runningEffect(for: source), "the source keeps playing")
+    }
 }
