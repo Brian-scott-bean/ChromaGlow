@@ -304,7 +304,10 @@ final class RoomDetailViewModel {
     // ──────────────────────────────────────────────
 
     func setColor(x: Double, y: Double, for item: LightDisplayItem) {
-        mutateLight(id: item.id) { $0.colorX = x; $0.colorY = y }
+        // Painting a color puts the light in COLOR mode: the bridge nulls
+        // mirek there, and non-nil mirek is ColorClipboard's CT-mode signal
+        // — leaving it made Copy Color grab the old white, not this color.
+        mutateLight(id: item.id) { $0.colorX = x; $0.colorY = y; $0.colorTempMirek = nil }
         appendLog("🎨 '\(item.name)' color → xy(\(String(format: "%.3f", x)), \(String(format: "%.3f", y)))")
         if isDemoMode { return }
         Task {
@@ -314,7 +317,10 @@ final class RoomDetailViewModel {
                 scheduleColorRefresh()
             } catch {
                 appendLog("❌ Color failed: \(error.localizedDescription)")
-                mutateLight(id: item.id) { $0.colorX = item.colorX; $0.colorY = item.colorY }
+                mutateLight(id: item.id) {
+                    $0.colorX = item.colorX; $0.colorY = item.colorY
+                    $0.colorTempMirek = item.colorTempMirek
+                }
             }
         }
     }
