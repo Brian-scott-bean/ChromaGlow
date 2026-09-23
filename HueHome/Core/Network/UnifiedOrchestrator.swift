@@ -10883,46 +10883,88 @@ final class UnifiedOrchestrator {
     // MARK: - Scene CRUD (Scenes Tab)
     // ──────────────────────────────────────────────────────────────────────────
 
-    /// Optimistically removes the scene from globalScenes, then fires the bridge DELETE.
-    func deleteGlobalScene(_ scene: GlobalSceneItem) {
+    /// Optimistically removes the scene from globalScenes, then DELETEs it on
+    /// the bridge. A refused/failed delete puts the scene back where it was
+    /// and says so. Returns true only once the bridge confirmed (demo mode:
+    /// the local removal is the whole operation) — callers clear the scene's
+    /// identity-keyed state (favorite, usage, provenance) only then.
+    @discardableResult
+    func deleteGlobalScene(_ scene: GlobalSceneItem) async -> Bool {
         // Defense in depth (Family Sharing): the UI hides destructive scene
         // actions on granted bridges — this backstop keeps any missed
         // surface honest.
         guard !isGuestGrantedBridge(scene.bridgeID) else {
-            toastMessage = "Not available with guest access"
-            return
+            showToast("Not available with guest access")
+            return false
         }
+        let originalIndex = globalScenes.firstIndex { $0.id == scene.id }
         globalScenes.removeAll { $0.id == scene.id }
         scheduleWidgetWrite()
-        guard let client = clients[scene.bridgeID] else { return }
-        Task { try? await client.deleteScene(id: scene.bridgeSceneID) }
+        guard !isDemoMode else { return true }
+
+        do {
+            guard let client = clients[scene.bridgeID] else { throw HueAPIError.missingCredentials }
+            try await client.deleteScene(id: scene.bridgeSceneID)
+            return true
+        } catch {
+            // Roll back — unless a reload already brought it back.
+            if !globalScenes.contains(where: { $0.id == scene.id }) {
+                var restored = globalScenes
+                restored.insert(scene, at: min(originalIndex ?? restored.count, restored.count))
+                globalScenes = restored
+                scheduleWidgetWrite()
+            }
+            showToast("Couldn't delete \"\(scene.name)\" — check the bridge connection")
+            return false
+        }
     }
 
-    /// Optimistically renames the scene in globalScenes, then persists to the bridge.
-    func renameGlobalScene(_ scene: GlobalSceneItem, to newName: String) async {
+    /// Optimistically renames the scene in globalScenes, then persists to the
+    /// bridge; a failed rename restores the old name and says so. Names are
+    /// trimmed and capped at the bridge's 32 characters. Returns true once
+    /// the bridge confirmed (demo mode: local rename).
+    @discardableResult
+    func renameGlobalScene(_ scene: GlobalSceneItem, to newName: String) async -> Bool {
         guard !isGuestGrantedBridge(scene.bridgeID) else {
-            toastMessage = "Not available with guest access"
-            return
+            showToast("Not available with guest access")
+            return false
         }
-        // Update locally first so the UI responds instantly
-        if let idx = globalScenes.firstIndex(where: { $0.id == scene.id }) {
+        let name = String(newName.trimmingCharacters(in: .whitespaces).prefix(32))
+        guard !name.isEmpty else { return false }
+
+        func setName(_ value: String, onlyIfCurrently expected: String? = nil) {
+            guard let idx = globalScenes.firstIndex(where: { $0.id == scene.id }) else { return }
+            let current = globalScenes[idx]
+            if let expected, current.name != expected { return }
             var updated = globalScenes
             updated[idx] = GlobalSceneItem(
-                id:            scene.id,
-                bridgeSceneID: scene.bridgeSceneID,
-                name:          newName,
-                roomID:        scene.roomID,
-                bridgeID:      scene.bridgeID,
-                isActive:      scene.isActive,
-                isDynamic:     scene.isDynamic,
-                speed:         scene.speed,
-                paletteXY:     scene.paletteXY
+                id:            current.id,
+                bridgeSceneID: current.bridgeSceneID,
+                name:          value,
+                roomID:        current.roomID,
+                bridgeID:      current.bridgeID,
+                isActive:      current.isActive,
+                isDynamic:     current.isDynamic,
+                speed:         current.speed,
+                paletteXY:     current.paletteXY
             )
             globalScenes = updated
             scheduleWidgetWrite()
         }
-        guard let client = clients[scene.bridgeID] else { return }
-        try? await client.renameScene(id: scene.bridgeSceneID, name: newName)
+
+        // Update locally first so the UI responds instantly
+        setName(name)
+        guard !isDemoMode else { return true }
+        do {
+            guard let client = clients[scene.bridgeID] else { throw HueAPIError.missingCredentials }
+            try await client.renameScene(id: scene.bridgeSceneID, name: name)
+            return true
+        } catch {
+            // Roll back only if nothing renamed it again meanwhile.
+            setName(scene.name, onlyIfCurrently: name)
+            showToast("Couldn't rename \"\(scene.name)\" — check the bridge connection")
+            return false
+        }
     }
 
     /// Fetch the given room/zone's lights from its bridge — the child-ref

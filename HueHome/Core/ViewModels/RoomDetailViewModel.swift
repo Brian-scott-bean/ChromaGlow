@@ -850,7 +850,9 @@ final class RoomDetailViewModel {
 
     /// Rename a scene on the Bridge and update the local strip optimistically.
     func renameScene(_ item: SceneDisplayItem, to newName: String) {
-        let trimmed = newName.trimmingCharacters(in: .whitespaces)
+        // Hue caps metadata.name at 32 characters — the rename alert's
+        // TextField has no limit of its own.
+        let trimmed = String(newName.trimmingCharacters(in: .whitespaces).prefix(32))
         guard !trimmed.isEmpty else { return }
         let oldName = item.name
         // Optimistic update

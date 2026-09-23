@@ -291,3 +291,96 @@ final class OrchestratorOptimisticUpdateTests: XCTestCase {
         }
     }
 }
+
+// MARK: - Scenes-tab delete / rename (optimistic + rollback)
+
+/// Scene CRUD spy: deleteScene/renameScene succeed or throw on demand.
+private final class SceneCRUDSpyBridgeClient: BridgeAPIClient, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _fail = false
+    private var _renamedTo: [String] = []
+    var fail: Bool {
+        get { lock.lock(); defer { lock.unlock() }; return _fail }
+        set { lock.lock(); _fail = newValue; lock.unlock() }
+    }
+    var renamedTo: [String] { lock.lock(); defer { lock.unlock() }; return _renamedTo }
+
+    init() {
+        super.init(bridgeID: "bridge-s", bridgeName: "Scenes Bridge",
+                   ip: "192.0.2.60", token: "test-token")
+    }
+
+    override func deleteScene(id: String) async throws {
+        if fail { throw OrchestratorOptimisticUpdateTestError.forcedGroupedLightFailure }
+    }
+    override func renameScene(id: String, name: String) async throws {
+        lock.lock(); _renamedTo.append(name); let shouldFail = _fail; lock.unlock()
+        if shouldFail { throw OrchestratorOptimisticUpdateTestError.forcedGroupedLightFailure }
+    }
+}
+
+@MainActor
+final class OrchestratorSceneCRUDRollbackTests: XCTestCase {
+
+    /// Scene writes schedule the debounced widget snapshot — drain it so it
+    /// can't land inside another suite's App Group assertions.
+    override func tearDown() async throws {
+        try await Task.sleep(for: .milliseconds(650))
+        try await super.tearDown()
+    }
+
+    private func scene(_ id: String, _ name: String) -> GlobalSceneItem {
+        GlobalSceneItem(id: "bridge-s:\(id)", bridgeSceneID: id, name: name,
+                        roomID: "room-s", bridgeID: "bridge-s",
+                        isActive: false, isDynamic: false, speed: 0.5)
+    }
+
+    private func makeSUT() -> (UnifiedOrchestrator, SceneCRUDSpyBridgeClient) {
+        let orchestrator = UnifiedOrchestrator()
+        let client = SceneCRUDSpyBridgeClient()
+        orchestrator.injectForTesting(clients: ["bridge-s": client])
+        orchestrator.globalScenes = [scene("a", "Alpha"), scene("b", "Bravo"), scene("c", "Charlie")]
+        return (orchestrator, client)
+    }
+
+    func testFailedDeleteRestoresTheSceneInPlaceAndSaysSo() async {
+        let (orchestrator, client) = makeSUT()
+        client.fail = true
+
+        let deleted = await orchestrator.deleteGlobalScene(orchestrator.globalScenes[1])
+
+        XCTAssertFalse(deleted, "callers must not scrub favorites/usage for a live scene")
+        XCTAssertEqual(orchestrator.globalScenes.map(\.bridgeSceneID), ["a", "b", "c"],
+                       "the refused delete rolls back to its original position")
+        XCTAssertNotNil(orchestrator.toastMessage)
+    }
+
+    func testConfirmedDeleteRemovesTheScene() async {
+        let (orchestrator, _) = makeSUT()
+        let deleted = await orchestrator.deleteGlobalScene(orchestrator.globalScenes[0])
+        XCTAssertTrue(deleted)
+        XCTAssertEqual(orchestrator.globalScenes.map(\.bridgeSceneID), ["b", "c"])
+    }
+
+    func testFailedRenameRestoresTheOldName() async {
+        let (orchestrator, client) = makeSUT()
+        client.fail = true
+
+        let renamed = await orchestrator.renameGlobalScene(orchestrator.globalScenes[0], to: "Omega")
+
+        XCTAssertFalse(renamed)
+        XCTAssertEqual(orchestrator.globalScenes[0].name, "Alpha")
+        XCTAssertNotNil(orchestrator.toastMessage)
+    }
+
+    func testRenameIsTrimmedAndCappedAtTheBridgeLimit() async {
+        let (orchestrator, client) = makeSUT()
+        let long = "  " + String(repeating: "x", count: 40) + "  "
+
+        let renamed = await orchestrator.renameGlobalScene(orchestrator.globalScenes[0], to: long)
+
+        XCTAssertTrue(renamed)
+        XCTAssertEqual(client.renamedTo, [String(repeating: "x", count: 32)])
+        XCTAssertEqual(orchestrator.globalScenes[0].name.count, 32)
+    }
+}
