@@ -4121,23 +4121,30 @@ final class StudioViewModel {
 
     /// Explicit stop — called when user taps the stop button directly.
     /// Turns off the room's lights.
-    func explicitStop(_ card: StudioCard) async {
-        await serialized { [weak self] in await self?.explicitStopCore(card) }
+    ///
+    /// The target is resolved at the TAP, never when the lifecycle chain gets
+    /// round to it: a stop queued behind a slow apply used to read
+    /// `selectedRoom` then, so a rolodex scrub in between stopped whichever
+    /// room was selected by that time. `key` is the exact row the tapped
+    /// control belongs to; without one, the selection at the call is used.
+    func explicitStop(_ card: StudioCard, at key: StudioSelectionKey? = nil) async {
+        guard let key = key ?? selectedRoom.map(StudioSelectionKey.init) else { return }
+        await serialized { [weak self] in await self?.explicitStopCore(card, at: key) }
     }
 
-    private func explicitStopCore(_ card: StudioCard) async {
-        guard let room = selectedRoom else { return }
+    private func explicitStopCore(_ card: StudioCard, at key: StudioSelectionKey) async {
         let context = UnifiedOrchestrator.StopAuditContext(
             route: .explicitStop, cardOrEffectID: card.id)
-        // Audit note: this route targets the SELECTED room's row, not the
-        // tapped card's — record both identities so a hardware trace can say
-        // whether they disagreed.
+        // Audit note: record the row the tap captured and the tapped card,
+        // so a hardware trace can say whether they disagreed.
         orchestrator?.recordStopAudit(context, operation: .stopRequested,
-                                      bridgeID: room.bridgeID, roomID: room.id,
+                                      bridgeID: key.bridgeID, roomID: key.groupID,
                                       cardOrEffectID: card.id,
-                                      outcomeReason: "explicitStopEntry selectedRoom=\(room.id)")
+                                      outcomeReason: "explicitStopEntry capturedRoom=\(key.groupID)")
+        // The tapped look, not whatever a queued apply put there since.
+        guard runningEffects[key]?.cardID == card.id else { return }
         isExplicitStop = true
-        await stopEffect(on: StudioSelectionKey(room: room), context: context)
+        await stopEffect(on: key, context: context)
         statusMessage = ""
     }
 
