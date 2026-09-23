@@ -79,6 +79,10 @@ final class RoomDetailViewModel {
     // MARK: Dependencies
     private let api: HueAPIClient?
     private let isDemoMode: Bool
+    /// Per-bridge pacing gate for multi-light (bulk) writes — the
+    /// orchestrator's shared gate in production, so these bursts queue
+    /// behind every other bulk writer on the same bridge (M-08).
+    private let commandGate: BridgeCommandGate
     private let log = Logger(subsystem: "com.lightshade.app", category: "RoomDetail")
     /// Called after a color/CT commit succeeds — injected by RoomDetailView
     /// to trigger orchestrator.refreshDominantColors(for: bridgeID).
@@ -100,9 +104,11 @@ final class RoomDetailViewModel {
     init(room: RoomDisplayItem,
          api: HueAPIClient? = nil,
          isDemoMode: Bool = false,
-         initialLights: [LightDisplayItem] = []) {
+         initialLights: [LightDisplayItem] = [],
+         commandGate: BridgeCommandGate = BridgeCommandGate()) {
         self.room       = room
         self.api        = api
+        self.commandGate = commandGate
         self.isDemoMode = isDemoMode || (api == nil)
         self.lights     = initialLights
         // Seed room-level state from the display item so the header is correct on
@@ -403,12 +409,52 @@ final class RoomDetailViewModel {
 
     /// Turn all selected lights on or off.
     func setSelectedLightsOn(_ on: Bool) {
-        for light in selectedLights { setLight(light, isOn: on) }
+        let targets = selectedLights
+        guard !targets.isEmpty else { return }
+        for light in targets { mutateLight(id: light.id) { $0.isOn = on } }
+        appendLog("🔄 Bulk: \(targets.count) light(s) → \(on ? "ON" : "OFF")")
+        sendBulk(targets) { api, id in
+            try await api.setLight(id: id, on: on)
+        }
     }
 
     /// Set brightness on all selected lights.
     func setSelectedLightsBrightness(_ pct: Double) {
-        for light in selectedLights { setBrightness(pct, for: light) }
+        let targets = selectedLights
+        guard !targets.isEmpty else { return }
+        let clamped = min(100, max(1, pct))
+        for light in targets { mutateLight(id: light.id) { $0.brightness = clamped; $0.isOn = true } }
+        appendLog("🌓 Bulk: \(targets.count) light(s) → \(Int(clamped))%")
+        sendBulk(targets) { api, id in
+            try await api.setLightState(id: id, on: true, brightness: clamped)
+        }
+    }
+
+    /// Bulk writes used to fire one UNPACED request per light (a Task each)
+    /// — past ~10 lights the bridge silently drops the excess. They now go
+    /// through the per-bridge BridgeCommandGate one light at a time (paced
+    /// starts, one retry), and any light that still fails is restored to
+    /// its pre-bulk on/brightness with a single toast.
+    private func sendBulk(_ targets: [LightDisplayItem],
+                          _ write: @escaping @Sendable (HueAPIClient, String) async throws -> Void) {
+        if isDemoMode { return }
+        guard let api else { return }
+        let gate = commandGate
+        Task {
+            var failed: [LightDisplayItem] = []
+            for light in targets {
+                let id = light.id
+                if await gate.send({ try await write(api, id) }) != nil {
+                    failed.append(light)
+                }
+            }
+            guard !failed.isEmpty else { return }
+            appendLog("❌ Bulk write failed for \(failed.count) light(s)")
+            for before in failed {
+                mutateLight(id: before.id) { $0.isOn = before.isOn; $0.brightness = before.brightness }
+            }
+            showToast("Couldn't reach bridge — \(failed.count) light\(failed.count == 1 ? "" : "s") reverted")
+        }
     }
 
     // ──────────────────────────────────────────────

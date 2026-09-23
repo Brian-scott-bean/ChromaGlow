@@ -326,6 +326,31 @@ final class RoomAggregateTests: XCTestCase {
         XCTAssertEqual(vm.lights[0].brightness, 20)
     }
 
+    // ── Bulk (multi-select) writes ───────────────────────────
+
+    /// Bulk On goes through the pacing gate — one command per light, starts
+    /// spaced to the bridge budget — and a light that still fails after the
+    /// gate's retry is restored with one toast.
+    func testBulkOnIsPacedAndFailedLightsRollBack() async {
+        let spy = RoomDetailSpyAPIClient()
+        spy.failing = ["setLight"]
+        let vm = liveVM([light("l1", on: false, brightness: 40),
+                         light("l2", on: false, brightness: 50)], api: spy)
+        vm.enterSelectMode()
+        vm.selectAll()
+        let started = ContinuousClock.now
+
+        vm.setSelectedLightsOn(true)
+        XCTAssertEqual(vm.lights.map(\.isOn), [true, true], "optimistic")
+        await awaitRoomDetail(timeout: 5) { vm.toastMessage != nil }
+
+        XCTAssertEqual(vm.lights.map(\.isOn), [false, false], "failed lights restored")
+        XCTAssertEqual(spy.calls.filter { $0 == "setLight" }.count, 4,
+                       "one command per light, retried once by the gate")
+        XCTAssertGreaterThanOrEqual(started.duration(to: .now), .milliseconds(300),
+                                    "four gated starts are paced ~100ms apart")
+    }
+
     /// A grouped_light can report brightness 0; the bar's range is 1…100.
     func testLoadRoomStateClampsGroupedBrightnessZero() async throws {
         let spy = RoomDetailSpyAPIClient()
