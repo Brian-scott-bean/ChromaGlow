@@ -26,12 +26,37 @@ final class DevicesViewModel {
     // MARK: - Init
     init() {}
 
+    /// Family Sharing: per granted bridge, the resource ids (devices and
+    /// lights) of the rooms/zones the guest may see. Absent = owned bridge,
+    /// everything visible. allRooms/allZones are already pruned by the
+    /// orchestrator's one choke point, so this inherits the allowlist.
+    private var visibleRIDsByBridge: [String: Set<String>] = [:]
+
     func configure(bridgeIDs: [String], orchestrator: UnifiedOrchestrator) {
         isDemoMode    = orchestrator.isDemoMode
         bridgeClients = bridgeIDs.compactMap { id in
             guard let api = orchestrator.hueClient(for: id) else { return nil }
             return (id: id, api: api)
         }
+        let groups = orchestrator.allRooms + orchestrator.allZones
+        visibleRIDsByBridge = [:]
+        for id in bridgeIDs where orchestrator.isGuestGrantedBridge(id) {
+            visibleRIDsByBridge[id] = Set(
+                groups.filter { $0.bridgeID == id }
+                      .flatMap { $0.childResourceRefs.map(\.rid) }
+            )
+        }
+    }
+
+    /// Pure: a device is listed when its bridge is owned (`allowedRIDs` nil)
+    /// or when it — or one of its services (its lights) — is a child of a
+    /// room/zone the guest was granted. An empty allowlist shows nothing
+    /// (fails closed, like the room filter).
+    nonisolated static func isDeviceVisible(deviceID: String,
+                                            serviceRIDs: [String],
+                                            allowedRIDs: Set<String>?) -> Bool {
+        guard let allowedRIDs else { return true }
+        return allowedRIDs.contains(deviceID) || serviceRIDs.contains(where: allowedRIDs.contains)
     }
 
     // MARK: - Load
@@ -77,6 +102,7 @@ final class DevicesViewModel {
     }
 
     private func fetchFromBridge(_ api: HueAPIClient, bridgeID: String) async -> [DeviceDisplayItem] {
+        let allowedRIDs = visibleRIDsByBridge[bridgeID]
         do {
             let raw = try await api.fetchDevicesRaw()
             appendLog("📡 Bridge \(bridgeID.prefix(8))… \(raw.count) bytes")
@@ -102,6 +128,12 @@ final class DevicesViewModel {
 
                 // Skip the bridge device itself — it's not interesting in the list
                 if deviceType == .bridge { return nil }
+                // Guest: only devices in granted rooms/zones.
+                guard Self.isDeviceVisible(
+                    deviceID: id,
+                    serviceRIDs: services.compactMap { $0["rid"] as? String },
+                    allowedRIDs: allowedRIDs
+                ) else { return nil }
 
                 return DeviceDisplayItem(
                     id:              "\(bridgeID):\(id)",
