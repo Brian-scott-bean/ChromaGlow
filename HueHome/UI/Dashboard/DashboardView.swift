@@ -1020,8 +1020,10 @@ struct RoomCard: View {
                 Text(room.name)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(.white)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.8)
+                    // A one-word name never breaks mid-word ("Bathroo / m");
+                    // it shrinks to fit instead. Multi-word names wrap at spaces.
+                    .lineLimit(room.name.contains(" ") ? 2 : 1)
+                    .minimumScaleFactor(0.7)
                 Text("\(room.lightCount) light\(room.lightCount == 1 ? "" : "s")")
                     .font(.system(size: 10))
                     .foregroundStyle(.white.opacity(0.45))
