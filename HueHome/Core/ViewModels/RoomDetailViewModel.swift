@@ -501,10 +501,14 @@ final class RoomDetailViewModel {
             }
             return
         }
+        var reportedBrightness: Double? = nil
         do {
             let gl = try await api.fetchGroupedLight(id: glID)
             roomIsOn = gl.on.on
-            roomBrightness = gl.dimming?.brightness ?? 100
+            reportedBrightness = gl.dimming?.brightness ?? 100
+            // A grouped_light can report 0 (all members off); the bar's
+            // range is 1…100 like every other write site (SSE clamps too).
+            roomBrightness = min(100, max(1, reportedBrightness ?? 100))
         } catch {
             appendLog("⚠️ Failed to load grouped_light state: \(error.localizedDescription)")
         }
@@ -514,14 +518,39 @@ final class RoomDetailViewModel {
         if anyLightOn && !roomIsOn {
             roomIsOn = true
             let onLights = lights.filter { $0.isOn }
-            if roomBrightness == 0 || roomBrightness == 100 {
-                roomBrightness = onLights.map(\.brightness).reduce(0, +) / Double(max(1, onLights.count))
+            if reportedBrightness == 0 || reportedBrightness == 100 {
+                roomBrightness = min(100, max(1,
+                    onLights.map(\.brightness).reduce(0, +) / Double(max(1, onLights.count))))
             }
         }
     }
 
+    /// Undo an optimistic room-level write that the bridge refused: put
+    /// every card and the master bar back exactly as they were (not an
+    /// approximation like "every light = !on"), and end the echo-suppression
+    /// window so SSE truth flows again.
+    private func rollBackRoomWrite(lights previousLights: [LightDisplayItem],
+                                   isOn previousOn: Bool,
+                                   brightness previousBrightness: Double) {
+        pendingMasterWriteDeadline = nil
+        let previousByID = Dictionary(previousLights.map { ($0.id, $0) },
+                                      uniquingKeysWith: { first, _ in first })
+        lights = lights.map { current in
+            guard let before = previousByID[current.id] else { return current }
+            var restored = current
+            restored.isOn = before.isOn
+            restored.brightness = before.brightness
+            return restored
+        }
+        roomIsOn = previousOn
+        roomBrightness = previousBrightness
+    }
+
     /// Toggle all lights in the room on or off.
     func toggleRoom(on: Bool) {
+        let previousLights = lights
+        let previousOn = roomIsOn
+        let previousBrightness = roomBrightness
         beginMasterWriteWindow()
         roomIsOn = on
         // Optimistically update all light cards so they reflect the toggle immediately
@@ -535,15 +564,18 @@ final class RoomDetailViewModel {
                 appendLog("✅ Room '\(room.name)' → \(on ? "ON" : "OFF")")
             } catch {
                 appendLog("❌ Room toggle failed: \(error.localizedDescription)")
-                roomIsOn = !on
-                // Rollback light cards too
-                lights = lights.map { var l = $0; l.isOn = !on; return l }
+                // Restore each card's OWN previous state — "every light =
+                // !on" turned on lights that were off before (and vice versa).
+                rollBackRoomWrite(lights: previousLights, isOn: previousOn,
+                                  brightness: previousBrightness)
                 showToast("Couldn't reach bridge — room reverted")
             }
         }
     }
 
     func setRoomBrightness(_ brightness: Double) {
+        let previousLights = lights
+        let previousOn = roomIsOn
         beginMasterWriteWindow()
         let clamped = min(100, max(1, brightness))
         let previous = roomBrightness
@@ -560,7 +592,10 @@ final class RoomDetailViewModel {
                 appendLog("✅ Room brightness set to \(Int(clamped))%")
             } catch {
                 appendLog("❌ Room brightness failed: \(error.localizedDescription)")
-                roomBrightness = previous
+                // Cards were optimistically set on + re-dimmed — undo those too.
+                rollBackRoomWrite(lights: previousLights, isOn: previousOn,
+                                  brightness: previous)
+                showToast("Couldn't reach bridge — room reverted")
             }
         }
     }
@@ -573,6 +608,7 @@ final class RoomDetailViewModel {
     /// PUT, unlike the Dashboard bar's all-rooms loop. Same shared catalog, so
     /// "Energize" here and "Energize" there mean the same brightness + mirek.
     func applyPreset(_ preset: LightingPreset) {
+        let previousLights = lights
         beginMasterWriteWindow()
         let previousOn = roomIsOn
         let previousBrightness = roomBrightness
@@ -594,8 +630,8 @@ final class RoomDetailViewModel {
                 appendLog("✅ Preset '\(preset.name)' applied to '\(room.name)'")
             } catch {
                 appendLog("❌ Preset failed: \(error.localizedDescription)")
-                roomIsOn = previousOn
-                roomBrightness = previousBrightness
+                rollBackRoomWrite(lights: previousLights, isOn: previousOn,
+                                  brightness: previousBrightness)
                 showToast("Couldn't reach bridge — room reverted")
             }
         }
