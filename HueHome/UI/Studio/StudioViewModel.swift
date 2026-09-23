@@ -4776,8 +4776,25 @@ final class StudioViewModel {
 
     func deleteCompositionPreset(_ preset: CompositionPreset) async {
         let card = studioCard(for: preset)
-        if runningCardID == card.id {
-            await explicitStop(card)
+        // A built-in the catalog still ships is RESET, not deleted: the look
+        // keeps existing, so switching its rooms off would be a side effect
+        // the user never asked for.
+        let isReset = preset.isBuiltIn
+            && CompositionStore.builtInPresets.contains { $0.id == preset.id }
+        await serialized { [weak self] in
+            guard let self else { return }
+            // EVERY row playing this preset, each by its exact key. Gating on
+            // `runningCardID` stopped it only in the SELECTED room and left
+            // other rooms' rows orphaned on a preset that no longer existed.
+            let keys = self.runningEffects.compactMap { key, effect in
+                effect.cardID == card.id ? key : nil
+            }
+            let context = UnifiedOrchestrator.StopAuditContext(
+                route: .explicitStop, cardOrEffectID: card.id)
+            for key in keys {
+                self.isExplicitStop = !isReset
+                await self.stopEffect(on: key, context: context)
+            }
         }
         compositionStore.delete(preset)
     }

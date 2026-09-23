@@ -12552,4 +12552,61 @@ extension MultiBridgeRoutingTests {
         XCTAssertEqual(sourceBox.envelope.depth, 12)
         XCTAssertNotNil(vm.runningEffect(for: source), "the source keeps playing")
     }
+
+    /// A second REST room on bridge A whose lights don't overlap `auditRoomA`.
+    private func auditRoomC() -> RoomDisplayItem {
+        RoomDisplayItem(
+            kind: .room, id: "room-c", name: "Den A", archetype: nil,
+            isOn: true, brightness: 50, groupedLightID: "gl-room-c", lightCount: 2,
+            bridgeID: "bridge-a",
+            childResourceRefs: [(rid: "A3", rtype: "light"), (rid: "A4", rtype: "light")])
+    }
+
+    /// Audit #11 — deleting a preset stopped it only in the SELECTED room
+    /// (the gate was selection-scoped `runningCardID`), orphaning its rows in
+    /// every other room on a preset that no longer existed.
+    func testDeletingAPresetStopsItInEveryRoom() async throws {
+        bridgeA.stageLights([p7Light("A1", device: "DA1"), p7Light("A2", device: "DA2"),
+                             p7Light("A3", device: "DA3"), p7Light("A4", device: "DA4")])
+        let look = runtimeOnlyPreset(named: "Doomed Look")
+        let vm = makeP7FVM(presets: [look])
+        let card = vm.studioCard(for: look)
+        let roomA = auditRoomA(), roomC = auditRoomC()
+        vm.selectedRoom = roomA
+        await vm.apply(card, roomOverride: roomA, preferEntertainmentOverride: false)
+        await vm.apply(card, roomOverride: roomC, preferEntertainmentOverride: false)
+        XCTAssertNotNil(vm.runningEffect(for: roomA), "precondition (status: \(vm.statusMessage))")
+        XCTAssertNotNil(vm.runningEffect(for: roomC), "precondition (status: \(vm.statusMessage))")
+
+        await vm.deleteCompositionPreset(look)
+
+        XCTAssertNil(vm.runningEffect(for: roomA))
+        XCTAssertNil(vm.runningEffect(for: roomC), "the unselected room's row is stopped too")
+        XCTAssertFalse(vm.compositionStore.presets.contains { $0.id == look.id })
+        XCTAssertTrue(bridgeA.groupedPowerIDs.contains("gl-room-c:false"),
+                      "a real delete is still the explicit stop it always was")
+    }
+
+    /// …and "deleting" a shipped built-in is a RESET: the look keeps existing,
+    /// so its room must not be switched off.
+    func testResettingARunningBuiltInDoesNotSwitchTheRoomOff() async throws {
+        bridgeA.stageLights([p7Light("A1", device: "DA1"), p7Light("A2", device: "DA2")])
+        let vm = makeP7FVM()
+        let builtIn = try XCTUnwrap(vm.compositionStore.presets.first {
+            $0.isBuiltIn && $0.capabilityTier == .runtimeOnly && !$0.reaction.requiresMic
+        })
+        let room = auditRoomA()
+        vm.selectedRoom = room
+        await vm.apply(vm.studioCard(for: builtIn), roomOverride: room,
+                       preferEntertainmentOverride: false)
+        XCTAssertNotNil(vm.runningEffect(for: room), "precondition (status: \(vm.statusMessage))")
+
+        await vm.deleteCompositionPreset(builtIn)
+
+        XCTAssertNil(vm.runningEffect(for: room))
+        XCTAssertFalse(bridgeA.groupedPowerIDs.contains("gl-room-a:false"),
+                       "a reset must not turn the lights off")
+        XCTAssertTrue(vm.compositionStore.presets.contains { $0.id == builtIn.id },
+                      "the built-in was reset, not removed")
+    }
 }
