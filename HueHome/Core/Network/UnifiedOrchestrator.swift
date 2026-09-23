@@ -1131,7 +1131,11 @@ final class UnifiedOrchestrator {
     @ObservationIgnored
     private lazy var sseSession: URLSession = {
         let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest  = .infinity   // required for indefinite SSE
+        // The request timeout is an IDLE timer — reset by every byte that
+        // arrives — so a finite value is the stream's watchdog, not a cap on
+        // its lifetime (the resource timeout stays unlimited). See
+        // `sseIdleTimeout`.
+        config.timeoutIntervalForRequest  = Self.sseIdleTimeout
         config.timeoutIntervalForResource = .infinity
         return URLSession(
             configuration: config,
@@ -2609,6 +2613,29 @@ final class UnifiedOrchestrator {
         (response as? HTTPURLResponse)?.statusCode == 200
     }
 
+    /// How long an OPEN event stream may stay silent before it is presumed
+    /// dead and re-dialled.
+    ///
+    /// With infinite timeouts a half-open TCP connection — a bridge reboot, a
+    /// Wi-Fi roam the stack didn't surface — was never noticed: we only
+    /// receive, so nothing ever errors, and live updates silently stopped for
+    /// the rest of the foreground session. The bridge sends NO periodic
+    /// keep-alive on /eventstream (only a greeting on connect — aiohue
+    /// documents this and works around it by rewriting a geofence client
+    /// every minute, which we will not do to a user's bridge), so silence is
+    /// ambiguous: a quiet home looks exactly like a dead link. Hence the
+    /// generous window, and an idle expiry reconnects IMMEDIATELY with no
+    /// backoff and no status flicker — in a quiet home it costs one cheap
+    /// reconnect per window and no missed events.
+    nonisolated static let sseIdleTimeout: TimeInterval = 180
+
+    /// Did an OPEN stream end because it went silent for `sseIdleTimeout`?
+    /// A timeout before the stream opened is an ordinary connect failure and
+    /// takes the normal backoff.
+    nonisolated static func isSSEIdleTimeout(_ error: Error, streamWasOpen: Bool) -> Bool {
+        streamWasOpen && (error as? URLError)?.code == .timedOut
+    }
+
     /// Run a persistent SSE connection for one bridge.
     ///
     /// Key energy improvements over the previous implementation:
@@ -2632,9 +2659,15 @@ final class UnifiedOrchestrator {
         var retryDelay: UInt64 = 5_000_000_000   // 5 s initial
         let maxDelay:   UInt64 = 60_000_000_000  // 60 s ceiling
 
+        /// True after an open stream went silent for `sseIdleTimeout`: re-dial
+        /// at once, and keep showing `.connected` — a quiet home is healthy.
+        var idleRedial = false
+
         while !Task.isCancelled {
+            var streamWasOpen = false
             do {
-                connectionStatus[bridgeID] = .connecting
+                if !idleRedial { connectionStatus[bridgeID] = .connecting }
+                idleRedial = false
                 // L-09: the stream URL embeds the bridge LAN IP — log only the bridge id.
                 log.info("SSE: Connecting [\(bridgeID, privacy: .public)]")
 
@@ -2647,6 +2680,7 @@ final class UnifiedOrchestrator {
                     bytes.task.cancel()
                     throw HueAPIError.httpError((response as? HTTPURLResponse)?.statusCode ?? -1)
                 }
+                streamWasOpen = true
                 connectionStatus[bridgeID] = .connected
                 StartupTimeline.mark("sse.connected", bridgeID)
                 retryDelay = 5_000_000_000   // reset on successful connection
@@ -2686,6 +2720,15 @@ final class UnifiedOrchestrator {
 
             } catch {
                 guard !Task.isCancelled else { return }
+                if Self.isSSEIdleTimeout(error, streamWasOpen: streamWasOpen) {
+                    // Idle watchdog: nothing arrived for the whole window.
+                    // Possibly a half-open link, possibly just a quiet home —
+                    // either way a fresh stream costs one request and misses
+                    // nothing, whereas a backoff sleep here would drop events.
+                    log.info("SSE: \(bridgeID) silent for \(Int(Self.sseIdleTimeout))s — re-dialling")
+                    idleRedial = true
+                    continue
+                }
                 connectionStatus[bridgeID] = .error(error.localizedDescription)
                 log.error("SSE error [\(bridgeID)]: \(error.localizedDescription)")
             }

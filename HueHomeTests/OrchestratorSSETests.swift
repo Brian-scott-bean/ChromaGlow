@@ -503,6 +503,32 @@ final class OrchestratorSSETests: XCTestCase {
             "a non-HTTP response is never a stream")
     }
 
+    // MARK: - SSE-11 idle watchdog
+
+    /// Infinite timeouts meant a half-open stream (bridge reboot, silent Wi-Fi
+    /// roam) was never noticed. The request timeout is URLSession's idle timer,
+    /// so a finite window is the watchdog; only a timeout on an OPEN stream is
+    /// an idle expiry (re-dial at once) — a connect timeout keeps the backoff.
+    func testOnlyASilentOpenStreamCountsAsAnIdleExpiry() {
+        let timedOut = URLError(.timedOut)
+        XCTAssertTrue(UnifiedOrchestrator.isSSEIdleTimeout(timedOut, streamWasOpen: true))
+        XCTAssertFalse(UnifiedOrchestrator.isSSEIdleTimeout(timedOut, streamWasOpen: false),
+            "a bridge that never answered is a connect failure — it keeps the backoff")
+        XCTAssertFalse(UnifiedOrchestrator.isSSEIdleTimeout(
+            URLError(.networkConnectionLost), streamWasOpen: true))
+        XCTAssertFalse(UnifiedOrchestrator.isSSEIdleTimeout(
+            HueAPIError.httpError(503), streamWasOpen: true))
+        XCTAssertFalse(UnifiedOrchestrator.isSSEIdleTimeout(
+            CancellationError(), streamWasOpen: true))
+    }
+
+    /// The bridge sends no periodic keep-alive, so the window must be finite
+    /// (the old `.infinity` never fired) but generous — in a quiet home every
+    /// expiry costs a reconnect.
+    func testTheIdleWindowIsFiniteAndGenerous() {
+        XCTAssertEqual(UnifiedOrchestrator.sseIdleTimeout, 180)
+    }
+
     // MARK: CRUD fixtures
 
     private final class CRUDSpyClient: BridgeAPIClient, @unchecked Sendable {
