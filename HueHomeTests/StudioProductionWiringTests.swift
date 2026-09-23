@@ -1763,6 +1763,28 @@ final class StudioProductionWiringTests: XCTestCase {
         let view = try? productionCode("HueHome/UI/Studio/StudioView.swift")
         XCTAssertTrue(view?.contains("drainStudioAction: seedSelectionAndDrainStudioAction") ?? false)
     }
+
+    /// Audit #12 — StudioCardView's `==` compared the card id only, so a
+    /// renamed preset kept its old name on screen and the stale onTap applied
+    /// the OLD card.
+    func testStudioCardViewEqualityNoticesARename() {
+        var preset = compositionPreset()
+        let before = vm.studioCard(for: preset)
+        preset.name = "Midnight Drift"
+        let renamed = vm.studioCard(for: preset)
+        XCTAssertEqual(before.id, renamed.id, "precondition: same card identity")
+
+        func view(_ card: StudioCard) -> StudioCardView {
+            StudioCardView(card: card, isRunning: false, roomSelected: true,
+                           isVisible: true, onTap: {})
+        }
+        XCTAssertTrue(view(before) == view(before))
+        XCTAssertFalse(view(before) == view(renamed), "a rename must re-render the card")
+
+        preset.icon = "moon.stars.fill"
+        XCTAssertFalse(view(renamed) == view(vm.studioCard(for: preset)),
+                       "…and so must a new icon")
+    }
 }
 
 /// Holds a `RestSender` busy on demand, so "this closure is still pending"
