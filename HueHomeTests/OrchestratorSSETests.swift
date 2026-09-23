@@ -529,6 +529,53 @@ final class OrchestratorSSETests: XCTestCase {
         XCTAssertEqual(UnifiedOrchestrator.sseIdleTimeout, 180)
     }
 
+    // MARK: - SSE-12 addBridge streams; removeBridge drops its scenes
+
+    /// `addBridge` + `loadAll` never started SSE, and a re-pair reusing the
+    /// record kept the stream that captured the OLD client (IP/token).
+    func testAddingABridgeStartsItsStreamAndARePairRetiresTheStaleOne() throws {
+        let id = "sse-add-\(UUID().uuidString)"
+        try KeychainManager.shared.saveCredentials(ip: "192.0.2.61", token: "tok-old", for: id)
+        defer { KeychainManager.shared.deleteCredentials(for: id) }
+        let orchestrator = UnifiedOrchestrator()
+        defer { orchestrator.stopSSE() }
+        let record = BridgeRecord(id: id, name: "Added", host: "192.0.2.61")
+
+        orchestrator.addBridge(record)
+        let first = try XCTUnwrap(orchestrator.testSSETask(bridgeID: id),
+            "a bridge added mid-session must get its live event stream")
+
+        try KeychainManager.shared.saveCredentials(ip: "192.0.2.62", token: "tok-new", for: id)
+        orchestrator.addBridge(record)   // re-pair onto the same record id
+        let second = try XCTUnwrap(orchestrator.testSSETask(bridgeID: id))
+
+        XCTAssertTrue(first.isCancelled, "the stream holding the old client is retired")
+        XCTAssertFalse(second.isCancelled)
+        XCTAssertNotEqual(first, second)
+    }
+
+    func testRemovingABridgeDropsOnlyItsScenes() async {
+        let gone = "rm-gone-\(UUID().uuidString)", kept = "rm-kept-\(UUID().uuidString)"
+        let orchestrator = UnifiedOrchestrator()
+        orchestrator.injectForTesting(clients: [
+            gone: BridgeAPIClient(bridgeID: gone, bridgeName: "Gone", ip: "192.0.2.71", token: "t"),
+            kept: BridgeAPIClient(bridgeID: kept, bridgeName: "Kept", ip: "192.0.2.72", token: "t"),
+        ])
+        orchestrator.globalScenes = [
+            GlobalSceneItem(id: "\(gone):s1", bridgeSceneID: "s1", name: "Relax",
+                            roomID: "room-001", bridgeID: gone,
+                            isActive: false, isDynamic: false, speed: 0.5),
+            GlobalSceneItem(id: "\(kept):s1", bridgeSceneID: "s1", name: "Relax",
+                            roomID: "room-001", bridgeID: kept,
+                            isActive: false, isDynamic: false, speed: 0.5),
+        ]
+
+        await orchestrator.removeBridge(id: gone)
+
+        XCTAssertEqual(orchestrator.globalScenes.map(\.bridgeID), [kept],
+            "a removed bridge's scenes must not linger in the Scenes tab or the widgets")
+    }
+
     // MARK: CRUD fixtures
 
     private final class CRUDSpyClient: BridgeAPIClient, @unchecked Sendable {
