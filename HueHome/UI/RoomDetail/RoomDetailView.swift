@@ -902,6 +902,9 @@ struct RoomDetailView: View {
                             .symbolEffect(.bounce, value: vm.roomIsOn)
                     }
                     .buttonStyle(.plain)
+                    // Icon-only — VoiceOver read just "power circle".
+                    .accessibilityLabel(Text("Turn \(room.name) \(vm.roomIsOn ? "off" : "on")"))
+                    .accessibilityValue(Text(vm.roomIsOn ? "On" : "Off"))
                 }
             }
 
@@ -1339,6 +1342,9 @@ struct CompactLightCard: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                // Same labelling as LightCard's power button.
+                .accessibilityLabel(Text("Turn \(light.name) \(localIsOn ? "off" : "on")"))
+                .accessibilityHint(Text(localIsOn ? "Tap to turn off" : "Tap to turn on"))
             }
         }
         .frame(width: 110)
