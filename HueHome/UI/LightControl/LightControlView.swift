@@ -198,10 +198,11 @@ struct LightControlView: View {
                         hue: $liveHue,
                         saturation: $liveSaturation
                     ) { h, s in
-                        // Commit: convert HSB → xy and call API
+                        // Commit: convert HSB → xy and call API. The host's
+                        // onColor does the optimistic model write (and owns
+                        // the rollback) — writing the binding first made the
+                        // rollback "restore" the new value.
                         let (x, y) = HueColorUtils.xyFrom(hue: h, saturation: s, brightness: 1)
-                        light.colorX = x
-                        light.colorY = y
                         selectedSwatch = ColorSwatch.nearest(hue: h, saturation: s)
                         HapticManager.shared.heavy()
                         onColor(x, y)
@@ -259,13 +260,10 @@ struct LightControlView: View {
             liveHue = h
             liveSaturation = s
             selectedSwatch = nil
-            light.colorX = x
-            light.colorY = y
             onColor(x, y)
             commitSavedBrightness(brightness)
         case .colorTemp(let mirek, let brightness):
             liveMirek = mirek
-            light.colorTempMirek = mirek
             onColorTemp(mirek)
             commitSavedBrightness(brightness)
         case .brightnessOnly(let brightness):
@@ -276,8 +274,7 @@ struct LightControlView: View {
 
     private func commitSavedBrightness(_ brightness: Double) {
         displayBrightness = brightness
-        light.brightness = brightness
-        onBrightness(brightness)
+        onBrightness(brightness)   // host writes the model (and rolls back)
     }
 
     private var colorSwatchRow: some View {
@@ -292,8 +289,6 @@ struct LightControlView: View {
                         let (x, y) = HueColorUtils.xyFrom(
                             hue: swatch.hue, saturation: swatch.saturation, brightness: 1
                         )
-                        light.colorX = x
-                        light.colorY = y
                         HapticManager.shared.heavy()
                         onColor(x, y)
                     } label: {
@@ -336,8 +331,8 @@ struct LightControlView: View {
                         mirekMax: light.mirekMax
                     ) { mirek in
                         liveMirek = mirek                // update label once on release
-                        light.colorTempMirek = mirek     // optimistic model update
                         HapticManager.shared.heavy()
+                        // onColorTemp does the optimistic model write + rollback.
                         onColorTemp(mirek)
                     }
                     .padding(.top, 16)
@@ -385,8 +380,7 @@ struct LightControlView: View {
                     glowColor: glowColor,
                     onCommit: { newBrightness in
                         displayBrightness = newBrightness    // update label once on release
-                        light.brightness  = newBrightness    // optimistic model update
-                        onBrightness(newBrightness)          // fire API
+                        onBrightness(newBrightness)          // optimistic model write + API + rollback
                     }
                 )
                 .padding(.vertical, 16)
