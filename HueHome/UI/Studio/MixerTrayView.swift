@@ -153,7 +153,10 @@ struct StudioCustomizationHost: View {
                     detailsOpen: vm.sessionMemory.binding(
                         for: effect.identity.targetKey, \.identityPanelOpen),
                     onStop: {
-                        Task { await vm.explicitStop(card) }
+                        // The exact row this header shows, captured at the
+                        // tap — never re-resolved when the chain runs.
+                        let key = StudioSelectionKey(room: effect.room)
+                        Task { await vm.explicitStop(card, at: key) }
                         HapticManager.shared.medium()
                     }
                 )

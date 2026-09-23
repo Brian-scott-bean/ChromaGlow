@@ -1785,6 +1785,34 @@ final class StudioProductionWiringTests: XCTestCase {
         XCTAssertFalse(view(renamed) == view(vm.studioCard(for: preset)),
                        "…and so must a new icon")
     }
+
+    /// Audit #13 — the tray Stop resolved its room from `selectedRoom` when
+    /// the lifecycle chain ran it, not at the tap: a scrub in between stopped
+    /// whichever room was selected by then.
+    func testAnExplicitStopTargetsTheRowCapturedAtTheTap() async {
+        let card = partyCard()
+        let a = room("room-1", bridge: "bridge-a")
+        let b = room("room-2", bridge: "bridge-b")
+        startRunning(card, on: a)
+        startRunning(card, on: b)
+        vm.selectedRoom = b   // the selection moved on after the tap on A
+
+        await vm.explicitStop(card, at: StudioSelectionKey(room: a))
+
+        XCTAssertNil(vm.runningEffect(for: a), "the tapped row stops")
+        XCTAssertNotNil(vm.runningEffect(for: b), "the newly selected room is untouched")
+
+        // A different look that took the captured row since is not the
+        // tapped control's to stop.
+        let strobe = vm.liveModeCards.first { $0.id == "strobe" }!
+        startRunning(strobe, on: a)
+        await vm.explicitStop(card, at: StudioSelectionKey(room: a))
+        XCTAssertEqual(vm.runningEffect(for: a)?.cardID, "strobe")
+
+        let tray = try? productionCode("HueHome/UI/Studio/MixerTrayView.swift")
+        XCTAssertTrue(tray?.contains("vm.explicitStop(card, at: key)") ?? false,
+                      "the tray passes the exact key it captured")
+    }
 }
 
 /// Holds a `RestSender` busy on demand, so "this closure is still pending"
