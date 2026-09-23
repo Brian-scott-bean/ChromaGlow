@@ -23,6 +23,10 @@ struct StudioCardCanvas: View {
     // Paused when the Studio tab itself is off-screen (isVisible only tracks the
     // active deck, so canvases otherwise keep animating behind another tab).
     @Environment(\.isTabActive) private var isTabActive
+    // Reduce Motion freezes the art on its static frame: the Strobe and
+    // Thunderstorm canvases flash, and nothing about a card preview is worth
+    // animating against that setting.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     // Seed derived from cardID — gives each card a unique animation phase
     private var seed: Double {
@@ -46,14 +50,15 @@ struct StudioCardCanvas: View {
     }
 
     var body: some View {
-        if isVisible && isTabActive && !KeyboardState.shared.isKeyboardUp {
+        if isVisible && isTabActive && !KeyboardState.shared.isKeyboardUp && !reduceMotion {
             // Animate: running = full fps, idle = 4fps (subtle, saves GPU)
             TimelineView(.animation(minimumInterval: isRunning ? nil : 0.25)) { timeline in
                 let time = timeline.date.timeIntervalSinceReferenceDate
                 canvasContent(time: time)
             }
         } else {
-            // Off-screen or keyboard up: single static frame, no timer overhead
+            // Off-screen, keyboard up or Reduce Motion: single static frame,
+            // no timer overhead
             canvasContent(time: 0)
         }
     }
