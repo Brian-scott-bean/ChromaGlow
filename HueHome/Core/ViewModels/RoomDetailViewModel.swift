@@ -252,9 +252,16 @@ final class RoomDetailViewModel {
         }
     }
 
+    /// The light's state as THIS model holds it — the rollback source. The
+    /// passed-in item can't be trusted for that: a caller holding a binding
+    /// into `lights` (LightControlView) may already carry the new value.
+    private func currentState(of item: LightDisplayItem) -> LightDisplayItem {
+        lights.first { $0.id == item.id } ?? item
+    }
+
     func setBrightness(_ brightness: Double, for item: LightDisplayItem) {
         let clamped  = min(100, max(1, brightness))
-        let previous = item.brightness
+        let before   = currentState(of: item)
 
         mutateLight(id: item.id) { $0.brightness = clamped; $0.isOn = true }
         appendLog("🌓 '\(item.name)' brightness → \(Int(clamped))%")
@@ -271,7 +278,8 @@ final class RoomDetailViewModel {
                 log.info("RoomDetail: '\(item.name)' brightness \(Int(clamped))%.")
             } catch {
                 appendLog("❌ Brightness failed for '\(item.name)': \(error.localizedDescription)")
-                mutateLight(id: item.id) { $0.brightness = previous; $0.isOn = item.isOn }
+                mutateLight(id: item.id) { $0.brightness = before.brightness; $0.isOn = before.isOn }
+                showToast("Couldn't reach bridge — \(item.name) reverted")
             }
         }
     }
@@ -307,6 +315,7 @@ final class RoomDetailViewModel {
         // Painting a color puts the light in COLOR mode: the bridge nulls
         // mirek there, and non-nil mirek is ColorClipboard's CT-mode signal
         // — leaving it made Copy Color grab the old white, not this color.
+        let before = currentState(of: item)
         mutateLight(id: item.id) { $0.colorX = x; $0.colorY = y; $0.colorTempMirek = nil }
         appendLog("🎨 '\(item.name)' color → xy(\(String(format: "%.3f", x)), \(String(format: "%.3f", y)))")
         if isDemoMode { return }
@@ -318,9 +327,10 @@ final class RoomDetailViewModel {
             } catch {
                 appendLog("❌ Color failed: \(error.localizedDescription)")
                 mutateLight(id: item.id) {
-                    $0.colorX = item.colorX; $0.colorY = item.colorY
-                    $0.colorTempMirek = item.colorTempMirek
+                    $0.colorX = before.colorX; $0.colorY = before.colorY
+                    $0.colorTempMirek = before.colorTempMirek
                 }
+                showToast("Couldn't reach bridge — \(item.name) reverted")
             }
         }
     }
@@ -330,6 +340,7 @@ final class RoomDetailViewModel {
     // ──────────────────────────────────────────────
 
     func setColorTemp(mirek: Int, for item: LightDisplayItem) {
+        let before = currentState(of: item)
         mutateLight(id: item.id) { $0.colorTempMirek = mirek }
         appendLog("🌡️ '\(item.name)' color temp → \(mirek) mirek (\(HueColorUtils.kelvin(from: mirek))K)")
         if isDemoMode { return }
@@ -340,7 +351,8 @@ final class RoomDetailViewModel {
                 scheduleColorRefresh()
             } catch {
                 appendLog("❌ Color temp failed: \(error.localizedDescription)")
-                mutateLight(id: item.id) { $0.colorTempMirek = item.colorTempMirek }
+                mutateLight(id: item.id) { $0.colorTempMirek = before.colorTempMirek }
+                showToast("Couldn't reach bridge — \(item.name) reverted")
             }
         }
     }

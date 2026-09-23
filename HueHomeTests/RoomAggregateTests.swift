@@ -228,4 +228,48 @@ final class RoomAggregateTests: XCTestCase {
         """))
         XCTAssertTrue(vm.roomIsOn, "optimistic master write must hold through the echo window")
     }
+
+    // ── Per-light failure rollback (LightControl path) ────────
+
+    private func liveVM(_ lights: [LightDisplayItem], api: RoomDetailSpyAPIClient) -> RoomDetailViewModel {
+        RoomDetailViewModel(room: demoRoom(), api: api, initialLights: lights)
+    }
+
+    /// LightControlView's binding used to write the new value into the model
+    /// BEFORE the callback, so the item the VM received was already new and
+    /// the failure "rollback" restored the new value. The VM now rolls back
+    /// to its own pre-write state, whatever the caller passes, and says so.
+    func testFailedBrightnessRollsBackToTheModelsPreviousValueAndToasts() async {
+        let spy = RoomDetailSpyAPIClient()
+        spy.failing = ["setLightState"]
+        let vm = liveVM([light("l1", on: true, brightness: 40)], api: spy)
+        var alreadyNew = vm.lights[0]
+        alreadyNew.brightness = 90            // what the old binding pre-write handed over
+
+        vm.setBrightness(90, for: alreadyNew)
+        await awaitRoomDetail { vm.toastMessage != nil }
+
+        XCTAssertEqual(vm.lights[0].brightness, 40, "rollback must restore the value before the write")
+        XCTAssertNotNil(vm.toastMessage, "a failed write is never silent")
+    }
+
+    func testFailedColorAndColorTempRollBackToThePreviousState() async {
+        let spy = RoomDetailSpyAPIClient()
+        spy.failing = ["setLightColor", "setLightColorTemp"]
+        var start = light("l1", on: true, brightness: 60)
+        start.colorX = 0.3; start.colorY = 0.3
+        let vm = liveVM([start], api: spy)
+
+        var paintedAlready = vm.lights[0]
+        paintedAlready.colorX = 0.6; paintedAlready.colorY = 0.35
+        vm.setColor(x: 0.6, y: 0.35, for: paintedAlready)
+        await awaitRoomDetail { vm.toastMessage != nil }
+        XCTAssertEqual(vm.lights[0].colorX, 0.3)
+        XCTAssertEqual(vm.lights[0].colorY, 0.3)
+
+        vm.toastMessage = nil
+        vm.setColorTemp(mirek: 250, for: vm.lights[0])
+        await awaitRoomDetail { vm.toastMessage != nil }
+        XCTAssertNil(vm.lights[0].colorTempMirek, "CT rollback restores the pre-write (nil) mirek")
+    }
 }
