@@ -101,11 +101,16 @@ final class AppGallerySnapshotTests: XCTestCase {
 
     func testComposer() async throws {
         let orchestrator = await demoOrchestrator()
-        let view = Composer2View(room: orchestrator.allRooms.first, composition: Composer2PresetLibrary.thunderstorm)
-        let (window, controller) = try host(view, orchestrator: orchestrator)
-        pump(1.5)
-        capture(controller, named: "gallery-composer")
-        window.isHidden = true
+        let room = orchestrator.allRooms.first
+        for (mode, look) in [(Composer2Mode.looks, Composer2PresetLibrary.thunderstorm),
+                             (.tune, Composer2PresetLibrary.passingStorm),
+                             (.layers, Composer2PresetLibrary.jackOLantern)] {
+            let (window, controller) = try host(Composer2View(room: room, composition: look, mode: mode),
+                                                orchestrator: orchestrator)
+            pump(1.5)
+            capture(controller, named: "gallery-composer-\(mode.rawValue)")
+            window.isHidden = true
+        }
         orchestrator.exitDemoMode()
     }
 }
