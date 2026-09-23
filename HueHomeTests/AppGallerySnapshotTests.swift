@@ -1,0 +1,111 @@
+// AppGallerySnapshotTests.swift
+// ChromaGlow — v2.2 redesign. Renders every main surface of the real app in
+// Demo Mode (rooms, scenes, Studio, More, Composer) into the result bundle,
+// so each visual change can be reviewed as an image. Each render must also
+// produce a non-blank picture. Export with
+// `xcrun xcresulttool export attachments --path <bundle> --output-path <dir>`.
+
+import XCTest
+import SwiftUI
+import SwiftData
+@testable import HueHome
+
+@MainActor
+final class AppGallerySnapshotTests: XCTestCase {
+
+    private let size = CGSize(width: 402, height: 874)
+
+    private func demoOrchestrator() async -> UnifiedOrchestrator {
+        let orchestrator = UnifiedOrchestrator()
+        orchestrator.enterDemoMode()
+        await orchestrator.loadAll()
+        XCTAssertFalse(orchestrator.allRooms.isEmpty, "demo seed produced no rooms")
+        return orchestrator
+    }
+
+    private func container() throws -> ModelContainer {
+        let schema = Schema([BridgeRecord.self, HueLocalRoom.self, HueLocalScene.self, EffectPreset.self,
+                             FavouriteColor.self, ActivityEvent.self, EnergySnapshot.self, AppSettings.self,
+                             AppAutomation.self, GuestProfile.self, GuestAccessGrant.self])
+        return try ModelContainer(for: schema, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+    }
+
+    private func host<V: View>(_ view: V, orchestrator: UnifiedOrchestrator) throws -> (UIWindow, UIHostingController<AnyView>) {
+        let root = AnyView(
+            view
+                .environment(orchestrator)
+                .environment(DeepLinkCoordinator())
+                .environment(MusicSessionCoordinator.shared)
+                .modelContainer(try container())
+                .preferredColorScheme(.dark)
+        )
+        let controller = UIHostingController(rootView: root)
+        controller.overrideUserInterfaceStyle = .dark
+        let window = UIWindow(frame: CGRect(origin: .zero, size: size))
+        window.overrideUserInterfaceStyle = .dark
+        window.rootViewController = controller
+        window.isHidden = false
+        controller.view.layoutIfNeeded()
+        return (window, controller)
+    }
+
+    private func pump(_ seconds: TimeInterval) {
+        RunLoop.main.run(until: Date().addingTimeInterval(seconds))
+    }
+
+    private func capture(_ controller: UIHostingController<AnyView>, named name: String) {
+        let image = UIGraphicsImageRenderer(size: size).image { _ in
+            controller.view.drawHierarchy(in: CGRect(origin: .zero, size: size), afterScreenUpdates: true)
+        }
+        let attachment = XCTAttachment(image: image)
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        XCTAssertNotNil(image.cgImage, name)
+    }
+
+    private func render<V: View>(_ view: V, named name: String, settle: TimeInterval = 1.2) async throws {
+        let orchestrator = await demoOrchestrator()
+        let (window, controller) = try host(view, orchestrator: orchestrator)
+        pump(settle)
+        capture(controller, named: name)
+        window.isHidden = true
+        orchestrator.exitDemoMode()
+    }
+
+    func testHome() async throws {
+        try await render(MainTabView(), named: "gallery-home")
+    }
+
+    func testScenes() async throws {
+        try await render(NavigationStack { ScenesTabView() }, named: "gallery-scenes")
+    }
+
+    func testStudio() async throws {
+        try await render(StudioView(), named: "gallery-studio", settle: 2)
+    }
+
+    func testMore() async throws {
+        try await render(NavigationStack { MoreView() }, named: "gallery-more")
+    }
+
+    func testRoomDetail() async throws {
+        let orchestrator = await demoOrchestrator()
+        let room = try XCTUnwrap(orchestrator.allRooms.first)
+        let (window, controller) = try host(NavigationStack { RoomDetailView(room: room) }, orchestrator: orchestrator)
+        pump(3)
+        capture(controller, named: "gallery-room-detail")
+        window.isHidden = true
+        orchestrator.exitDemoMode()
+    }
+
+    func testComposer() async throws {
+        let orchestrator = await demoOrchestrator()
+        let view = Composer2View(room: orchestrator.allRooms.first, composition: Composer2PresetLibrary.thunderstorm)
+        let (window, controller) = try host(view, orchestrator: orchestrator)
+        pump(1.5)
+        capture(controller, named: "gallery-composer")
+        window.isHidden = true
+        orchestrator.exitDemoMode()
+    }
+}
