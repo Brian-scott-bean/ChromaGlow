@@ -1826,6 +1826,51 @@ final class StudioProductionWiringTests: XCTestCase {
         XCTAssertEqual(StudioViewModel.dominantGamut(counts: [.a: 1, .b: 0, .c: 5]), .c)
     }
 
+    /// Audit #18 — the Save sheet always did save-as: saving an owned preset
+    /// under its prefilled name made a same-named duplicate while Revert
+    /// stayed bound to the unchanged original.
+    func testSavingAnOwnedPresetCanOverwriteIt() throws {
+        let url = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("overwrite-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = CompositionStore(fileURL: url, loadsSynchronously: true)
+        vm.injectForTesting(compositionStore: store)
+        var mine = compositionPreset()
+        mine.name = "Mine"
+        store.save(mine)
+        let card = vm.studioCard(for: mine)
+        let a = room("room-a")
+        vm.selectedRoom = a
+        startRunning(card, on: a)
+        let box = CompositionParamBox(preset: mine)
+        box.motion.speed = 88
+        vm.testInstallCompositionBox(box, at: StudioSelectionKey(room: a))
+        XCTAssertEqual(vm.ownedCompositionPreset(for: card)?.id, mine.id)
+        let session = try XCTUnwrap(vm.composerEditSession())
+        let countBefore = store.presets.count
+
+        let saved = try XCTUnwrap(vm.overwriteComposition(
+            presetID: mine.id, session: session, name: "Mine v2", icon: "sparkles",
+            accentColorHex: "#FFB340", preferredTransport: nil, category: .myCreations))
+
+        XCTAssertEqual(saved.id, mine.id, "the same preset, not a copy")
+        XCTAssertEqual(store.presets.count, countBefore, "no same-named duplicate")
+        let stored = try XCTUnwrap(store.presets.first { $0.id == mine.id })
+        XCTAssertEqual(stored.motion.speed, 88, "the live layers were written")
+        XCTAssertEqual(stored.name, "Mine v2")
+        XCTAssertEqual(vm.runningEffect(for: a)?.card.name, "Mine v2",
+                       "the running row shows the new name")
+
+        // Built-ins reset rather than belong to the user, and the "+ Create"
+        // draft is not a creation yet: neither is ever overwritten.
+        let builtIn = try XCTUnwrap(store.presets.first { $0.isBuiltIn })
+        XCTAssertNil(vm.ownedCompositionPreset(for: vm.studioCard(for: builtIn)))
+        XCTAssertNil(vm.ownedCompositionPreset(for: vm.starterCompositionCard()))
+        XCTAssertNil(vm.overwriteComposition(
+            presetID: builtIn.id, session: session, name: "X", icon: "sparkles",
+            accentColorHex: "#FFB340", preferredTransport: nil, category: .myCreations))
+    }
+
     /// Audit #14 — the living-card canvases (Strobe, Thunderstorm flash
     /// overlays) kept animating under Reduce Motion.
     func testCardCanvasesHoldStillUnderReduceMotion() throws {

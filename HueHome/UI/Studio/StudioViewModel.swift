@@ -4619,6 +4619,69 @@ final class StudioViewModel {
         return preset
     }
 
+    /// The preset a running card came from, when the USER owns it — the one
+    /// the Save sheet may overwrite (COMPOSER_SPEC "Editing": tap 💾 to
+    /// overwrite, or Save As New for a variant). Never a built-in (those
+    /// reset to the catalog, they are not the user's to replace) and never
+    /// the "+ Create" starter draft (hidden, and not a creation yet).
+    func ownedCompositionPreset(for card: StudioCard) -> CompositionPreset? {
+        guard case .composition(let id) = card.strategy,
+              id != Self.composerStarterDraftPresetID,
+              let preset = compositionStore.presets.first(where: { $0.id == id }),
+              !preset.isBuiltIn else { return nil }
+        return preset
+    }
+
+    /// Overwrite an owned preset with the running composition's live layers
+    /// and the sheet's name/look/filing. The Save sheet always did save-as,
+    /// so saving an owned preset under its prefilled name made a same-named
+    /// duplicate while Revert stayed bound to the unchanged original.
+    ///
+    /// Identity, provenance and the sequence are kept; `updatedAt` moves.
+    func overwriteComposition(
+        presetID: UUID,
+        session: ComposerEditSession,
+        name rawName: String,
+        icon: String,
+        accentColorHex: String,
+        preferredTransport: CompositionPreferredTransport?,
+        category: PresetCategory
+    ) -> CompositionPreset? {
+        guard presetID != Self.composerStarterDraftPresetID,
+              var preset = compositionStore.presets.first(where: { $0.id == presetID }),
+              !preset.isBuiltIn else { return nil }
+        let box = session.box
+        let trimmed = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty { preset.name = trimmed }
+        preset.icon = sanitizedSymbolName(icon)
+        preset.accentColorHex = accentColorHex
+        if category != .all { preset.category = category }
+        preset.preferredTransport = preferredTransport
+        preset.palette = box.palette
+        preset.motion = box.motion
+        preset.envelope = box.envelope
+        preset.reaction = box.reaction
+        preset.updatedAt = Date()
+        compositionStore.save(preset)
+
+        // A running row keeps its card (the running instance is unchanged —
+        // swapping in a card for a different tier would re-gate its tray),
+        // but the name shows through everywhere, as a rename's does.
+        for (key, row) in runningEffects {
+            guard case .composition(let pid) = row.card.strategy, pid == presetID,
+                  row.card.name != preset.name else { continue }
+            var updated = row
+            updated.card = row.card.renamed(to: preset.name)
+            runningEffects[key] = updated
+            if let recoveredKey = row.recovered {
+                orchestrator?.refreshRecoveredDisplayName(key: recoveredKey, name: preset.name)
+            } else {
+                publishNowPlaying(room: row.room, card: updated.card)
+            }
+        }
+        return preset
+    }
+
     /// A new user preset holding the live box's four layers — built, not
     /// saved, so a caller can check it before it reaches the library.
     private func presetFromLiveBox(

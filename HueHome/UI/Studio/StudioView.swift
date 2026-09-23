@@ -136,6 +136,8 @@ struct StudioView: View {
     @State private var compositionSaveAccent = "#FFB340"
     @State private var compositionSaveTransport: CompositionSaveTransportOption = .entertainmentArea
     @State private var compositionSaveCategory: PresetCategory = .myCreations
+    /// The owned preset the Save sheet overwrites; nil = save-as only.
+    @State private var compositionSaveOverwriteID: UUID? = nil
     /// The prompt draft lives in `aiPresentation`; this is the writable view of
     /// it the TextField binds to.
     private var aiPromptText: Binding<String> {
@@ -630,11 +632,7 @@ struct StudioView: View {
                     collapseMixer()
                 },
                 onSaveComposition: { card in
-                    pendingComposerSaveSession = vm.composerEditSession()
-                    compositionSaveName = card.name == "New Composition" ? "" : card.name
-                    compositionSaveIcon = card.icon
-                    compositionSaveTransport = vm.compositionTransportPreference == .roomOnly ? .roomOnly : .entertainmentArea
-                    showCompositionSaveSheet = true
+                    prepareCompositionSave(for: card)
                 },
                 onTransportSwitch: { effect, preferEntertainment in
                     switchRunningCompositionTransport(effect, preferEntertainment: preferEntertainment)
@@ -1851,6 +1849,55 @@ struct StudioView: View {
     // MARK: - Harmony Apply Helper
     // ──────────────────────────────────────────────
 
+    /// Open the Save sheet for the running `card`. An OWNED preset is
+    /// prefilled with its own name/look/filing and offered as an overwrite
+    /// (COMPOSER_SPEC "Editing"); anything else is a save-as.
+    private func prepareCompositionSave(for card: StudioCard) {
+        pendingComposerSaveSession = vm.composerEditSession()
+        compositionSaveName = card.name == "New Composition" ? "" : card.name
+        compositionSaveIcon = card.icon
+        compositionSaveTransport = vm.compositionTransportPreference == .roomOnly ? .roomOnly : .entertainmentArea
+        let owned = vm.ownedCompositionPreset(for: card)
+        compositionSaveOverwriteID = owned?.id
+        if let owned {
+            compositionSaveName = owned.name
+            compositionSaveIcon = owned.icon
+            compositionSaveAccent = owned.accentColorHex
+            compositionSaveCategory = owned.category
+            if let transport = owned.preferredTransport {
+                compositionSaveTransport = transport == .roomOnly ? .roomOnly : .entertainmentArea
+            }
+        }
+        showCompositionSaveSheet = true
+    }
+
+    private func commitCompositionSave(asNew: Bool) {
+        if let session = pendingComposerSaveSession {
+            if !asNew, let presetID = compositionSaveOverwriteID {
+                _ = vm.overwriteComposition(
+                    presetID: presetID,
+                    session: session,
+                    name: compositionSaveName,
+                    icon: compositionSaveIcon,
+                    accentColorHex: compositionSaveAccent,
+                    preferredTransport: compositionSaveTransport.presetValue,
+                    category: compositionSaveCategory)
+            } else {
+                _ = vm.saveActiveComposition(
+                    session: session,
+                    name: compositionSaveName,
+                    icon: compositionSaveIcon,
+                    accentColorHex: compositionSaveAccent,
+                    preferredTransport: compositionSaveTransport.presetValue,
+                    category: compositionSaveCategory)
+            }
+        }
+        pendingComposerSaveSession = nil
+        compositionSaveOverwriteID = nil
+        showCompositionSaveSheet = false
+        HapticManager.shared.medium()
+    }
+
     private var compositionSaveSheet: some View {
         NavigationStack {
             Form {
@@ -1941,6 +1988,13 @@ struct StudioView: View {
                         .font(.caption2)
                         .foregroundStyle(.white.opacity(0.55))
                 }
+                if compositionSaveOverwriteID != nil {
+                    Section {
+                        Button("Save as New Composition") { commitCompositionSave(asNew: true) }
+                    } footer: {
+                        Text("Save updates the composition you started from. Save as New leaves it as it was and adds a new one.")
+                    }
+                }
             }
             .contentShape(Rectangle())
             .onTapGesture {
@@ -1952,21 +2006,9 @@ struct StudioView: View {
                     Button("Cancel") { showCompositionSaveSheet = false }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        if let session = pendingComposerSaveSession {
-                            _ = vm.saveActiveComposition(
-                                session: session,
-                                name: compositionSaveName,
-                            icon: compositionSaveIcon,
-                            accentColorHex: compositionSaveAccent,
-                                preferredTransport: compositionSaveTransport.presetValue,
-                                category: compositionSaveCategory
-                            )
-                        }
-                        pendingComposerSaveSession = nil
-                        showCompositionSaveSheet = false
-                        HapticManager.shared.medium()
-                    }
+                    // Overwrites the owned preset this look came from; a
+                    // look with none (built-in, "+ Create") saves as new.
+                    Button("Save") { commitCompositionSave(asNew: false) }
                 }
             }
         }
