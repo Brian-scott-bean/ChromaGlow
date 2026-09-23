@@ -27,7 +27,49 @@ struct Composer2EventsEditorContent: View {
                         .foregroundStyle(Composer2Theme.ink.opacity(0.8))
                 }
             }
-            if events != nil {
+            if let spec = events {
+                Composer2EditorSection(title: "What happens") {
+                    Composer2ChipRow(title: "Shape", options: [
+                        ("Flash", Composer2EventSpec.Shape.flash, "bolt"),
+                        ("Lightning", .lightning, "cloud.bolt.fill"),
+                        ("Firework", .firework, "sparkles"),
+                        ("Twinkle", .twinkle, "sparkle"),
+                        ("Glow", .glow, "moon.haze.fill")
+                    ], selection: shapeBinding)
+                    if spec.shape == .lightning {
+                        Composer2SliderRow(title: "Distance", value: eventBinding(\.distance), range: 0...1,
+                                           format: { Composer2QuickMapping.distanceWord($0) })
+                        Composer2SliderRow(title: "Rolls across the room", value: eventBinding(\.propagation), range: 0...1.5,
+                                           format: { $0 < 0.02 ? "at once" : composer2Seconds($0) })
+                        StageToggleRow(title: "The storm passes (every four minutes)", isOn: Binding(
+                            get: { spec.activityPeriod > 0 },
+                            set: { on in
+                                HapticManager.shared.selection()
+                                document.editSelectedLayer {
+                                    $0.events?.activityPeriod = on ? 240 : 0
+                                    $0.events?.activityDepth = on ? 0.85 : 0
+                                }
+                            }))
+                    }
+                    if spec.shape == .firework || spec.shape == .glow || spec.shape == .twinkle {
+                        Composer2SliderRow(title: "Spreads across the room", value: eventBinding(\.propagation), range: 0...1.5,
+                                           format: { $0 < 0.02 ? "at once" : composer2Seconds($0) })
+                    }
+                    if spec.shape == .firework || spec.shape == .twinkle {
+                        Composer2ChipRow(title: "Colours", options: Composer2EventsEditorContent.colourSets.map {
+                            ($0.name, $0.name, nil)
+                        }, selection: Binding(
+                            get: { Composer2EventsEditorContent.colourSets.first { $0.colors == spec.colors }?.name ?? "" },
+                            set: { name in
+                                guard let set = Composer2EventsEditorContent.colourSets.first(where: { $0.name == name }) else { return }
+                                document.editSelectedLayer {
+                                    $0.events?.colors = set.colors
+                                    $0.events?.color = set.colors.first
+                                    $0.events?.modulates.insert(.color)
+                                }
+                            }))
+                    }
+                }
                 Composer2EditorSection(title: "Timing") {
                     Composer2ChipRow(title: "Interval", options: [
                         ("Random", Composer2EventSpec.Timing.random, "dice"),
@@ -88,12 +130,60 @@ struct Composer2EventsEditorContent: View {
         }
     }
 
+    /// Named colour sets for fireworks and twinkles.
+    static let colourSets: [(name: String, colors: [Composer2XY])] = {
+        typealias S = Composer2PresetLibrary.Swatch
+        return [
+            ("Celebration", [S.gold, S.magenta, S.skyBlue, S.emerald, S.red, S.white]),
+            ("Red, white & blue", [S.red, S.white, S.royal, S.skyBlue]),
+            ("Gold", [S.gold, S.yellow, S.warmWhite]),
+            ("Warm white", [S.warmWhite, S.candle]),
+            ("Ice", [S.white, S.coolWhite, S.ice]),
+            ("Fireflies", [S.firefly, S.yellow]),
+            ("Embers", [S.ember, S.blood]),
+            ("Pastel", [S.blush, S.pastelYellow, S.mint, S.lavender])
+        ]
+    }()
+
+    private var shapeBinding: Binding<Composer2EventSpec.Shape> {
+        Binding(
+            get: { events?.shape ?? .flash },
+            set: { shape in
+                document.editSelectedLayer { layer in
+                    guard var e = layer.events else { return }
+                    e.shape = shape
+                    // Each shape starts from values that suit it.
+                    switch shape {
+                    case .lightning:
+                        e.spacingMin = max(e.spacingMin, 0.36)
+                        e.modulates.insert(.color)
+                        if e.color == nil { e.color = Composer2XY(x: 0.27, y: 0.28) }
+                    case .firework:
+                        if e.colors.isEmpty { e.colors = Composer2EventsEditorContent.colourSets[0].colors }
+                        e.modulates.insert(.color)
+                        e.decaySeconds = max(e.decaySeconds, 0.6)
+                        e.propagation = max(e.propagation, 0.3)
+                    case .twinkle, .glow:
+                        e.durationMin = max(e.durationMin, 0.4)
+                        e.durationMax = max(e.durationMax, 0.9)
+                    case .flash:
+                        break
+                    }
+                    layer.events = e
+                }
+                Composer2PlaybackCenter.shared.noteEditBurst()
+            }
+        )
+    }
+
     static var defaultSpec: Composer2EventSpec {
         Composer2EventSpec(timing: .random, minDelay: 4, maxDelay: 12, probability: 0.8, burstMin: 1, burstMax: 3,
                            spacingMin: BeatMath.FlashSafety.minOnsetLedgerPeriod, spacingMax: 0.55,
                            durationMin: 0.06, durationMax: 0.14, decaySeconds: 0.35,
                            intensityMin: 0.6, intensityMax: 1, targeting: .spatialBiased, spatialBias: 0.5,
-                           modulates: [.brightness, .color], color: Composer2XY(x: 0.27, y: 0.28))
+                           modulates: [.brightness, .color], color: Composer2XY(x: 0.27, y: 0.28),
+                           shape: .lightning, distance: 0.35, propagation: 0.35,
+                           colors: [Composer2PresetLibrary.Swatch.skyGlow])
     }
 
     private func eventBinding<T>(_ keyPath: WritableKeyPath<Composer2EventSpec, T>) -> Binding<T> {

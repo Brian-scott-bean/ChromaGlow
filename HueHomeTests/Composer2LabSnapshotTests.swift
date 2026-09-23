@@ -15,7 +15,7 @@ final class Composer2LabSnapshotTests: XCTestCase {
 
     // MARK: Fixtures
 
-    private func demoDocument(_ composition: Composer2Composition, mode: Composer2Mode = .customize) -> Composer2Document {
+    private func demoDocument(_ composition: Composer2Composition, mode: Composer2Mode = .looks) -> Composer2Document {
         let room = DemoDataProvider.rooms[0]
         let lights = DemoDataProvider.lights(for: room.id)
         var context = Composer2RoomContext(room: room)
@@ -38,8 +38,8 @@ final class Composer2LabSnapshotTests: XCTestCase {
                                        previewOn: Bool = true, @ViewBuilder mode: () -> Content) -> some View {
         let f = feed(for: doc)
         return ZStack {
-            Composer2Theme.backgroundGradient.ignoresSafeArea()
-            VStack(spacing: HueSpacing.lg) {
+            Composer2Ambience(colors: Composer2Theme.swatches(of: doc.composition, max: 3))
+            VStack(alignment: .leading, spacing: 18) {
                 Composer2Header(document: doc, center: center, rooms: DemoDataProvider.rooms,
                                 onSelectRoom: { _ in }, onClose: {})
                 Composer2HeroCard(document: doc, center: center, feed: f, previewOn: previewOn, onTapLights: {})
@@ -110,37 +110,45 @@ final class Composer2LabSnapshotTests: XCTestCase {
 
     // MARK: Screens
 
-    func testCustomizeModeRendersAtBothWidths() {
+    private func content(_ doc: Composer2Document, center: Composer2PlaybackCenter) -> some View {
+        Composer2ModeContent(document: doc, center: center, onImport: {})
+    }
+
+    func testLooksTabRendersAtBothWidths() {
         for width in widths {
-            let doc = demoDocument(Composer2PresetLibrary.auroraDrift)
-            render(screen(doc, center: Composer2PlaybackCenter()) { Composer2CustomizeGrid(document: doc) },
-                   size: CGSize(width: width, height: 1500), named: "composer2-customize-aurora-\(Int(width))")
+            let doc = demoDocument(Composer2PresetLibrary.thunderstorm)
+            render(screen(doc, center: Composer2PlaybackCenter()) { content(doc, center: Composer2PlaybackCenter()) },
+                   size: CGSize(width: width, height: 2600), named: "composer2-looks-\(Int(width))")
         }
     }
 
-    func testQuickModeRenders() {
-        let doc = demoDocument(Composer2PresetLibrary.lavaLamp, mode: .quick)
-        render(screen(doc, center: Composer2PlaybackCenter()) { Composer2QuickPanel(document: doc) },
-               size: CGSize(width: 393, height: 1300), named: "composer2-quick-lava")
+    func testTuneTabRendersTheStormControls() {
+        let doc = demoDocument(Composer2PresetLibrary.passingStorm, mode: .tune)
+        render(screen(doc, center: Composer2PlaybackCenter()) { content(doc, center: Composer2PlaybackCenter()) },
+               size: CGSize(width: 393, height: 2000), named: "composer2-tune-passing-storm")
     }
 
-    func testAdvancedModeRendersThunderstormLightning() {
-        let doc = demoDocument(Composer2PresetLibrary.thunderstorm, mode: .advanced)
-        doc.select(layerID: Composer2PresetLibrary.thunderstorm.layers[1].id)
-        render(screen(doc, center: Composer2PlaybackCenter()) { Composer2AdvancedPanel(document: doc) },
-               size: CGSize(width: 393, height: 2200), named: "composer2-advanced-thunderstorm")
+    func testLayersTabRendersHauntedHouse() {
+        let doc = demoDocument(Composer2PresetLibrary.hauntedHouse, mode: .layers)
+        render(screen(doc, center: Composer2PlaybackCenter()) { content(doc, center: Composer2PlaybackCenter()) },
+               size: CGSize(width: 393, height: 2000), named: "composer2-layers-haunted")
     }
 
-    func testExpertModeRendersHauntedHouse() {
-        let doc = demoDocument(Composer2PresetLibrary.hauntedHouse, mode: .expert)
-        render(screen(doc, center: Composer2PlaybackCenter()) { Composer2ExpertStack(document: doc) },
-               size: CGSize(width: 393, height: 2000), named: "composer2-expert-haunted")
+    func testSeasonalLooksRender() {
+        for (name, look) in [("halloween-jack", Composer2PresetLibrary.jackOLantern),
+                             ("christmas-c9", Composer2PresetLibrary.classicC9),
+                             ("new-years-eve", Composer2PresetLibrary.newYearsEve)] {
+            let doc = demoDocument(look, mode: .tune)
+            doc.sourceID = look.id
+            render(screen(doc, center: Composer2PlaybackCenter()) { content(doc, center: Composer2PlaybackCenter()) },
+                   size: CGSize(width: 393, height: 1500), named: "composer2-\(name)")
+        }
     }
 
-    func testChristmasChasePreviewRenders() {
-        let doc = demoDocument(Composer2PresetLibrary.christmasChase)
-        render(screen(doc, center: Composer2PlaybackCenter()) { Composer2CustomizeGrid(document: doc) },
-               size: CGSize(width: 393, height: 1500), named: "composer2-customize-christmas")
+    func testBehaviorPickerRenders() {
+        let picker = Composer2BehaviorPicker { _ in }
+            .environment(UnifiedOrchestrator())
+        render(picker, size: CGSize(width: 393, height: 1800), named: "composer2-behavior-picker")
     }
 
     func testLiveUnavailableInDemoRenders() async {
@@ -150,13 +158,14 @@ final class Composer2LabSnapshotTests: XCTestCase {
         gateway.gateResult = .demo
         _ = await center.start(document: doc, output: Composer2LiveOutput(composition: doc.composition), gateway: gateway, audition: true)
         XCTAssertEqual(center.status, .failed(Composer2Copy.liveDemoUnavailable))
-        render(screen(doc, center: center) { Composer2CustomizeGrid(document: doc) },
+        doc.mode = .tune
+        render(screen(doc, center: center) { content(doc, center: center) },
                size: CGSize(width: 393, height: 1500), named: "composer2-live-unavailable-demo")
     }
 
     func testPausedPreviewRenders() {
-        let doc = demoDocument(Composer2PresetLibrary.auroraDrift)
-        render(screen(doc, center: Composer2PlaybackCenter(), previewOn: false) { Composer2CustomizeGrid(document: doc) },
+        let doc = demoDocument(Composer2PresetLibrary.auroraDrift, mode: .tune)
+        render(screen(doc, center: Composer2PlaybackCenter(), previewOn: false) { content(doc, center: Composer2PlaybackCenter()) },
                size: CGSize(width: 393, height: 1500), named: "composer2-preview-paused")
     }
 
@@ -216,7 +225,7 @@ final class Composer2LabSnapshotTests: XCTestCase {
         while !center.takeoverPending && spins < 20_000 { await Task.yield(); spins += 1 }
         XCTAssertTrue(center.takeoverPending)
         XCTAssertEqual(center.statusText, Composer2Copy.takeoverWaiting)
-        render(screen(doc, center: center) { Composer2CustomizeGrid(document: doc) },
+        render(screen(doc, center: center) { content(doc, center: center) },
                size: CGSize(width: 393, height: 1500), named: "composer2-takeover-waiting")
         center.answerTakeover(false)
         let declined = await task.value
@@ -244,17 +253,13 @@ final class Composer2LabSnapshotTests: XCTestCase {
 
     func testAccessibilitySizeLayoutsRender() {
         let doc = demoDocument(Composer2PresetLibrary.hauntedHouse)
-        render(screen(doc, center: Composer2PlaybackCenter(observeApplication: false)) { Composer2CustomizeGrid(document: doc) }
-                   .environment(\.dynamicTypeSize, .accessibility2),
-               size: CGSize(width: 393, height: 2600), named: "composer2-customize-accessibility2")
-        doc.mode = .quick
-        render(screen(doc, center: Composer2PlaybackCenter(observeApplication: false)) { Composer2QuickPanel(document: doc) }
-                   .environment(\.dynamicTypeSize, .accessibility2),
-               size: CGSize(width: 393, height: 2600), named: "composer2-quick-accessibility2")
-        doc.mode = .expert
-        render(screen(doc, center: Composer2PlaybackCenter(observeApplication: false)) { Composer2ExpertStack(document: doc) }
-                   .environment(\.dynamicTypeSize, .accessibility2),
-               size: CGSize(width: 393, height: 2600), named: "composer2-expert-accessibility2")
+        for mode in Composer2Mode.allCases {
+            doc.mode = mode
+            let center = Composer2PlaybackCenter(observeApplication: false)
+            render(screen(doc, center: center) { content(doc, center: center) }
+                       .environment(\.dynamicTypeSize, .accessibility2),
+                   size: CGSize(width: 393, height: 2600), named: "composer2-\(mode.rawValue)-accessibility2")
+        }
     }
 
     func testHarmonyAndAudioEditorsRenderTheirNewRows() {

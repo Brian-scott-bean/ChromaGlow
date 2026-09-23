@@ -170,6 +170,10 @@ struct Composer2ColorSource: Codable, Equatable {
         case uniform
         /// Each light picks a random stop, redrawn slowly.
         case randomPick = "random_pick"
+        /// Colour follows brightness: dim = the first stop, bright = the
+        /// last — embers that glow orange and burn yellow, lightning that
+        /// flares white out of blue.
+        case brightness
     }
 
     static let maxStops = 8

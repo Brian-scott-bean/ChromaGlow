@@ -9,7 +9,7 @@ import XCTest
 @MainActor
 final class Composer2LabPresetTests: XCTestCase {
 
-    private let presets = Composer2PresetLibrary.all
+    private let presets = Composer2PresetLibrary.originals
 
     private func geometry(_ n: Int) -> Composer2SlotGeometry {
         var points: [(x: Double, z: Double)] = []
@@ -42,7 +42,7 @@ final class Composer2LabPresetTests: XCTestCase {
     }
 
     func testBuiltInsAreStableValues() throws {
-        XCTAssertEqual(Composer2PresetLibrary.auroraDrift, Composer2PresetLibrary.all[0])
+        XCTAssertEqual(Composer2PresetLibrary.auroraDrift, Composer2PresetLibrary.originals[0])
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         let decoder = JSONDecoder()

@@ -23,7 +23,7 @@ struct Composer2PerformanceBar: View {
     private var ownSession: Composer2PlaybackCenter.Session? { isLiveHere ? center.session : nil }
 
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 10) {
             statusLine
             if dynamicTypeSize.isAccessibilitySize {
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) { buttons }
@@ -31,38 +31,42 @@ struct Composer2PerformanceBar: View {
                 HStack(spacing: 8) { buttons }
             }
         }
-        .padding(.horizontal, HueSpacing.lg)
-        .padding(.top, 10)
-        .padding(.bottom, 8)
+        .padding(.horizontal, 14)
+        .padding(.top, 12)
+        .padding(.bottom, 10)
         .background(
-            Rectangle()
+            RoundedRectangle(cornerRadius: 30, style: .continuous)
                 .fill(.ultraThinMaterial)
-                .overlay(Composer2Theme.navy.opacity(0.65))
-                .overlay(alignment: .top) { Rectangle().fill(Composer2Theme.line).frame(height: 1) }
-                .ignoresSafeArea(edges: .bottom)
+                .overlay(RoundedRectangle(cornerRadius: 30, style: .continuous).fill(Composer2Theme.void.opacity(0.55)))
+                .overlay(RoundedRectangle(cornerRadius: 30, style: .continuous)
+                    .strokeBorder(LinearGradient(colors: [Color.white.opacity(0.22), Color.white.opacity(0.04)],
+                                                 startPoint: .top, endPoint: .bottom), lineWidth: 1))
+                .shadow(color: .black.opacity(0.5), radius: 30, y: 10)
         )
+        .padding(.horizontal, 12)
+        .padding(.bottom, 4)
     }
 
     @ViewBuilder
     private var buttons: some View {
-        Composer2BarButton(title: previewOn ? "Preview" : "Preview", symbol: previewOn ? "eye.fill" : "eye",
+        Composer2BarButton(title: "Preview", symbol: previewOn ? "eye.fill" : "eye.slash",
                            accent: Composer2Theme.cyan, active: previewOn,
                            accessibilityLabel: previewOn ? "Stop on-screen preview" : "Start on-screen preview") {
             HapticManager.shared.light()
             previewOn.toggle()
         }
-        Composer2BarButton(title: isLiveHere ? "Stop" : "Live", symbol: isLiveHere ? "stop.fill" : "dot.radiowaves.left.and.right",
-                           accent: Composer2Theme.live, active: isLiveHere,
-                           accessibilityLabel: isLiveHere
-                               ? "Stop live output to \(document.roomContext.roomName)"
-                               : "Start live output to \(document.roomContext.roomName)") {
-            onLive()
-        }
-        Composer2BarButton(title: "Save", symbol: "square.and.arrow.down", accent: Composer2Theme.violet,
-                           active: false, accessibilityLabel: "Save composition") {
+        Composer2LiveButton(isLive: isLiveHere, isBusy: center.isBusy,
+                            accessibilityLabel: isLiveHere
+                                ? "Stop live output to \(document.roomContext.roomName)"
+                                : "Start live output to \(document.roomContext.roomName)",
+                            action: onLive)
+        Composer2BarButton(title: "Save", symbol: document.isDirty ? "square.and.arrow.down.fill" : "square.and.arrow.down",
+                           accent: Composer2Theme.violet, active: false, highlighted: document.isDirty,
+                           accessibilityLabel: document.isDirty ? "Save changes" : "Save composition") {
             onSave()
         }
-        Composer2BarButton(title: "Apply", symbol: "checkmark.circle", accent: Composer2Theme.magenta,
+        Composer2BarButton(title: "Apply", symbol: ownSession?.isAudition == false ? "checkmark.circle.fill" : "checkmark.circle",
+                           accent: Composer2Theme.magenta,
                            active: ownSession?.isAudition == false,
                            accessibilityLabel: "Apply composition to \(document.roomContext.roomName)") {
             onApply()
@@ -127,39 +131,92 @@ struct Composer2PerformanceBar: View {
 }
 
 struct Composer2BarButton: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let title: String
     let symbol: String
     let accent: Color
     let active: Bool
+    var highlighted: Bool = false
     let accessibilityLabel: String
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 3) {
+            VStack(spacing: 4) {
                 Image(systemName: symbol)
                     .font(.system(size: 17, weight: .semibold))
+                    .symbolEffect(.bounce, value: active)
                 Text(title)
-                    .font(HueFont.stageChip)
+                    .font(.caption.weight(.bold))
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
             }
-            .foregroundStyle(active ? Composer2Theme.background : Composer2Theme.ink)
-            .frame(maxWidth: .infinity)
-            .frame(minHeight: 52)
+            .foregroundStyle(active ? accent : (highlighted ? accent : Composer2Theme.ink.opacity(0.85)))
+            .frame(minWidth: 58, maxWidth: dynamicTypeSize.isAccessibilitySize ? .infinity : 64)
+            .frame(minHeight: 54)
             .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(active ? accent : Composer2Theme.glassRaised)
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(active ? accent.opacity(0.16) : Color.white.opacity(0.05))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .strokeBorder(active ? accent.opacity(0.9) : Composer2Theme.line, lineWidth: 1)
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .strokeBorder(active || highlighted ? accent.opacity(0.6) : Color.white.opacity(0.08), lineWidth: 1)
             )
-            .shadow(color: active ? accent.opacity(0.45) : .clear, radius: 12)
-            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(Composer2PressStyle())
         .accessibilityLabel(accessibilityLabel)
         .accessibilityAddTraits(active ? [.isSelected] : [])
+    }
+}
+
+/// The instrument's one big button. Idle it glows cyan-to-violet; live it
+/// turns the live green and breathes.
+struct Composer2LiveButton: View {
+    let isLive: Bool
+    let isBusy: Bool
+    let accessibilityLabel: String
+    let action: () -> Void
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var breathe = false
+
+    private var fill: LinearGradient {
+        isLive
+            ? LinearGradient(colors: [Composer2Theme.live, Color(hex: "#1FB5A0")], startPoint: .topLeading, endPoint: .bottomTrailing)
+            : LinearGradient(colors: [Composer2Theme.cyan, Composer2Theme.violet], startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                if isBusy {
+                    ProgressView().tint(Composer2Theme.void)
+                } else {
+                    Image(systemName: isLive ? "stop.fill" : "dot.radiowaves.left.and.right")
+                        .font(.system(size: 18, weight: .bold))
+                        .symbolEffect(.variableColor.iterative, isActive: isLive && !reduceMotion)
+                }
+                Text(isLive ? "Stop" : "Go Live")
+                    .font(.system(.headline, design: .rounded).weight(.heavy))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+            .foregroundStyle(Composer2Theme.void)
+            .frame(maxWidth: .infinity)
+            .frame(minHeight: 54)
+            .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(fill))
+            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Color.white.opacity(0.35), lineWidth: 1))
+            .shadow(color: (isLive ? Composer2Theme.live : Composer2Theme.cyan).opacity(breathe && isLive ? 0.8 : 0.45),
+                    radius: breathe && isLive ? 22 : 14)
+            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        }
+        .buttonStyle(Composer2PressStyle(scale: 0.95))
+        .frame(maxWidth: .infinity)
+        .accessibilityLabel(accessibilityLabel)
+        .onAppear {
+            guard !reduceMotion else { return }
+            withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) { breathe = true }
+        }
     }
 }

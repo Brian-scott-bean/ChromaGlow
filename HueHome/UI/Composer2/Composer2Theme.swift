@@ -31,6 +31,45 @@ enum Composer2Theme {
         LinearGradient(colors: [background, navy, background], startPoint: .top, endPoint: .bottom)
     }
 
+    // v2.2 — the luminous redesign.
+    static let void = Color(hex: "#04050B")
+    static let panel = Color.white.opacity(0.055)
+    static let panelHighlight = Color.white.opacity(0.14)
+    static let amber = Color(hex: "#FFB547")
+    static let lime = Color(hex: "#B8FF6B")
+
+    /// The accent each look category carries.
+    static func accent(for category: Composer2LookCategory) -> Color {
+        switch category {
+        case .halloween: return Color(hex: "#FF8A3D")
+        case .winter: return Color(hex: "#7FD1FF")
+        case .holidays: return Color(hex: "#FF5CC8")
+        case .weather: return Color(hex: "#9B8CFF")
+        case .nature: return Color(hex: "#5CF2B0")
+        case .fire: return Color(hex: "#FFB547")
+        case .party: return Color(hex: "#FF4FD8")
+        case .calm: return Color(hex: "#8FB8FF")
+        }
+    }
+
+    /// The colours a composition paints with, for washes and glows: the
+    /// first visible layer's stops, brightened for the screen.
+    static func swatches(of composition: Composer2Composition, max count: Int = 5) -> [Color] {
+        var out: [Color] = []
+        for layer in composition.layers where layer.contributes {
+            for stop in layer.color.sanitizedStops where out.count < count {
+                out.append(solidColor(x: stop.x, y: stop.y))
+            }
+            if let events = layer.events {
+                for xy in ([events.color].compactMap { $0 } + events.colors) where out.count < count {
+                    out.append(solidColor(x: xy.x, y: xy.y))
+                }
+            }
+            if out.count >= count { break }
+        }
+        return out.isEmpty ? [cyan, violet] : out
+    }
+
     /// The accent each creative dimension carries through cards and editors.
     static func accent(for dimension: Composer2Dimension) -> Color {
         switch dimension {
@@ -93,24 +132,30 @@ struct Composer2GlassCard: ViewModifier {
 
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        let edge = selected ? (accent ?? Composer2Theme.cyan) : Color.white
         return content
             .background(
                 ZStack {
+                    shape.fill(.ultraThinMaterial.opacity(0.45))
                     shape.fill(raised ? Composer2Theme.glassRaised : Composer2Theme.glass)
-                    shape.fill(.ultraThinMaterial.opacity(0.35))
+                    // A soft top light, as if the panel caught the room's glow.
+                    shape.fill(LinearGradient(colors: [Color.white.opacity(raised ? 0.07 : 0.05), .clear],
+                                              startPoint: .top, endPoint: .center))
                     if let accent, selected {
-                        shape.fill(accent.opacity(0.08))
+                        shape.fill(RadialGradient(colors: [accent.opacity(0.16), .clear],
+                                                  center: .topLeading, startRadius: 0, endRadius: 260))
                     }
                 }
             )
             .overlay(
                 shape.strokeBorder(
-                    selected ? (accent ?? Composer2Theme.cyan).opacity(0.55) : Composer2Theme.line,
+                    LinearGradient(colors: [edge.opacity(selected ? 0.7 : 0.16), edge.opacity(selected ? 0.25 : 0.04)],
+                                   startPoint: .topLeading, endPoint: .bottomTrailing),
                     lineWidth: selected ? 1.2 : 1)
             )
-            .shadow(color: selected ? (accent ?? Composer2Theme.cyan).opacity(0.28) : .clear,
-                    radius: selected ? 18 : 0)
             .clipShape(shape)
+            .shadow(color: selected ? (accent ?? Composer2Theme.cyan).opacity(0.3) : .black.opacity(0.25),
+                    radius: selected ? 20 : 12, y: selected ? 0 : 6)
     }
 }
 
@@ -127,8 +172,8 @@ enum Composer2Copy {
     static let title = "Composer"
     static let tagline = "Create light that feels alive."
     static let experimentalBadge = "EXPERIMENTAL"
-    static let entryTitle = "Try Composer 2"
-    static let entrySubtitle = "An instrument for designing light — layers, motion, rhythm, events."
+    static let entryTitle = "Composer"
+    static let entrySubtitle = "Lightning, chasing lights, Halloween, fireworks — or build your own."
     static let buildYourOwnTitle = "Build Your Own Light Behavior"
     static let buildYourOwnSubtitle = "Combine primitives. Create something unique."
     static let addBehavior = "Add Behavior"
@@ -214,6 +259,7 @@ enum Composer2Copy {
         case .bounce: kind = "Bounce"
         case .scatter: kind = "Scatter"
         case .organic: kind = "Organic"
+        case .march: kind = "March · \(motion.patternLength)-light pattern"
         }
         let speed = speedWord(period: motion.sanitizedPeriod)
         let dir = motion.reverse ? " · reversed" : ""
@@ -239,6 +285,8 @@ enum Composer2Copy {
         case .flicker: return "Flicker · \(String(format: "%.1f", rhythm.sanitizedFlickerRate))/s"
         case .swell: return "Swell · \(tempo(rhythm))"
         case .burst: return "Burst · \(tempo(rhythm))"
+        case .twinkle: return "Twinkle · \(tempo(rhythm))"
+        case .candle: return "Candle · \(String(format: "%.1f", rhythm.sanitizedFlickerRate))/s"
         }
     }
 

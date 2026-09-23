@@ -9,31 +9,46 @@
 import Foundation
 import Observation
 
+/// The three tabs of the Composer: start from a look, tune it, or build it.
 enum Composer2Mode: String, CaseIterable, Identifiable {
-    case quick, customize, advanced, expert
+    case looks, tune, layers
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .quick: return "Quick"
-        case .customize: return "Customize"
-        case .advanced: return "Advanced"
-        case .expert: return "Expert"
+        case .looks: return "Looks"
+        case .tune: return "Tune"
+        case .layers: return "Layers"
+        }
+    }
+    var symbol: String {
+        switch self {
+        case .looks: return "square.grid.2x2.fill"
+        case .tune: return "slider.horizontal.3"
+        case .layers: return "square.3.layers.3d"
         }
     }
 }
 
 enum Composer2Editor: String, Identifiable, CaseIterable {
-    case palette, motion, rhythm, space, audio, variation, events
+    case palette, motion, rhythm, space, events, audio, variation, layer
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .palette: return "Palette"
+        case .palette: return "Colour"
         case .motion: return "Motion"
         case .rhythm: return "Rhythm"
         case .space: return "Space"
-        case .audio: return "Audio"
+        case .audio: return "Sound"
         case .variation: return "Variation"
-        case .events: return "Events"
+        case .events: return "Moments"
+        case .layer: return "Layer"
+        }
+    }
+    var symbol: String {
+        switch self {
+        case .events: return "bolt.fill"
+        case .layer: return "square.2.layers.3d"
+        default: return dimension?.symbol ?? "circle"
         }
     }
     var dimension: Composer2Dimension? {
@@ -44,7 +59,7 @@ enum Composer2Editor: String, Identifiable, CaseIterable {
         case .space: return .space
         case .audio: return .audio
         case .variation: return .variation
-        case .events: return nil
+        case .events, .layer: return nil
         }
     }
 }
@@ -68,7 +83,7 @@ struct Composer2RoomContext: Equatable {
 @Observable
 final class Composer2Document {
     var composition: Composer2Composition
-    var mode: Composer2Mode = .customize
+    var mode: Composer2Mode = .looks
     var selectedLayerID: UUID
     var selectedSlots: Set<Int> = []
     var activeEditor: Composer2Editor? = nil
@@ -147,10 +162,62 @@ final class Composer2Document {
         selectedSlots = mask.kind == .slots && !mask.invert ? Set(mask.slots.filter { $0 >= 0 }) : []
     }
 
+    // MARK: Undo
+
+    /// Earlier versions of the composition, newest last. A drag is one step:
+    /// edits closer together than `undoCoalesce` fold into the step before.
+    private(set) var undoStack: [Composer2Composition] = []
+    private(set) var redoStack: [Composer2Composition] = []
+    @ObservationIgnored private var lastUndoPush: Double = -.infinity
+    /// Injectable clock (seconds) for tests.
+    @ObservationIgnored var undoClock: () -> Double = { Date().timeIntervalSinceReferenceDate }
+    static let undoLimit = 60
+    static let undoCoalesce: Double = 0.6
+
+    var canUndo: Bool { !undoStack.isEmpty }
+    var canRedo: Bool { !redoStack.isEmpty }
+
+    private func recordUndo(_ previous: Composer2Composition) {
+        let t = undoClock()
+        if t - lastUndoPush >= Composer2Document.undoCoalesce || undoStack.isEmpty {
+            undoStack.append(previous)
+            if undoStack.count > Composer2Document.undoLimit { undoStack.removeFirst() }
+        }
+        lastUndoPush = t
+        redoStack.removeAll()
+    }
+
+    func undo() {
+        guard let previous = undoStack.popLast() else { return }
+        redoStack.append(composition)
+        restore(previous)
+    }
+
+    func redo() {
+        guard let next = redoStack.popLast() else { return }
+        undoStack.append(composition)
+        restore(next)
+    }
+
+    private func restore(_ version: Composer2Composition) {
+        let layerIndex = selectedLayerIndex
+        composition = version
+        if !version.layers.contains(where: { $0.id == selectedLayerID }) {
+            selectedLayerID = version.layers[min(layerIndex, max(0, version.layers.count - 1))].id
+        }
+        syncSelectionToSelectedLayer()
+        isDirty = true
+        lastUndoPush = -.infinity
+        onEdit?()
+    }
+
     // MARK: Editing
 
     func edit(_ mutate: (inout Composer2Composition) -> Void) {
+        let before = composition
         mutate(&composition)
+        guard composition != before else { return }
+        recordUndo(before)
         isDirty = true
         onEdit?()
     }
@@ -172,6 +239,9 @@ final class Composer2Document {
 
     /// Replace the whole composition (mood chips, presets, reopening a saved one).
     func load(_ new: Composer2Composition, asSource: Bool = true) {
+        undoStack.removeAll()
+        redoStack.removeAll()
+        lastUndoPush = -.infinity
         composition = new
         selectedLayerID = new.layers.first?.id ?? UUID()
         syncSelectionToSelectedLayer()
@@ -315,5 +385,71 @@ final class Composer2Document {
     func toggleSlot(_ slot: Int) {
         if selectedSlots.contains(slot) { selectedSlots.remove(slot) } else { selectedSlots.insert(slot) }
         applySelectionToMask()
+    }
+}
+
+// MARK: - Dimension on/off semantics
+
+extension Composer2Dimension {
+    /// Whether the dimension is "doing something" on this layer.
+    func isOn(in layer: Composer2Layer) -> Bool {
+        switch self {
+        case .palette: return true
+        case .motion: return layer.motion.kind != .static
+        case .rhythm: return layer.rhythm.shape != .steady
+        case .space: return true
+        case .audio: return layer.audio.isActive
+        case .variation: return layer.variation.amount > 0
+        }
+    }
+}
+
+extension Composer2Document {
+    /// Turn a dimension off without losing its settings, and back on with a
+    /// sensible restore (the last kind is kept in the value itself where possible).
+    func setDimension(_ dimension: Composer2Dimension, on: Bool) {
+        let id = selectedLayer.id
+        var stash = dimensionStash[id] ?? DimensionStash()
+        editSelectedLayer { layer in
+            switch dimension {
+            case .palette, .space:
+                break
+            case .motion:
+                if on {
+                    if layer.motion.kind == .static { layer.motion.kind = stash.motionKind ?? .flow }
+                } else {
+                    if layer.motion.kind != .static { stash.motionKind = layer.motion.kind }
+                    layer.motion.kind = .static
+                }
+            case .rhythm:
+                if on {
+                    if layer.rhythm.shape == .steady { layer.rhythm.shape = stash.rhythmShape ?? .breathe }
+                } else {
+                    if layer.rhythm.shape != .steady { stash.rhythmShape = layer.rhythm.shape }
+                    layer.rhythm.shape = .steady
+                }
+            case .audio:
+                if on {
+                    if !layer.audio.isActive { layer.audio.source = stash.audioSource ?? .amplitude }
+                } else {
+                    if layer.audio.isActive { stash.audioSource = layer.audio.source }
+                    layer.audio.source = .off
+                }
+            case .variation:
+                if on {
+                    if layer.variation.amount <= 0 {
+                        if let amount = stash.variationAmount {
+                            layer.variation.amount = amount   // the rest of it was never touched
+                        } else {
+                            layer.variation = Composer2Variation.organic.withSeed(layer.variation.seed)
+                        }
+                    }
+                } else {
+                    if layer.variation.amount > 0 { stash.variationAmount = layer.variation.amount }
+                    layer.variation.amount = 0
+                }
+            }
+        }
+        dimensionStash[id] = stash
     }
 }

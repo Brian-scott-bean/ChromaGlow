@@ -85,54 +85,74 @@ struct Composer2EntryCard: View {
         }
     }
 
+    /// The look the card's little stage plays: whatever is live, else a showpiece.
+    private var stageLook: Composer2Composition {
+        if center.isLive, let id = center.session?.compositionID, let playing = store.composition(id: id) {
+            return playing
+        }
+        return Composer2PresetLibrary.thunderstorm
+    }
+
     private var entryButton: some View {
         Button {
             HapticManager.shared.medium()
             isPresented = true
         } label: {
-            HStack(spacing: HueSpacing.md) {
-                ZStack {
-                    Circle()
-                        .fill(LinearGradient(colors: [Composer2Theme.cyan, Composer2Theme.violet],
-                                             startPoint: .topLeading, endPoint: .bottomTrailing))
-                        .frame(width: 44, height: 44)
-                        .shadow(color: Composer2Theme.cyan.opacity(0.5), radius: 12)
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 18, weight: .bold))
-                        .foregroundStyle(Composer2Theme.background)
-                }
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 8) {
-                        Text(Composer2Copy.entryTitle)
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(.white)
+            VStack(alignment: .leading, spacing: 0) {
+                ZStack(alignment: .topLeading) {
+                    Composer2MiniStage(composition: stageLook, lights: 9)
+                        .frame(height: 110)
+                    HStack(spacing: 6) {
                         StageBadge(text: Composer2Copy.experimentalBadge, style: .amber)
+                        Spacer(minLength: 0)
+                        Label("\(Composer2ThemeCatalog.entries.count) looks", systemImage: "square.grid.2x2.fill")
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(.white.opacity(0.8))
+                            .padding(.horizontal, 8)
+                            .frame(minHeight: 22)
+                            .background(Capsule().fill(.ultraThinMaterial))
                     }
-                    Text(Composer2Copy.entrySubtitle)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.55))
-                        .fixedSize(horizontal: false, vertical: true)
+                    .padding(10)
                 }
-                Spacer(minLength: 0)
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.4))
+                HStack(spacing: HueSpacing.md) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(Composer2Copy.entryTitle)
+                            .font(.system(.title3, design: .rounded).weight(.heavy))
+                            .foregroundStyle(.white)
+                        Text(Composer2Copy.entrySubtitle)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.6))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 0)
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 14, weight: .heavy))
+                        .foregroundStyle(Composer2Theme.void)
+                        .frame(width: 36, height: 36)
+                        .background(Circle().fill(LinearGradient(colors: [Composer2Theme.cyan, Composer2Theme.violet],
+                                                                 startPoint: .topLeading, endPoint: .bottomTrailing)))
+                        .shadow(color: Composer2Theme.cyan.opacity(0.5), radius: 10)
+                }
+                .padding(HueSpacing.lg)
             }
-            .padding(HueSpacing.lg)
             .background(
-                RoundedRectangle(cornerRadius: HueRadius.xl, style: .continuous)
-                    .fill(Composer2Theme.navy.opacity(0.85))
+                ZStack {
+                    Composer2Theme.void
+                    Composer2PaletteWash(colors: Composer2Theme.swatches(of: stageLook, max: 3)).opacity(0.18)
+                }
             )
+            .clipShape(RoundedRectangle(cornerRadius: HueRadius.xl, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: HueRadius.xl, style: .continuous)
-                    .strokeBorder(LinearGradient(colors: [Composer2Theme.cyan.opacity(0.5), Composer2Theme.violet.opacity(0.35)],
+                    .strokeBorder(LinearGradient(colors: [Composer2Theme.cyan.opacity(0.55), Composer2Theme.violet.opacity(0.3)],
                                                  startPoint: .leading, endPoint: .trailing), lineWidth: 1)
             )
+            .shadow(color: Composer2Theme.violet.opacity(0.25), radius: 18, y: 8)
             .contentShape(RoundedRectangle(cornerRadius: HueRadius.xl, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(Composer2PressStyle(scale: 0.98))
         .accessibilityLabel("\(Composer2Copy.entryTitle), experimental")
-        .accessibilityHint("Opens the Composer 2 instrument")
+        .accessibilityHint("Opens the Composer: \(Composer2ThemeCatalog.entries.count) looks, or build your own")
     }
 
     private func playingPill(_ session: Composer2PlaybackCenter.Session) -> some View {

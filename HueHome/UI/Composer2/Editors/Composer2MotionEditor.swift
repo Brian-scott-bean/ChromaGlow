@@ -21,10 +21,25 @@ struct Composer2MotionEditorContent: View {
                     ("Wave", .wave, "water.waves"),
                     ("Bounce", .bounce, "arrow.left.arrow.right"),
                     ("Scatter", .scatter, "sparkles"),
-                    ("Organic", .organic, "leaf")
+                    ("Organic", .organic, "leaf"),
+                    ("March", .march, "lightbulb.2")
                 ], selection: document.layerBinding(\.motion.kind))
                 Composer2SliderRow(title: "Speed", value: document.layerBinding(\.motion.speedNormalized), range: 0...1,
-                                   format: { _ in composer2Seconds(motion.sanitizedPeriod) + " per cycle" })
+                                   format: { _ in
+                                       motion.kind == .march
+                                           ? composer2Seconds(motion.stepSeconds) + " per step"
+                                           : composer2Seconds(motion.sanitizedPeriod) + " per cycle"
+                                   })
+                if motion.kind == .march {
+                    Composer2StepperRow(title: "Pattern", value: document.layerBinding(\.motion.steps), range: 2...12,
+                                        format: { "\($0) lights" })
+                    Composer2SliderRow(title: "Lit", value: document.layerBinding(\.motion.travelWidth), range: 0.05...1,
+                                       format: { width in
+                                           let k = motion.patternLength
+                                           let lit = width >= 0.999 ? k : max(1, Int((width * Double(k)).rounded()))
+                                           return lit >= k ? "every light" : "\(lit) in \(k)"
+                                       })
+                }
                 StageToggleRow(title: "Reverse direction", isOn: document.layerBinding(\.motion.reverse))
                 StageToggleRow(title: "Mirror from both ends", isOn: document.layerBinding(\.motion.mirror))
             }

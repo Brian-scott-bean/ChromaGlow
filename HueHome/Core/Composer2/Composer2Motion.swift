@@ -16,6 +16,10 @@ struct Composer2Motion: Codable, Equatable {
         case bounce
         case scatter
         case organic
+        /// Classic string-light chase by light ORDER: every light shows the
+        /// next colour in the pattern and the whole pattern steps along one
+        /// light at a time (theater chase when only some cells are lit).
+        case march
     }
 
     /// Which room axis the motion travels along.
@@ -103,9 +107,20 @@ struct Composer2Motion: Codable, Equatable {
     static let maximumPeriod: Double = 600
 
     /// The period the engine actually runs: never faster than the flash budget.
+    /// A march steps `patternLength` times per cycle, and every step can turn
+    /// a light on, so its floor is one flash budget PER STEP.
     var sanitizedPeriod: Double {
-        Composer2Math.clamp(periodSeconds, Composer2Motion.minimumPeriod, Composer2Motion.maximumPeriod)
+        let floorValue = kind == .march
+            ? Composer2Motion.minimumPeriod * Double(patternLength)
+            : Composer2Motion.minimumPeriod
+        return Composer2Math.clamp(periodSeconds, floorValue, Composer2Motion.maximumPeriod)
     }
+
+    /// Cells in a march pattern (`steps`, or 3 when unset), 2…16.
+    var patternLength: Int { Swift.max(2, Swift.min(16, steps > 0 ? steps : 3)) }
+
+    /// Seconds per march step.
+    var stepSeconds: Double { sanitizedPeriod / Double(patternLength) }
 
     /// A 0…1 "speed" for sliders (1 = fastest legal period, 0 = 60 s).
     var speedNormalized: Double {
@@ -126,8 +141,8 @@ struct Composer2Motion: Codable, Equatable {
     /// - position: the light's 0…1 place along the motion axis.
     /// - cross: its 0…1 place across the axis (0.5 when unknown) — organic only.
     /// - time: motion time in seconds (already warped by speed modulation).
-    func sample(slot: Int, position: Double, cross: Double, time: Double, seed: UInt64)
-        -> (phase: Double, weight: Double) {
+    func sample(slot: Int, position: Double, cross: Double, time: Double, seed: UInt64,
+                rank: Int = 0) -> (phase: Double, weight: Double) {
         let period = sanitizedPeriod
         let dir: Double = reverse ? -1 : 1
         let safeTime = time.isFinite ? time : 0
@@ -194,6 +209,39 @@ struct Composer2Motion: Codable, Equatable {
             let sparkle = Composer2Noise.value1D(nt * 0.7 + 31.7 + salt * 53, seed: Composer2Hash.mix(seed, 0x5CA8))
             let weight = 1 - (1 - width) * (1 - Composer2Math.smoothstep(sparkle))
             return (phase, Composer2Math.clamp01(weight))
+
+        case .march:
+            // One cell per light in room order. The pattern moves forward one
+            // light per step; `travelWidth` lights some of the cells (theater
+            // chase), `smoothness` cross-fades each step instead of snapping.
+            let k = patternLength
+            let stepFloat = nt * Double(k)
+            let step = floor(stepFloat)
+            let within = stepFloat - step
+            func cellIndex(_ s: Double) -> Int {
+                let raw = (Double(rank) - s).truncatingRemainder(dividingBy: Double(k))
+                return (Int(raw) % k + k) % k
+            }
+            let lit = width >= 0.999 ? k : Swift.max(1, Int((width * Double(k)).rounded()))
+            let current = cellIndex(step)
+            let next = cellIndex(step + 1)
+            // A hair past the stop so a stepped palette never rounds down to
+            // the previous colour.
+            var phase = Composer2Math.frac(Double(current) / Double(k) + offset + 1e-7)
+            var weight: Double = current < lit ? 1 : 0
+            let fade = soft * 0.5
+            if fade > 0, within > 1 - fade {
+                let u = Composer2Math.smoothstep((within - (1 - fade)) / fade)
+                // Cross-fade toward the next step's colour and light.
+                let nextPhase = Composer2Math.frac(Double(next) / Double(k) + offset)
+                var delta = nextPhase - phase
+                if delta > 0.5 { delta -= 1 }
+                if delta < -0.5 { delta += 1 }
+                phase = Composer2Math.frac(phase + delta * u)
+                let nextWeight: Double = next < lit ? 1 : 0
+                weight = Composer2Math.lerp(weight, nextWeight, u)
+            }
+            return (phase, weight)
 
         case .organic:
             let s = Composer2Math.clamp(scale, 0.25, 4)
