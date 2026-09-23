@@ -14,7 +14,7 @@ enum Composer2PresetLibrary {
 
     // MARK: Colours (all inside gamut C — pinned by Composer2LabPresetTests)
 
-    private enum Swatch {
+    enum Swatch {
         static let red = Composer2XY(x: 0.6400, y: 0.3200)
         static let deepRed = Composer2XY(x: 0.6200, y: 0.3100)
         static let orange = Composer2XY(x: 0.5600, y: 0.4000)
@@ -36,13 +36,40 @@ enum Composer2PresetLibrary {
         static let purple = Composer2XY(x: 0.2600, y: 0.1300)
         static let magenta = Composer2XY(x: 0.3800, y: 0.1700)
         static let pink = Composer2XY(x: 0.4300, y: 0.2400)
+        // v2.2 — every one inside gamut C (pinned by the preset tests).
+        static let blood = Composer2XY(x: 0.6500, y: 0.3100)
+        static let ember = Composer2XY(x: 0.6200, y: 0.3500)
+        static let pumpkin = Composer2XY(x: 0.5800, y: 0.3850)
+        static let sunset = Composer2XY(x: 0.6000, y: 0.3700)
+        static let gold = Composer2XY(x: 0.5000, y: 0.4400)
+        static let yellow = Composer2XY(x: 0.4600, y: 0.4700)
+        static let lime = Composer2XY(x: 0.3600, y: 0.5450)
+        static let firefly = Composer2XY(x: 0.4000, y: 0.5000)
+        static let toxic = Composer2XY(x: 0.3000, y: 0.5850)
+        static let emerald = Composer2XY(x: 0.2000, y: 0.5500)
+        static let mint = Composer2XY(x: 0.2800, y: 0.4000)
+        static let seafoam = Composer2XY(x: 0.2300, y: 0.4000)
+        static let skyBlue = Composer2XY(x: 0.2200, y: 0.2500)
+        static let ice = Composer2XY(x: 0.2400, y: 0.2600)
+        static let royal = Composer2XY(x: 0.1600, y: 0.0800)
+        static let deepPurple = Composer2XY(x: 0.2400, y: 0.1000)
+        static let lavender = Composer2XY(x: 0.2700, y: 0.2200)
+        static let hotPink = Composer2XY(x: 0.4500, y: 0.2200)
+        static let blush = Composer2XY(x: 0.3800, y: 0.2800)
+        static let pastelYellow = Composer2XY(x: 0.4200, y: 0.4400)
+        static let pastelBlue = Composer2XY(x: 0.2600, y: 0.2800)
+        static let coolWhite = Composer2XY(x: 0.2850, y: 0.2950)
+        static let skyGlow = Composer2XY(x: 0.2550, y: 0.2250)
+        static let stormGreen = Composer2XY(x: 0.2600, y: 0.3400)
+        static let dusk = Composer2XY(x: 0.3000, y: 0.1800)
+        static let teslaViolet = Composer2XY(x: 0.2500, y: 0.2000)
     }
 
-    private static func id(_ n: Int) -> UUID {
+    static func id(_ n: Int) -> UUID {
         UUID(uuidString: String(format: "0000000C-0002-0002-0002-%012d", n))!
     }
 
-    private static func layerID(_ preset: Int, _ layer: Int) -> UUID {
+    static func layerID(_ preset: Int, _ layer: Int) -> UUID {
         UUID(uuidString: String(format: "0000000C-0003-%04d-%04d-000000000000", preset, layer))!
     }
 
@@ -178,44 +205,54 @@ enum Composer2PresetLibrary {
             rhythm: Composer2Rhythm(shape: .breathe, periodSeconds: 20, depth: 0.6,
                                     minBrightness: 0.06, maxBrightness: 0.16),
             variation: Composer2Variation.subtle)
+        // Rain on the glass: a fine, dim, restless texture over the sky.
+        let rain = Composer2Layer(
+            id: layerID(5, 3), name: "Rain on the Glass", opacity: 0.55, blend: .maxBrightness,
+            color: Composer2ColorSource(stops: [Swatch.slate, Swatch.ice].map { Composer2PaletteStop($0) },
+                                        interpolation: .hueArc),
+            motion: Composer2Motion(kind: .scatter, periodSeconds: 6, spread: 1, travelWidth: 0.4),
+            rhythm: Composer2Rhythm(shape: .flicker, periodSeconds: 2, depth: 0.6,
+                                    minBrightness: 0.03, maxBrightness: 0.11, flickerRate: 0.9),
+            variation: Composer2Variation.organic)
+        // Real lightning: a leader, one to three return strokes spaced a
+        // flash budget apart, the sky lit around the bolt, a long afterglow.
         let lightning = Composer2Layer(
             id: layerID(5, 2), name: "Lightning", blend: .addLighten,
             color: Composer2ColorSource.solid(Swatch.blueWhite),
             motion: Composer2Motion(kind: .static),
             rhythm: Composer2Rhythm(shape: .steady, maxBrightness: 0),
             variation: Composer2Variation.organic,
-            events: Composer2EventSpec(timing: .random, minDelay: 6, maxDelay: 18, probability: 0.8,
+            events: Composer2EventSpec(timing: .random, minDelay: 5, maxDelay: 16, probability: 0.85,
                                        burstMin: 1, burstMax: 3,
-                                       spacingMin: BeatMath.FlashSafety.minOnsetLedgerPeriod, spacingMax: 0.55,
-                                       durationMin: 0.06, durationMax: 0.14, decaySeconds: 0.35,
-                                       intensityMin: 0.6, intensityMax: 1,
-                                       targeting: .spatialBiased, spatialBias: 0.5,
-                                       majorProbability: 0.15,
-                                       modulates: [.brightness, .color], color: Swatch.blueWhite))
+                                       spacingMin: 0.36, spacingMax: 0.6,
+                                       durationMin: 0.03, durationMax: 0.07, decaySeconds: 0.45,
+                                       intensityMin: 0.75, intensityMax: 1,
+                                       targeting: .spatialBiased, spatialBias: 0.55,
+                                       majorProbability: 0.12,
+                                       modulates: [.brightness, .color], color: Swatch.blueWhite,
+                                       shape: .lightning, distance: 0.35, propagation: 0.35,
+                                       colors: [Swatch.skyGlow]))
         return Composer2Composition(
-            id: id(5), name: "Thunderstorm", subtitle: "Dark skies. Lightning you can tune.",
-            createdAt: epoch, isBuiltIn: true, layers: [sky, lightning])
+            id: id(5), name: "Thunderstorm", subtitle: "Real lightning. Rain on the glass.",
+            createdAt: epoch, isBuiltIn: true, layers: [sky, rain, lightning])
     }()
 
-    static let all: [Composer2Composition] = [auroraDrift, lavaLamp, christmasChase, hauntedHouse, thunderstorm]
+    /// The five v2.0 demonstration looks (ids 1…5).
+    static let originals: [Composer2Composition] = [auroraDrift, lavaLamp, christmasChase, hauntedHouse, thunderstorm]
+
+    /// Every built-in look, in catalog order.
+    static var all: [Composer2Composition] { Composer2ThemeCatalog.entries.map(\.composition) }
 
     static func composition(id: UUID) -> Composer2Composition? {
-        all.first { $0.id == id }
+        Composer2ThemeCatalog.entry(id: id)?.composition
     }
 
     static func isBuiltIn(id: UUID) -> Bool {
-        all.contains { $0.id == id }
+        Composer2ThemeCatalog.entry(id: id) != nil
     }
 
-    /// Icon for the mood chips (SF Symbol).
+    /// Icon for a look (SF Symbol).
     static func symbol(for id: UUID) -> String {
-        switch id {
-        case auroraDrift.id: return "wind"
-        case lavaLamp.id: return "drop.fill"
-        case christmasChase.id: return "snowflake"
-        case hauntedHouse.id: return "moon.haze.fill"
-        case thunderstorm.id: return "cloud.bolt.fill"
-        default: return "sparkles"
-        }
+        Composer2ThemeCatalog.entry(id: id)?.symbol ?? "sparkles"
     }
 }

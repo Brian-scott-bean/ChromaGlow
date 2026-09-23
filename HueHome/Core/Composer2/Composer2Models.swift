@@ -140,16 +140,24 @@ struct Composer2MasterControls: Codable, Equatable {
     /// drives this so it never rewrites a layer's own variation settings.
     var variation: Double = 1
     var seed: UInt64
+    /// How often events happen, ×0.25…×4 (1 = as authored). The storm's
+    /// "Frequency" dial — only the schedule changes.
+    var eventRate: Double = 1
+    /// 0…1 how strongly events land (1 = as authored).
+    var eventStrength: Double = 1
 
-    init(intensity: Double = 1, speed: Double = 1, energy: Double = 0.5, variation: Double = 1, seed: UInt64) {
+    init(intensity: Double = 1, speed: Double = 1, energy: Double = 0.5, variation: Double = 1, seed: UInt64,
+         eventRate: Double = 1, eventStrength: Double = 1) {
         self.intensity = intensity
         self.speed = speed
         self.energy = energy
         self.variation = variation
         self.seed = seed
+        self.eventRate = eventRate
+        self.eventStrength = eventStrength
     }
 
-    enum CodingKeys: String, CodingKey { case intensity, speed, energy, variation, seed }
+    enum CodingKeys: String, CodingKey { case intensity, speed, energy, variation, seed, eventRate, eventStrength }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -158,6 +166,8 @@ struct Composer2MasterControls: Codable, Equatable {
         energy = (try? c.decode(Double.self, forKey: .energy)) ?? 0.5
         variation = (try? c.decode(Double.self, forKey: .variation)) ?? 1
         seed = Composer2SeedCoding.decode(from: c, forKey: .seed) ?? 0x5EED_C0DE
+        eventRate = (try? c.decode(Double.self, forKey: .eventRate)) ?? 1
+        eventStrength = (try? c.decode(Double.self, forKey: .eventStrength)) ?? 1
     }
 
     func encode(to encoder: Encoder) throws {
@@ -167,9 +177,13 @@ struct Composer2MasterControls: Codable, Equatable {
         try c.encode(energy, forKey: .energy)
         try c.encode(variation, forKey: .variation)
         try Composer2SeedCoding.encode(seed, to: &c, forKey: .seed)
+        try c.encode(eventRate, forKey: .eventRate)
+        try c.encode(eventStrength, forKey: .eventStrength)
     }
 
     var sanitizedSpeed: Double { Composer2Math.clamp(speed.isFinite ? speed : 1, 0.25, 4) }
+    var sanitizedEventRate: Double { Composer2Math.clamp(eventRate.isFinite ? eventRate : 1, 0.25, 4) }
+    var sanitizedEventStrength: Double { Composer2Math.clamp01(eventStrength.isFinite ? eventStrength : 1) }
 }
 
 struct Composer2TargetHint: Codable, Equatable {

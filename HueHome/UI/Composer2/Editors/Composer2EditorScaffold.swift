@@ -12,38 +12,96 @@ struct Composer2EditorSheet: View {
     let editor: Composer2Editor
     let feed: Composer2PreviewFeed
     @Environment(\.dismiss) private var dismiss
+    @State private var tab: Composer2Editor
+    @Namespace private var tabGlow
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    init(document: Composer2Document, editor: Composer2Editor, feed: Composer2PreviewFeed) {
+        self.document = document
+        self.editor = editor
+        self.feed = feed
+        _tab = State(initialValue: editor)
+    }
+
+    private var accent: Color {
+        tab.dimension.map { Composer2Theme.accent(for: $0) } ?? Composer2Theme.coral
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
+            HStack(alignment: .center, spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(editor.title)
-                        .font(HueFont.displaySmall)
-                        .foregroundStyle(Composer2Theme.ink)
                     Text(document.selectedLayer.name)
-                        .font(HueFont.stageStatus)
+                        .font(.system(.title3, design: .rounded).weight(.bold))
+                        .foregroundStyle(Composer2Theme.ink)
+                        .lineLimit(1)
+                    Text("Changes play instantly")
+                        .font(.caption)
                         .foregroundStyle(Composer2Theme.muted)
                 }
                 Spacer()
                 Button("Done") { dismiss() }
-                    .font(HueFont.bodyMedium)
+                    .font(.headline)
                     .foregroundStyle(Composer2Theme.cyan)
                     .frame(minHeight: 44)
-                    .accessibilityLabel("Done editing \(editor.title)")
+                    .accessibilityLabel("Done editing \(document.selectedLayer.name)")
             }
             .padding(.horizontal, HueSpacing.screenH)
             .padding(.top, HueSpacing.lg)
-            .padding(.bottom, HueSpacing.sm)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(Composer2Editor.allCases) { item in
+                        let selected = item == tab
+                        let itemAccent = item.dimension.map { Composer2Theme.accent(for: $0) } ?? Composer2Theme.coral
+                        Button {
+                            HapticManager.shared.selection()
+                            withAnimation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.8)) { tab = item }
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: item.symbol).font(.system(size: 12, weight: .bold))
+                                Text(item.title).font(.subheadline.weight(.semibold))
+                            }
+                            .foregroundStyle(selected ? Composer2Theme.void : Composer2Theme.ink.opacity(0.8))
+                            .padding(.horizontal, 12)
+                            .frame(minHeight: 38)
+                            .background {
+                                if selected {
+                                    Capsule().fill(itemAccent)
+                                        .shadow(color: itemAccent.opacity(0.5), radius: 10)
+                                        .matchedGeometryEffect(id: "editor-tab", in: tabGlow)
+                                } else {
+                                    Capsule().fill(Color.white.opacity(0.06))
+                                }
+                            }
+                            .contentShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(item.title)
+                        .accessibilityAddTraits(selected ? [.isSelected] : [])
+                    }
+                }
+                .padding(.horizontal, HueSpacing.screenH)
+                .padding(.vertical, 10)
+            }
 
             ScrollView(showsIndicators: false) {
                 VStack(spacing: HueSpacing.md) {
-                    Composer2EditorContent(document: document, editor: editor)
+                    Composer2EditorContent(document: document, editor: tab)
+                        .id(tab)
+                        .transition(.opacity)
                     Color.clear.frame(height: HueSpacing.xl)
                 }
                 .padding(.horizontal, HueSpacing.screenH)
             }
         }
-        .background(Composer2Theme.background.ignoresSafeArea())
+        .background(
+            ZStack {
+                Composer2Theme.background
+                RadialGradient(colors: [accent.opacity(0.14), .clear], center: .top, startRadius: 0, endRadius: 420)
+            }
+            .ignoresSafeArea()
+        )
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
         .presentationBackground(Composer2Theme.background)
@@ -65,6 +123,41 @@ struct Composer2EditorContent: View {
         case .audio: Composer2AudioEditorContent(document: document)
         case .variation: Composer2VariationEditorContent(document: document)
         case .events: Composer2EventsEditorContent(document: document)
+        case .layer: Composer2LayerSettingsContent(document: document)
+        }
+    }
+}
+
+/// The behavior itself: its name, how strongly it contributes, how it
+/// blends with the layers below, and whether it plays at all.
+struct Composer2LayerSettingsContent: View {
+    let document: Composer2Document
+
+    var body: some View {
+        VStack(spacing: HueSpacing.md) {
+            Composer2EditorSection(title: "Behavior") {
+                TextField("Name", text: Binding(
+                    get: { document.selectedLayer.name },
+                    set: { name in
+                        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !trimmed.isEmpty { document.editSelectedLayer { $0.name = trimmed } }
+                    }))
+                    .font(.headline)
+                    .foregroundStyle(Composer2Theme.ink)
+                    .padding(.horizontal, 12)
+                    .frame(minHeight: 44)
+                    .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.06)))
+                    .accessibilityLabel("Behavior name")
+                StageToggleRow(title: "Playing", isOn: document.layerBinding(\.enabled))
+                Composer2SliderRow(title: "Strength", value: document.layerBinding(\.opacity), range: 0...1)
+            }
+            Composer2EditorSection(title: "Blend", subtitle: "How this behavior lands on the ones below it.") {
+                Composer2ChipRow(title: "Mode", options: [
+                    ("Covers below", Composer2BlendMode.replace, "square.fill"),
+                    ("Adds light", .addLighten, "plus.circle.fill"),
+                    ("Brighter wins", .maxBrightness, "arrow.up.circle.fill")
+                ], selection: document.layerBinding(\.blend))
+            }
         }
     }
 }

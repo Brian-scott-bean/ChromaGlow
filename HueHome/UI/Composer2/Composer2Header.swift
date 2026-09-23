@@ -1,9 +1,9 @@
 // Composer2Header.swift
-// ChromaGlow — Composer 2 lab (experimental).
+// ChromaGlow — Composer 2 lab (experimental), v2.2.
 //
-// The top of the instrument: the name of the surface, the room it is
-// composing for, a compact connection/state chip, and the composition's own
-// title block with rename.
+// The top of the instrument: close, the room it plays in, and whether it is
+// live — then the look's own title, its category, and whether it has
+// unsaved changes.
 
 import SwiftUI
 
@@ -14,41 +14,34 @@ struct Composer2Header: View {
     let onSelectRoom: (RoomDisplayItem) -> Void
     let onClose: () -> Void
 
+    private var isLiveHere: Bool { center.isPlaying(document: document) }
+
     var body: some View {
-        HStack(alignment: .top, spacing: HueSpacing.md) {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 10) {
-                    Text(Composer2Copy.title)
-                        .font(HueFont.displayMedium)
-                        .foregroundStyle(Composer2Theme.ink)
-                    StageBadge(text: Composer2Copy.experimentalBadge, style: .amber)
-                }
-                Text(Composer2Copy.tagline)
-                    .font(HueFont.subheadline)
-                    .foregroundStyle(Composer2Theme.muted)
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 8) {
-                        roomMenu
-                        stateChip
-                    }
-                    VStack(alignment: .leading, spacing: 6) {
-                        roomMenu
-                        stateChip
-                    }
-                }
-                .padding(.top, 2)
-            }
+        HStack(spacing: 10) {
+            Composer2RoundButton(symbol: "xmark", label: "Close Composer", size: 40, action: onClose)
+            roomMenu
             Spacer(minLength: 0)
-            Button(action: onClose) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(Composer2Theme.ink)
-                    .frame(width: 40, height: 40)
-                    .background(Circle().fill(Composer2Theme.glassRaised))
-                    .overlay(Circle().strokeBorder(Composer2Theme.line, lineWidth: 1))
+            if document.canUndo || document.canRedo {
+                HStack(spacing: 6) {
+                    Composer2RoundButton(symbol: "arrow.uturn.backward", label: "Undo", size: 36) {
+                        HapticManager.shared.light()
+                        document.undo()
+                        Composer2PlaybackCenter.shared.noteEditBurst()
+                    }
+                    .disabled(!document.canUndo)
+                    .opacity(document.canUndo ? 1 : 0.35)
+                    Composer2RoundButton(symbol: "arrow.uturn.forward", label: "Redo", size: 36) {
+                        HapticManager.shared.light()
+                        document.redo()
+                        Composer2PlaybackCenter.shared.noteEditBurst()
+                    }
+                    .disabled(!document.canRedo)
+                    .opacity(document.canRedo ? 1 : 0.35)
+                }
+                .transition(.scale.combined(with: .opacity))
+            } else {
+                stateChip
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Close Composer")
         }
     }
 
@@ -67,53 +60,48 @@ struct Composer2Header: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "house.fill")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(Composer2Theme.cyan)
                 Text(document.roomContext.roomName)
-                    .font(HueFont.stageChip)
+                    .font(.subheadline.weight(.semibold))
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
-                    .layoutPriority(2)
-                Text("·")
-                    .foregroundStyle(Composer2Theme.muted)
-                Text(Composer2Copy.lights(document.roomContext.lightCount))
-                    .font(HueFont.stageChip)
-                    .foregroundStyle(Composer2Theme.muted)
-                    .lineLimit(1)
-                    .fixedSize()
                 Image(systemName: "chevron.down")
                     .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(Composer2Theme.muted)
             }
             .foregroundStyle(Composer2Theme.ink)
-            .padding(.horizontal, 12)
-            .frame(minHeight: 34)
-            .background(Capsule().fill(Composer2Theme.glassRaised))
-            .overlay(Capsule().strokeBorder(Composer2Theme.line, lineWidth: 1))
+            .padding(.horizontal, 14)
+            .frame(minHeight: 40)
+            .background(Capsule().fill(.ultraThinMaterial))
+            .overlay(Capsule().strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
         }
+        .disabled(center.isBusy)
         .accessibilityLabel("Room: \(document.roomContext.roomName), \(Composer2Copy.lights(document.roomContext.lightCount))")
-        .accessibilityHint("Choose the room this composition plays in")
+        .accessibilityHint("Choose the room this look plays in")
     }
 
     private var stateChip: some View {
         HStack(spacing: 6) {
             Circle()
-                .fill(center.isPlaying(document: document) ? Composer2Theme.live : Composer2Theme.muted)
-                .frame(width: 6, height: 6)
+                .fill(isLiveHere ? Composer2Theme.live : Composer2Theme.muted)
+                .frame(width: 7, height: 7)
+                .shadow(color: isLiveHere ? Composer2Theme.live : .clear, radius: 4)
             Text(chipText)
-                .font(HueFont.stageStatus)
-                .foregroundStyle(Composer2Theme.ink.opacity(0.8))
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Composer2Theme.ink.opacity(0.85))
                 .lineLimit(1)
-                .minimumScaleFactor(0.8)
+                .minimumScaleFactor(0.75)
         }
-        .padding(.horizontal, 10)
-        .frame(minHeight: 34)
-        .background(Capsule().fill(Composer2Theme.glass))
-        .overlay(Capsule().strokeBorder(Composer2Theme.line, lineWidth: 1))
+        .padding(.horizontal, 12)
+        .frame(minHeight: 40)
+        .background(Capsule().fill(.ultraThinMaterial))
+        .overlay(Capsule().strokeBorder(Color.white.opacity(0.1), lineWidth: 1))
         .accessibilityLabel("Connection: \(chipText)")
     }
 
     private var chipText: String {
-        if center.isPlaying(document: document) { return center.statusText }
+        if isLiveHere { return center.statusText }
         if document.roomContext.isDemo { return Composer2Copy.demoHome }
         return document.roomContext.connectionText.isEmpty ? Composer2Copy.previewOnly : document.roomContext.connectionText
     }
@@ -127,35 +115,55 @@ struct Composer2TitleBlock: View {
     @State private var draftName = ""
     @State private var draftSubtitle = ""
 
+    private var entry: Composer2LookEntry? {
+        document.sourceID.flatMap { Composer2ThemeCatalog.entry(id: $0) }
+    }
+
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: HueSpacing.md) {
-            VStack(alignment: .leading, spacing: 4) {
+        HStack(alignment: .top, spacing: HueSpacing.md) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    if let entry {
+                        Label(entry.category.title, systemImage: entry.category.symbol)
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(Composer2Theme.accent(for: entry.category))
+                    } else if Composer2Store.shared.compositions.contains(where: { $0.id == document.sourceID }) {
+                        Label("Your look", systemImage: "person.crop.circle.fill")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(Composer2Theme.lime)
+                    }
+                    if document.isDirty {
+                        Text("EDITED")
+                            .font(.caption2.weight(.heavy))
+                            .tracking(1)
+                            .foregroundStyle(Composer2Theme.amber)
+                            .padding(.horizontal, 6)
+                            .frame(minHeight: 18)
+                            .background(Capsule().strokeBorder(Composer2Theme.amber.opacity(0.6), lineWidth: 1))
+                            .accessibilityLabel("Unsaved changes")
+                    }
+                }
                 Text(document.composition.name)
-                    .font(HueFont.displayLarge)
-                    .foregroundStyle(Composer2Theme.ink)
+                    .font(.system(size: 32, weight: .heavy, design: .rounded))
+                    .foregroundStyle(
+                        LinearGradient(colors: [Composer2Theme.ink, Composer2Theme.ink.opacity(0.75)],
+                                       startPoint: .top, endPoint: .bottom))
                     .lineLimit(2)
                     .minimumScaleFactor(0.7)
-                Text(document.composition.subtitle.isEmpty ? " " : document.composition.subtitle)
-                    .font(HueFont.subheadline)
-                    .foregroundStyle(Composer2Theme.muted)
-                    .lineLimit(2)
+                if !document.composition.subtitle.isEmpty {
+                    Text(document.composition.subtitle)
+                        .font(.subheadline)
+                        .foregroundStyle(Composer2Theme.muted)
+                        .lineLimit(2)
+                }
             }
             Spacer(minLength: 0)
-            Button {
+            Composer2RoundButton(symbol: "pencil", label: "Rename look", size: 40, tint: Composer2Theme.cyan) {
                 draftName = document.composition.name
                 draftSubtitle = document.composition.subtitle
                 renaming = true
                 HapticManager.shared.light()
-            } label: {
-                Image(systemName: "pencil")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(Composer2Theme.cyan)
-                    .frame(width: 40, height: 40)
-                    .background(Circle().fill(Composer2Theme.cyan.opacity(0.12)))
-                    .overlay(Circle().strokeBorder(Composer2Theme.cyan.opacity(0.35), lineWidth: 1))
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Rename composition")
         }
         .alert("Rename", isPresented: $renaming) {
             TextField("Name", text: $draftName)

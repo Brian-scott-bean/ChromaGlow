@@ -55,6 +55,10 @@ final class Composer2LiveOutput: CompositionFrameSource, @unchecked Sendable {
     /// The exact slots the live loop is driving (Composer 2.1), empty otherwise.
     private(set) var liveSlots: [CompositionRenderSlot] = []
 
+    /// Keeps the output inside the photosensitivity budget before any gate
+    /// sees it (see `Composer2FlashShaper`).
+    private(set) var shaper = Composer2FlashShaper()
+
     private var plans: [Composer2LayerPlan] = []
     private var plansDirty = true
     private var frameBuffer: [Composer2Frame] = []
@@ -71,6 +75,7 @@ final class Composer2LiveOutput: CompositionFrameSource, @unchecked Sendable {
 
     func reset() {
         state.reset()
+        shaper.reset()
         plansDirty = true
         lastRenderTime = nil
         lastLiveRenderAt = 0
@@ -122,6 +127,7 @@ final class Composer2LiveOutput: CompositionFrameSource, @unchecked Sendable {
         var time = rawTime.isFinite ? rawTime : (lastRenderTime ?? 0)
         if let last = lastRenderTime, time < last - Composer2LiveOutput.backwardsResetTolerance {
             state.reset()
+            shaper.reset()
             plansDirty = true
         }
         if time.isNaN { time = 0 }
@@ -132,6 +138,7 @@ final class Composer2LiveOutput: CompositionFrameSource, @unchecked Sendable {
         Composer2Engine.evaluate(composition, time: time, geometry: geometry, plans: &plans, state: &state,
                                  audio: features, beat: beat, hostNow: hostNow, eventCap: eventCap,
                                  into: &frameBuffer)
+        frameBuffer = shaper.shape(frameBuffer, at: time)
         lastRenderTime = time
         lastFrames = frameBuffer
         return frameBuffer
@@ -189,5 +196,88 @@ final class Composer2LiveOutput: CompositionFrameSource, @unchecked Sendable {
         if composition.usesMicrophoneBands { return .micAmplitude }
         if composition.usesBeatClock { return .beat }
         return .none
+    }
+}
+
+// MARK: - Flash shaper
+
+/// Shapes Composer 2's frames to the photosensitivity budget BEFORE the
+/// wire's gate sees them.
+///
+/// The wire gate (`BeatMath.FlashSafety.OnsetGate`) is the authority, and it
+/// is strict in a way that matters for looks: a field-level rise of 10 %
+/// luminance or more is an onset, onsets must be 0.34 s apart, and a refused
+/// onset HOLDS the previous frame — so any smooth rise faster than ~0.3 of
+/// full luminance a second (a twinkle in a one-light room, a firework's
+/// bloom, a restroke) froze, then jumped. The shaper runs the same gate on
+/// the same frames: when a frame would be held, it emits the largest blend
+/// toward that frame the gate accepts instead. The rise keeps moving, only
+/// as fast as the budget allows, and the wire gate is left with nothing to
+/// hold. It never adds light or a flash — it only slows a rise.
+struct Composer2FlashShaper {
+    private var gate = BeatMath.FlashSafety.OnsetGate()
+    private var last: [Composer2Frame] = []
+    private var lastTime: Double?
+    /// Frames the shaper had to slow (for tests and diagnostics).
+    private(set) var shapedFrames = 0
+    private(set) var totalFrames = 0
+
+    /// A pause longer than this starts over (the wire has moved on).
+    static let pauseReset: Double = 0.3
+    private static let source = "composer2"
+
+    mutating func reset() {
+        self = Composer2FlashShaper()
+    }
+
+    mutating func shape(_ frames: [Composer2Frame], at t: Double) -> [Composer2Frame] {
+        guard !frames.isEmpty, t.isFinite else { return frames }
+        if frames.count != last.count
+            || lastTime.map({ t < $0 || t - $0 > Composer2FlashShaper.pauseReset }) ?? false {
+            let shaped = shapedFrames, total = totalFrames
+            reset()
+            shapedFrames = shaped
+            totalFrames = total
+        }
+        totalFrames += 1
+        lastTime = t
+        var probe = gate
+        let direct = probe.admit(frame: Composer2FlashShaper.field(frames), source: Composer2FlashShaper.source, at: t)
+        if direct.wasAdmitted || last.isEmpty {
+            probe.commit(direct, delivered: true, at: t)
+            gate = probe
+            last = frames
+            return frames
+        }
+        // The largest step toward the new frame that the gate would emit.
+        var lo = 0.0, hi = 1.0
+        for _ in 0..<10 {
+            let mid = (lo + hi) / 2
+            var trial = gate
+            let r = trial.admit(frame: Composer2FlashShaper.field(Composer2FlashShaper.blend(last, frames, mid)),
+                                source: Composer2FlashShaper.source, at: t)
+            if r.wasAdmitted { lo = mid } else { hi = mid }
+        }
+        let out = Composer2FlashShaper.blend(last, frames, lo)
+        var commit = gate
+        let r = commit.admit(frame: Composer2FlashShaper.field(out), source: Composer2FlashShaper.source, at: t)
+        commit.commit(r, delivered: true, at: t)
+        gate = commit
+        last = out
+        shapedFrames += 1
+        return out
+    }
+
+    static func field(_ frames: [Composer2Frame]) -> BeatMath.FlashSafety.WireFrame {
+        BeatMath.FlashSafety.fieldFrame(channels: frames.map { (x: $0.x, y: $0.y, brightness: $0.brightness) })
+    }
+
+    static func blend(_ a: [Composer2Frame], _ b: [Composer2Frame], _ t: Double) -> [Composer2Frame] {
+        zip(a, b).map { from, to in
+            Composer2Frame(slot: to.slot,
+                           x: Composer2Math.lerp(from.x, to.x, t),
+                           y: Composer2Math.lerp(from.y, to.y, t),
+                           brightness: Composer2Math.clamp01(Composer2Math.lerp(from.brightness, to.brightness, t)))
+        }
     }
 }

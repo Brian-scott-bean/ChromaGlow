@@ -17,6 +17,11 @@ struct Composer2Rhythm: Codable, Equatable {
         case flicker
         case swell
         case burst
+        /// Independent soft twinkles: each light, once per cycle, may rise
+        /// and fall at its own moment (`duty` = how often).
+        case twinkle
+        /// A real flame: a slow sway, a quick flicker and the rare gutter.
+        case candle
     }
 
     var shape: Shape = .steady
@@ -170,6 +175,46 @@ struct Composer2Rhythm: Codable, Equatable {
             let a = 0.02 + Composer2Math.clamp01(attack) * 0.08
             let tau = 0.05 + Composer2Math.clamp01(decay) * 0.3
             curve = p < a ? p / a : exp(-(p - a) / tau)
+
+        case .twinkle:
+            // Cells of one period per light, offset per light so the room
+            // never twinkles in unison. In a cell the light may twinkle once
+            // (chance `duty`), a sin² bump whose width follows attack/decay.
+            let t = time.isFinite ? time : 0
+            let period = sanitizedPeriod
+            let offset = Composer2Hash.unit(seed, slot, 0, salt: 0x7717)
+            let tt = t / period + offset
+            let cell = Composer2Math.safeFloorInt(tt)
+            let u = tt - floor(tt)
+            let chance = Composer2Math.clamp(duty, 0.02, 1)
+            guard Composer2Hash.unit(seed, slot, cell, salt: 0x7718) < chance else { curve = 0; break }
+            let width = 0.25 + 0.5 * Composer2Math.clamp01((attack + decay) / 2)
+            let centre = width / 2 + (1 - width) * Composer2Hash.unit(seed, slot, cell, salt: 0x7719)
+            let d = abs(u - centre) / (width / 2)
+            if d >= 1 {
+                curve = 0
+            } else {
+                let s = cos(.pi / 2 * d)
+                curve = s * s
+            }
+
+        case .candle:
+            // Three motions of a real flame, per light: a slow sway, a quick
+            // flicker, and now and then the gutter — a brief dip as the wick
+            // drowns. Continuous noise, so it can never strobe.
+            let t = time.isFinite ? time : 0
+            let rate = sanitizedFlickerRate
+            let salt = Composer2Hash.unit(seed, slot, 0, salt: 0xCA1D)
+            let sway = Composer2Noise.value1D(t * 0.35 + salt * 17, seed: Composer2Hash.mix(seed, 0xCA1E))
+            let flicker = Composer2Noise.value1D(t * rate * 1.3 + salt * 41, seed: Composer2Hash.mix(seed, 0xCA1F))
+            let gutterCell = Composer2Math.safeFloorInt(t / 2.7 + salt * 5)
+            var gutter = 0.0
+            if Composer2Hash.unit(seed, slot, gutterCell, salt: 0xCA20) < 0.12 {
+                let u = t / 2.7 + salt * 5 - Double(gutterCell)
+                let s = sin(.pi * Composer2Math.clamp01((u - 0.3) / 0.4))
+                gutter = s * s
+            }
+            curve = Composer2Math.clamp01(0.7 + 0.18 * (sway - 0.5) * 2 + 0.22 * (flicker - 0.5) * 2 - 0.45 * gutter)
         }
         return Composer2Math.clamp01(r.lo + (r.hi - r.lo) * Composer2Math.clamp01(curve))
     }

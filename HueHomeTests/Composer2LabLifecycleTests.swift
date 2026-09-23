@@ -131,7 +131,7 @@ final class Composer2LabLifecycleTests: XCTestCase {
 
     func testDocumentDefaultsAndSynchronousEdits() {
         let doc = document()
-        XCTAssertEqual(doc.mode, .customize)
+        XCTAssertEqual(doc.mode, .looks)
         XCTAssertFalse(doc.isDirty)
         var fired = 0
         doc.onEdit = { fired += 1 }
@@ -155,7 +155,7 @@ final class Composer2LabLifecycleTests: XCTestCase {
     }
 
     func testExpertStackOperations() {
-        let doc = document(Composer2PresetLibrary.thunderstorm)
+        let doc = document(Composer2PresetLibrary.lavaLamp)
         XCTAssertEqual(doc.composition.layers.count, 2)
         let added = doc.addLayer(.blank(name: "Sparkle"))
         XCTAssertEqual(doc.composition.layers.count, 3)
@@ -521,6 +521,7 @@ final class Composer2LabLifecycleTests: XCTestCase {
         var composition = Composer2PresetLibrary.thunderstorm
         // Fire an opportunity every second, always, so a reset is visible.
         for i in composition.layers.indices where composition.layers[i].events != nil {
+            composition.layers[i].events?.shape = .flash
             composition.layers[i].events?.timing = .fixed
             composition.layers[i].events?.interval = 1
             composition.layers[i].events?.probability = 1

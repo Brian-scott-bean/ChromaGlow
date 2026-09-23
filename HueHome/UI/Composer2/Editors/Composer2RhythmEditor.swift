@@ -21,9 +21,14 @@ struct Composer2RhythmEditorContent: View {
                     ("Heartbeat", .heartbeat, "heart"),
                     ("Flicker", .flicker, "flame"),
                     ("Swell", .swell, "water.waves.and.arrow.up"),
-                    ("Burst", .burst, "burst")
+                    ("Burst", .burst, "burst"),
+                    ("Twinkle", .twinkle, "sparkle"),
+                    ("Candle", .candle, "flame.fill")
                 ], selection: document.layerBinding(\.rhythm.shape))
-                if rhythm.shape != .steady && rhythm.shape != .flicker {
+                if rhythm.shape == .twinkle {
+                    Composer2SliderRow(title: "How often", value: document.layerBinding(\.rhythm.duty), range: 0.05...1)
+                }
+                if rhythm.shape != .steady && rhythm.shape != .flicker && rhythm.shape != .candle {
                     Composer2SliderRow(title: "Tempo", value: document.logSecondsBinding(\.rhythm.periodSeconds, range: periodRange),
                                        range: 0...1,
                                        format: { t in
@@ -31,7 +36,7 @@ struct Composer2RhythmEditorContent: View {
                                            return s < 2 ? "\(Int((60 / s).rounded())) BPM" : composer2Seconds(s) + " per cycle"
                                        })
                 }
-                if rhythm.shape == .flicker {
+                if rhythm.shape == .flicker || rhythm.shape == .candle {
                     Composer2SliderRow(title: "Flicker rate", value: document.layerBinding(\.rhythm.flickerRate), range: 0.1...2.5,
                                        format: { String(format: "%.1f per second", $0) })
                 }

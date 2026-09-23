@@ -56,7 +56,8 @@ struct Composer2PaletteEditorContent: View {
                     ("With motion", Composer2ColorSource.Distribution.motion, "wind"),
                     ("By position", .spatial, "point.3.connected.trianglepath.dotted"),
                     ("Same everywhere", .uniform, "circle.fill"),
-                    ("Random pick", .randomPick, "dice")
+                    ("Random pick", .randomPick, "dice"),
+                    ("Follows brightness", .brightness, "sun.max.fill")
                 ], selection: document.layerBinding(\.color.distribution))
                 StageToggleRow(title: "Loop back to the first colour", isOn: document.layerBinding(\.color.cycle))
             }

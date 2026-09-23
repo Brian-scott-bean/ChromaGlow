@@ -98,11 +98,15 @@ struct Composer2LayerPlan: Equatable {
     /// Quick mode's Energy reaches every layer (it used to skip evolving
     /// layers and palette drift entirely).
     let variation: Composer2Variation
+    /// Each slot's rank along the motion axis (ties by index) — the light
+    /// ORDER a march steps through.
+    let axisRanks: [Int]
+    let masterEventRate: Double
 
     static func build(layer: Composer2Layer, composition: Composer2Composition,
                       geometry: Composer2SlotGeometry) -> Composer2LayerPlan {
         let layerSeed = Composer2Engine.layerSeed(composition: composition, layer: layer)
-        let events = layer.events?.sanitized
+        let events = layer.events?.withRate(composition.master.sanitizedEventRate).sanitized
         let eventSeed = Composer2Engine.eventSeed(layerSeed: layerSeed, spec: events)
         let n = geometry.count
         var variation = layer.variation
@@ -114,6 +118,9 @@ struct Composer2LayerPlan: Equatable {
             ? geometry.projection(kind: crossKind, angleDegrees: crossAngle)
             : Array(repeating: 0.5, count: n)
         let jitters = (0..<n).map { variation.slotJitter(slot: $0, seed: layerSeed) }
+        let order = (0..<n).sorted { a, b in axis[a] < axis[b] || (axis[a] == axis[b] && a < b) }
+        var ranks = Array(repeating: 0, count: n)
+        for (rank, slot) in order.enumerated() { ranks[slot] = rank }
         return Composer2LayerPlan(
             layer: layer,
             geometryCount: n,
@@ -130,7 +137,9 @@ struct Composer2LayerPlan: Equatable {
             rhythmPeriod: layer.rhythm.sanitizedPeriod,
             motionPeriod: layer.motion.sanitizedPeriod,
             masterVariation: composition.master.variation,
-            variation: variation
+            variation: variation,
+            axisRanks: ranks,
+            masterEventRate: composition.master.sanitizedEventRate
         )
     }
 
@@ -138,6 +147,7 @@ struct Composer2LayerPlan: Equatable {
         self.layer == layer && geometryCount == geometry.count
             && geometrySpatial == geometry.hasSpatialData
             && masterVariation == composition.master.variation
+            && masterEventRate == composition.master.sanitizedEventRate
     }
 }
 
@@ -204,7 +214,7 @@ enum Composer2Engine {
 
         var acc = [Composer2Blend.Accum](repeating: Composer2Blend.Accum(), count: n)
         let masterSpeed = composition.master.sanitizedSpeed
-        let cap = Composer2Math.clamp01(eventCap)
+        let cap = Composer2Math.clamp01(eventCap) * composition.master.sanitizedEventStrength
 
         for li in 0..<composition.layers.count {
             let layer = composition.layers[li]
@@ -313,7 +323,11 @@ enum Composer2Engine {
             let driftSeed = Composer2Hash.mix(plan.layerSeed, 0xD71F)
             let coverageBase = Composer2Math.clamp01(layer.opacity)
             let modulatesBrightness = eventSpec?.modulates.contains(.brightness) ?? false
-            let modulatesColor = (eventSpec?.modulates.contains(.color) ?? false) && plan.eventFlashLab != nil
+            let modulatesColor = (eventSpec?.modulates.contains(.color) ?? false) && (eventSpec?.hasEventColor ?? false)
+            let activeEvent = ls.events?.current
+            let distribution = layer.color.distribution
+            let rhythmRange = layer.rhythm.range
+            let brightnessTop = plan.palette.cycle ? (plan.palette.positions.last ?? 1) : 1
             let modulatesMotion = eventSpec?.modulates.contains(.motion) ?? false
             let randomPickCell = Swift.max(0.5, plan.motionPeriod)
             let stopCount = plan.palette.stopCount
@@ -347,12 +361,24 @@ enum Composer2Engine {
                 // speed after ten minutes, with reversals). Phase, position
                 // and brightness jitter may still wander.
                 let tSlot = motionTime * (1 + plan.jitters[i].speed)
-                let e = Composer2Math.clamp01((ls.events?.sample(slot: i, time: time) ?? 0) * cap)
+                let levels = ls.events?.levels(slot: i, time: time) ?? (level: 0, core: 0)
+                let e = Composer2Math.clamp01(levels.level * cap)
 
                 let sample = layer.motion.sample(slot: i, position: pos, cross: plan.crossPositions[i],
-                                                 time: tSlot, seed: plan.layerSeed)
+                                                 time: tSlot, seed: plan.layerSeed, rank: plan.axisRanks[i])
+
+                // Rhythm first: colour may follow it (`.brightness`).
+                let cyclePhase: Double
+                if beatLocked {
+                    let beats = (hostNow - beat.beatEpoch) / beat.beatInterval
+                    cyclePhase = beats / lockedBeats
+                } else {
+                    cyclePhase = time / plan.rhythmPeriod
+                }
+                let rhythmValue = rhythm.value(cyclePhase: cyclePhase + jitter.phase, time: time, slot: i, seed: plan.layerSeed)
+
                 var phase = sample.phase
-                switch layer.color.distribution {
+                switch distribution {
                 case .motion:
                     break
                 case .spatial:
@@ -363,9 +389,15 @@ enum Composer2Engine {
                     let cell = Composer2Math.safeFloorInt(motionTime / randomPickCell)
                     let pick = Swift.min(stopCount - 1, Int(Composer2Hash.unit(plan.layerSeed, i, cell, salt: 0x91C) * Double(stopCount)))
                     phase = stopCount > 0 ? plan.palette.positions[Swift.max(0, pick)] : 0
+                case .brightness:
+                    let span = rhythmRange.hi - rhythmRange.lo
+                    let normalized = span > 1e-6 ? (rhythmValue - rhythmRange.lo) / span : 1
+                    phase = Composer2Math.clamp01(normalized * sample.weight) * brightnessTop
                 }
-                phase += jitter.phase
-                phase += variation.drift(slot: i, seed: plan.layerSeed, time: time)
+                if distribution != .brightness {
+                    phase += jitter.phase
+                    phase += variation.drift(slot: i, seed: plan.layerSeed, time: time)
+                }
                 if paletteDrift > 0 {
                     // The palette's own Drift control: a slow per-light wander
                     // along the palette (it used to be read by nothing).
@@ -376,20 +408,13 @@ enum Composer2Engine {
                 if modulatesMotion, let spec = eventSpec { phase += spec.motionKick * e }
                 var lab = plan.palette.sample(phase)
 
-                let cyclePhase: Double
-                if beatLocked {
-                    let beats = (hostNow - beat.beatEpoch) / beat.beatInterval
-                    cyclePhase = beats / lockedBeats
-                } else {
-                    cyclePhase = time / plan.rhythmPeriod
-                }
-                var bri = rhythm.value(cyclePhase: cyclePhase + jitter.phase, time: time, slot: i, seed: plan.layerSeed)
+                var bri = rhythmValue
                 bri *= sample.weight * brightnessScale * (1 - jitter.brightness)
                 if punch > 0 { bri += (1 - bri) * punch }
 
                 if e > 0 {
                     if modulatesBrightness { bri += (1 - bri) * e }
-                    if modulatesColor, let flash = plan.eventFlashLab {
+                    if modulatesColor, let flash = activeEvent?.lab(core: levels.core) ?? plan.eventFlashLab {
                         lab = Composer2ColorMath.mixHueArc(lab, flash, t: e)
                     }
                 }

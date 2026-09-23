@@ -38,7 +38,8 @@ struct Composer2View: View {
     ///   - room: the room Studio had selected.
     ///   - composition: open this saved composition instead of the retained
     ///     or default one (the entry card's "Open in Composer 2").
-    init(room: RoomDisplayItem?, composition: Composer2Composition? = nil) {
+    ///   - mode: the tab to open on (a saved look opens on Tune).
+    init(room: RoomDisplayItem?, composition: Composer2Composition? = nil, mode: Composer2Mode? = nil) {
         self.initialRoom = room
         let center = Composer2PlaybackCenter.shared
         if composition == nil, let retained = center.retainedDocument(for: room?.id), let liveOutput = center.output {
@@ -48,6 +49,7 @@ struct Composer2View: View {
         } else {
             let seed = composition ?? Composer2PresetLibrary.auroraDrift
             let doc = Composer2Document(composition: seed, roomContext: Composer2RoomContext(room: room))
+            doc.mode = mode ?? (composition == nil ? .looks : .tune)
             let out = Composer2LiveOutput(composition: seed)
             _document = State(initialValue: doc)
             _output = State(initialValue: out)
@@ -58,10 +60,9 @@ struct Composer2View: View {
     var body: some View {
         @Bindable var doc = document
         ZStack {
-            Composer2Theme.backgroundGradient.ignoresSafeArea()
-            Composer2BackgroundWashes()
+            Composer2Ambience(colors: Composer2Theme.swatches(of: document.composition, max: 3))
             ScrollView(.vertical, showsIndicators: false) {
-                VStack(spacing: HueSpacing.lg) {
+                VStack(alignment: .leading, spacing: 18) {
                     Composer2Header(document: document, center: center, rooms: gateway?.rooms() ?? [],
                                     onSelectRoom: { room in Task { await selectRoom(room) } },
                                     onClose: requestClose)
@@ -69,11 +70,13 @@ struct Composer2View: View {
                                       onTapLights: { document.activeEditor = .space })
                     Composer2TitleBlock(document: document)
                     Composer2ModeSelector(selection: $doc.mode)
-                    Composer2ModeContent(document: document, feed: feed, onImport: { showImport = true })
+                    Composer2ModeContent(document: document, center: center, onImport: { showImport = true })
+                        .id(document.mode)
+                        .transition(.asymmetric(insertion: .opacity.combined(with: .offset(y: 12)), removal: .opacity))
                     Color.clear.frame(height: HueSpacing.xxl)
                 }
                 .padding(.horizontal, HueSpacing.screenH)
-                .padding(.top, HueSpacing.md)
+                .padding(.top, HueSpacing.sm)
             }
         }
         .safeAreaInset(edge: .bottom) {
@@ -320,21 +323,19 @@ struct Composer2View: View {
 
 // MARK: - Mode content
 
-private struct Composer2ModeContent: View {
+struct Composer2ModeContent: View {
     let document: Composer2Document
-    let feed: Composer2PreviewFeed
+    let center: Composer2PlaybackCenter
     let onImport: () -> Void
 
     var body: some View {
         switch document.mode {
-        case .quick:
-            Composer2QuickPanel(document: document, onImport: onImport)
-        case .customize:
-            Composer2CustomizeGrid(document: document)
-        case .advanced:
-            Composer2AdvancedPanel(document: document)
-        case .expert:
-            Composer2ExpertStack(document: document)
+        case .looks:
+            Composer2LibraryView(document: document, center: center, onImport: onImport)
+        case .tune:
+            Composer2TuneView(document: document)
+        case .layers:
+            Composer2LayersView(document: document)
         }
     }
 }
@@ -430,27 +431,6 @@ struct Composer2ImportSheet: View {
         .task {
             presets = CompositionStore.readPresets(from: CompositionStore.defaultFileURL).presets
         }
-    }
-}
-
-// MARK: - Background washes
-
-private struct Composer2BackgroundWashes: View {
-    var body: some View {
-        GeometryReader { proxy in
-            ZStack {
-                Circle()
-                    .fill(RadialGradient(colors: [Composer2Theme.cyan.opacity(0.07), .clear], center: .center, startRadius: 0, endRadius: proxy.size.width * 0.7))
-                    .frame(width: proxy.size.width * 1.4)
-                    .position(x: proxy.size.width * 0.15, y: proxy.size.height * 0.1)
-                Circle()
-                    .fill(RadialGradient(colors: [Composer2Theme.violet.opacity(0.07), .clear], center: .center, startRadius: 0, endRadius: proxy.size.width * 0.7))
-                    .frame(width: proxy.size.width * 1.4)
-                    .position(x: proxy.size.width * 0.9, y: proxy.size.height * 0.75)
-            }
-        }
-        .ignoresSafeArea()
-        .allowsHitTesting(false)
     }
 }
 

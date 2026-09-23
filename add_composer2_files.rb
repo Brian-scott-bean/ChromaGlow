@@ -65,6 +65,11 @@ APP_FILES = {
   'HueHome/Core/Composer2/Composer2PresetLibrary.swift' => CORE,
   'HueHome/Core/Composer2/Composer2Store.swift'         => CORE,
   'HueHome/Core/Composer2/Composer2LegacyImport.swift'  => CORE,
+  # v2.2 — the theme library
+  'HueHome/Core/Composer2/Composer2ThemeCatalog.swift'  => CORE,
+  'HueHome/Core/Composer2/Composer2Presets+Seasons.swift' => CORE,
+  'HueHome/Core/Composer2/Composer2Presets+World.swift' => CORE,
+  'HueHome/Core/Composer2/Composer2BehaviorLibrary.swift' => CORE,
 
   'HueHome/UI/Composer2/Composer2Theme.swift'           => UI,
   'HueHome/UI/Composer2/Composer2Document.swift'        => UI,
@@ -76,14 +81,16 @@ APP_FILES = {
   'HueHome/UI/Composer2/Composer2Header.swift'          => UI,
   'HueHome/UI/Composer2/Composer2HeroCard.swift'        => UI,
   'HueHome/UI/Composer2/Composer2ModeSelector.swift'    => UI,
-  'HueHome/UI/Composer2/Composer2QuickPanel.swift'      => UI,
-  'HueHome/UI/Composer2/Composer2CustomizeGrid.swift'   => UI,
-  'HueHome/UI/Composer2/Composer2LayerCard.swift'       => UI,
   'HueHome/UI/Composer2/Composer2MiniPreviews.swift'    => UI,
-  'HueHome/UI/Composer2/Composer2AdvancedPanel.swift'   => UI,
-  'HueHome/UI/Composer2/Composer2ExpertStack.swift'     => UI,
   'HueHome/UI/Composer2/Composer2PerformanceBar.swift'  => UI,
   'HueHome/UI/Composer2/Composer2EntryCard.swift'       => UI,
+  # v2.2 — the luminous redesign
+  'HueHome/UI/Composer2/Composer2Controls.swift'        => UI,
+  'HueHome/UI/Composer2/Composer2LookCard.swift'        => UI,
+  'HueHome/UI/Composer2/Composer2LibraryView.swift'     => UI,
+  'HueHome/UI/Composer2/Composer2TuneView.swift'        => UI,
+  'HueHome/UI/Composer2/Composer2LayersView.swift'      => UI,
+  'HueHome/UI/Composer2/Composer2Ambience.swift'        => UI,
 
   'HueHome/UI/Composer2/Editors/Composer2EditorScaffold.swift' => EDIT,
   'HueHome/UI/Composer2/Editors/Composer2PaletteEditor.swift'  => EDIT,
@@ -109,7 +116,22 @@ TEST_FILES = {
   'HueHomeTests/Composer2LabIntegrationTests.swift' => ['HueHomeTests'],
   'HueHomeTests/Composer2LabRecoveryTests.swift'    => ['HueHomeTests'],
   'HueHomeTests/Composer2LabPerformanceTests.swift' => ['HueHomeTests'],
+  # v2.2
+  'HueHomeTests/Composer2LabThemeTests.swift'       => ['HueHomeTests'],
 }
+
+# Files the redesign retired: drop their references (idempotent).
+REMOVED_FILES = %w[
+  Composer2QuickPanel.swift Composer2CustomizeGrid.swift Composer2AdvancedPanel.swift
+  Composer2ExpertStack.swift Composer2LayerCard.swift
+]
+removed = 0
+project.files.select { |f| REMOVED_FILES.include?(File.basename(f.path.to_s)) }.each do |ref|
+  ref.build_files.each { |bf| bf.remove_from_project }
+  ref.remove_from_project
+  puts "   -- Removed: #{File.basename(ref.path.to_s)}"
+  removed += 1
+end
 
 existing = existing_paths(project)
 added = 0
@@ -123,9 +145,9 @@ TEST_FILES.each do |rel, grp|
   existing = existing_paths(project)
 end
 
-if added > 0
+if added > 0 || removed > 0
   project.save
-  puts "\n  Saved -- #{added} file(s) added."
+  puts "\n  Saved -- #{added} file(s) added, #{removed} removed."
 else
   puts "\n  No changes."
 end

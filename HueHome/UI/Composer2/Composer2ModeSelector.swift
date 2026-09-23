@@ -1,8 +1,9 @@
 // Composer2ModeSelector.swift
-// ChromaGlow — Composer 2 lab (experimental).
+// ChromaGlow — Composer 2 lab (experimental), v2.2.
 //
-// Quick / Customize / Advanced / Expert. Four views into one document — the
-// selector switches the view, never the composition.
+// Looks · Tune · Layers. Three views into one document — the selector
+// switches the view, never the composition. The selected tab carries a glow
+// that glides between tabs.
 
 import SwiftUI
 
@@ -10,25 +11,16 @@ struct Composer2ModeSelector: View {
     @Binding var selection: Composer2Mode
     @Namespace private var glow
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
-        Group {
-            if dynamicTypeSize.isAccessibilitySize {
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 6) {
-                    ForEach(Composer2Mode.allCases) { segment(for: $0) }
-                }
-            } else {
-                HStack(spacing: 4) {
-                    ForEach(Composer2Mode.allCases) { segment(for: $0) }
-                }
-            }
+        HStack(spacing: 4) {
+            ForEach(Composer2Mode.allCases) { segment(for: $0) }
         }
         .padding(4)
-        .background(Capsule().fill(Composer2Theme.glass))
-        .overlay(Capsule().strokeBorder(Composer2Theme.line, lineWidth: 1))
+        .background(Capsule().fill(.ultraThinMaterial))
+        .overlay(Capsule().strokeBorder(Color.white.opacity(0.1), lineWidth: 1))
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Composer mode")
+        .accessibilityLabel("Composer sections")
     }
 
     private func segment(for mode: Composer2Mode) -> some View {
@@ -36,28 +28,32 @@ struct Composer2ModeSelector: View {
         return Button {
             guard !selected else { return }
             HapticManager.shared.selection()
-            withAnimation(reduceMotion ? nil : HueAnimation.fast) { selection = mode }
+            withAnimation(reduceMotion ? nil : .spring(response: 0.38, dampingFraction: 0.82)) { selection = mode }
         } label: {
-            Text(mode.title)
-                .font(HueFont.stageChip)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-                .foregroundStyle(selected ? Composer2Theme.ink : Composer2Theme.muted)
-                .frame(maxWidth: .infinity)
-                .frame(minHeight: 38)
-                .background {
-                    if selected {
-                        Capsule()
-                            .fill(Composer2Theme.cyan.opacity(0.16))
-                            .overlay(Capsule().strokeBorder(Composer2Theme.cyan.opacity(0.55), lineWidth: 1))
-                            .shadow(color: Composer2Theme.cyan.opacity(0.35), radius: 10)
-                            .matchedGeometryEffect(id: "composer2-mode-glow", in: glow)
-                    }
+            HStack(spacing: 6) {
+                Image(systemName: mode.symbol)
+                    .font(.system(size: 13, weight: .bold))
+                Text(mode.title)
+                    .font(.subheadline.weight(.bold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+            .foregroundStyle(selected ? Composer2Theme.void : Composer2Theme.ink.opacity(0.7))
+            .frame(maxWidth: .infinity)
+            .frame(minHeight: 42)
+            .background {
+                if selected {
+                    Capsule()
+                        .fill(LinearGradient(colors: [Composer2Theme.cyan, Composer2Theme.violet],
+                                             startPoint: .leading, endPoint: .trailing))
+                        .shadow(color: Composer2Theme.cyan.opacity(0.45), radius: 12)
+                        .matchedGeometryEffect(id: "composer2-mode-glow", in: glow)
                 }
-                .contentShape(Capsule())
+            }
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(mode.title) mode")
+        .accessibilityLabel(mode.title)
         .accessibilityAddTraits(selected ? [.isButton, .isSelected] : [.isButton])
     }
 }
