@@ -1996,8 +1996,17 @@ struct StudioCardView: View, Equatable {
 
     // nonisolated: compares only Sendable stored values (String/Bool/enum);
     // the onTap closure is deliberately excluded from equality.
+    //
+    // Every card field the body RENDERS takes part: comparing the id alone
+    // kept a renamed (or re-iconed) preset's card on its old name — and kept
+    // the stale onTap, which then applied the OLD card.
     nonisolated static func == (lhs: StudioCardView, rhs: StudioCardView) -> Bool {
         lhs.card.id == rhs.card.id && lhs.isRunning == rhs.isRunning && lhs.roomSelected == rhs.roomSelected && lhs.isVisible == rhs.isVisible && lhs.patternSignature == rhs.patternSignature && lhs.coverageLabel == rhs.coverageLabel && lhs.previewSpec == rhs.previewSpec
+            && lhs.card.name == rhs.card.name && lhs.card.icon == rhs.card.icon
+            && lhs.card.tagline == rhs.card.tagline && lhs.card.accentColor == rhs.card.accentColor
+            && lhs.card.compositionTier == rhs.card.compositionTier
+            && lhs.card.compositionLayerActivity == rhs.card.compositionLayerActivity
+            && lhs.card.isAIGenerated == rhs.card.isAIGenerated
     }
 
     let card: StudioCard
