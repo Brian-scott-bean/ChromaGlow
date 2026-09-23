@@ -2162,11 +2162,15 @@ final class UnifiedOrchestrator {
             }
             return
         }
-        guard let client = clients[item.bridgeID ?? ""] else { return }
-        // Optimistic update
+        guard let bridgeID = item.bridgeID, let client = clients[bridgeID] else { return }
+        // Optimistic update — the per-bridge snapshot too: every rebuild
+        // (the next SSE event, a navigation flush) derives `allRooms` from it,
+        // so renaming only the merged list reverted within seconds.
+        renameGroup(item.id, bridgeID: bridgeID, in: \.roomsByBridge,
+                    name: name, archetype: archetype)
         allRooms = allRooms.map { r in
             var updated = r
-            if r.id == item.id { updated.name = name; updated.archetype = archetype }
+            if r.id == item.id, r.bridgeID == bridgeID { updated.name = name; updated.archetype = archetype }
             return updated
         }
         do {
@@ -2174,7 +2178,9 @@ final class UnifiedOrchestrator {
             showToast("\(name) updated")
         } catch {
             // Rollback — restore the original item
-            allRooms = allRooms.map { r in r.id == item.id ? item : r }
+            renameGroup(item.id, bridgeID: bridgeID, in: \.roomsByBridge,
+                        name: item.name, archetype: item.archetype)
+            allRooms = allRooms.map { r in r.id == item.id && r.bridgeID == bridgeID ? item : r }
             log.error("renameRoom failed: \(error.localizedDescription)")
             showToast("Couldn't update \(item.name)")
         }
@@ -2186,21 +2192,28 @@ final class UnifiedOrchestrator {
             withAnimation { allRooms.removeAll { $0.id == item.id } }
             return
         }
-        guard let client = clients[item.bridgeID ?? ""] else { return }
+        guard let bridgeID = item.bridgeID, let client = clients[bridgeID] else { return }
         // A running effect on a doomed room would keep PUT-ing to a deleted
         // group and leave a ghost Now-Playing entry. Exact identity (round
         // 4d): the same room id on another bridge is not being deleted.
         await stopEffectsForRemovedGroups(
             [RemovedGroupIdentity(bridgeID: item.bridgeID, roomID: item.id)])
-        // Optimistic removal
-        withAnimation { allRooms.removeAll { $0.id == item.id } }
+        // Optimistic removal — from the per-bridge snapshot too. Removing it
+        // from the merged list alone let the very next rebuild (any SSE event)
+        // resurrect the deleted room from the stale snapshot.
+        let removed = removeGroup(item.id, bridgeID: bridgeID, from: \.roomsByBridge)
+        withAnimation { allRooms.removeAll { $0.id == item.id && $0.bridgeID == bridgeID } }
         scheduleWidgetWrite()   // deleted groups otherwise linger in widgets
         do {
             try await client.deleteRoom(id: item.id)
             showToast("\(item.name) deleted")
         } catch {
-            // Rollback — put it back (append; exact position isn't critical)
-            withAnimation { allRooms.append(item) }
+            // Rollback — put it back, once (a refresh during the await may
+            // already have restored it from the bridge).
+            if let removed { restoreGroup(removed, bridgeID: bridgeID, into: \.roomsByBridge) }
+            if !allRooms.contains(where: { $0.id == item.id && $0.bridgeID == bridgeID }) {
+                withAnimation { allRooms.append(item) }
+            }
             scheduleWidgetWrite()
             log.error("deleteRoom failed: \(error.localizedDescription)")
             showToast("Couldn't delete \(item.name)")
@@ -2217,17 +2230,22 @@ final class UnifiedOrchestrator {
             }
             return
         }
-        guard let client = clients[item.bridgeID ?? ""] else { return }
+        guard let bridgeID = item.bridgeID, let client = clients[bridgeID] else { return }
+        // Per-bridge snapshot too — see renameRoom.
+        renameGroup(item.id, bridgeID: bridgeID, in: \.zonesByBridge,
+                    name: name, archetype: archetype)
         allZones = allZones.map { z in
             var updated = z
-            if z.id == item.id { updated.name = name; updated.archetype = archetype }
+            if z.id == item.id, z.bridgeID == bridgeID { updated.name = name; updated.archetype = archetype }
             return updated
         }
         do {
             try await client.renameZone(id: item.id, name: name, archetype: archetype)
             showToast("\(name) updated")
         } catch {
-            allZones = allZones.map { z in z.id == item.id ? item : z }
+            renameGroup(item.id, bridgeID: bridgeID, in: \.zonesByBridge,
+                        name: item.name, archetype: item.archetype)
+            allZones = allZones.map { z in z.id == item.id && z.bridgeID == bridgeID ? item : z }
             log.error("renameZone failed: \(error.localizedDescription)")
             showToast("Couldn't update \(item.name)")
         }
@@ -2239,22 +2257,73 @@ final class UnifiedOrchestrator {
             withAnimation { allZones.removeAll { $0.id == item.id } }
             return
         }
-        guard let client = clients[item.bridgeID ?? ""] else { return }
+        guard let bridgeID = item.bridgeID, let client = clients[bridgeID] else { return }
         // Exact identity (round 4d): deleting this zone on this bridge may
         // not stop the same zone id's effect on another bridge.
         await stopEffectsForRemovedGroups(
             [RemovedGroupIdentity(bridgeID: item.bridgeID, roomID: item.id)])
-        withAnimation { allZones.removeAll { $0.id == item.id } }
+        // Per-bridge snapshot too — see deleteRoom.
+        let removed = removeGroup(item.id, bridgeID: bridgeID, from: \.zonesByBridge)
+        withAnimation { allZones.removeAll { $0.id == item.id && $0.bridgeID == bridgeID } }
         scheduleWidgetWrite()
         do {
             try await client.deleteZone(id: item.id)
             showToast("\(item.name) deleted")
         } catch {
-            withAnimation { allZones.append(item) }
+            if let removed { restoreGroup(removed, bridgeID: bridgeID, into: \.zonesByBridge) }
+            if !allZones.contains(where: { $0.id == item.id && $0.bridgeID == bridgeID }) {
+                withAnimation { allZones.append(item) }
+            }
             scheduleWidgetWrite()
             log.error("deleteZone failed: \(error.localizedDescription)")
             showToast("Couldn't delete \(item.name)")
         }
+    }
+
+    // ── Per-bridge snapshot edits (exact bridge + group identity) ──────────
+    //
+    // `allRooms`/`allZones` are DERIVED: every rebuild recomputes them from
+    // `roomsByBridge`/`zonesByBridge`. An optimistic CRUD edit that touches
+    // only the merged list is undone by the next rebuild, so each edit below
+    // is applied to the snapshot as well — keyed by bridge, never by bare id.
+
+    private typealias GroupSnapshotKeyPath =
+        ReferenceWritableKeyPath<UnifiedOrchestrator, [String: [RoomDisplayItem]]>
+
+    private func renameGroup(
+        _ groupID: String, bridgeID: String, in snapshots: GroupSnapshotKeyPath,
+        name: String, archetype: String?
+    ) {
+        guard var groups = self[keyPath: snapshots][bridgeID],
+              let idx = groups.firstIndex(where: { $0.id == groupID }) else { return }
+        groups[idx].name = name
+        groups[idx].archetype = archetype
+        self[keyPath: snapshots][bridgeID] = groups
+    }
+
+    /// Removes the group from its bridge's snapshot, returning it and its
+    /// position so a failed delete can put it back exactly.
+    private func removeGroup(
+        _ groupID: String, bridgeID: String, from snapshots: GroupSnapshotKeyPath
+    ) -> (index: Int, item: RoomDisplayItem)? {
+        guard var groups = self[keyPath: snapshots][bridgeID],
+              let idx = groups.firstIndex(where: { $0.id == groupID }) else { return nil }
+        let item = groups.remove(at: idx)
+        self[keyPath: snapshots][bridgeID] = groups
+        return (idx, item)
+    }
+
+    /// Undo `removeGroup` — unless the group is already back (a refresh
+    /// re-read it from the bridge) or its bridge was removed meanwhile.
+    private func restoreGroup(
+        _ removed: (index: Int, item: RoomDisplayItem), bridgeID: String,
+        into snapshots: GroupSnapshotKeyPath
+    ) {
+        guard clients[bridgeID] != nil else { return }
+        var groups = self[keyPath: snapshots][bridgeID] ?? []
+        guard !groups.contains(where: { $0.id == removed.item.id }) else { return }
+        groups.insert(removed.item, at: min(removed.index, groups.count))
+        self[keyPath: snapshots][bridgeID] = groups
     }
 
     /// Schedules a full state refresh 1.5 s after the last successful state change.
@@ -2715,6 +2784,12 @@ final class UnifiedOrchestrator {
     /// Returns which of rooms/zones were mutated so callers can skip unnecessary rebuilds.
     @discardableResult
     func applySSEEvent(_ event: SSEEvent, bridgeID: String) -> (rooms: Bool, zones: Bool) {
+        // A `delete` carries only ids — never state — and used to fall through
+        // to the update handlers below, where a grouped_light delete flagged a
+        // rebuild without changing anything. Handle it for what it is.
+        if event.type == "delete" {
+            return applySSEDeletes(event, bridgeID: bridgeID)
+        }
         var roomsMutated = false
         var zonesMutated = false
         for update in event.data {
@@ -2772,20 +2847,37 @@ final class UnifiedOrchestrator {
                     // rebuild the dashboard at frame rate. Exact identity: another
                     // bridge's same-room-id composition must not suppress this one.
                     if !isPending && !isAppDrivenGroup(bridgeID: bridgeID, roomID: rooms[idx].id) {
-                        if let on  = update.on?.on              { rooms[idx].isOn       = on  }
-                        if let bri = update.dimming?.brightness { rooms[idx].brightness = bri }
-                        roomsByBridge[bridgeID] = rooms
-                        roomsMutated = true
+                        // Flag only a real change: an event that carries no
+                        // on/dimming field (or repeats the current values)
+                        // used to schedule a rebuild all the same.
+                        var changed = false
+                        if let on = update.on?.on, rooms[idx].isOn != on {
+                            rooms[idx].isOn = on; changed = true
+                        }
+                        if let bri = update.dimming?.brightness, rooms[idx].brightness != bri {
+                            rooms[idx].brightness = bri; changed = true
+                        }
+                        if changed {
+                            roomsByBridge[bridgeID] = rooms
+                            roomsMutated = true
+                        }
                     }
                 }
                 if var zones = zonesByBridge[bridgeID],
                    let idx = zones.firstIndex(where: { $0.groupedLightID == update.id }) {
                     let isPending = pendingActionDeadlines[update.id].map { Date() < $0 } ?? false
                     if !isPending && !isAppDrivenGroup(bridgeID: bridgeID, roomID: zones[idx].id) {
-                        if let on  = update.on?.on              { zones[idx].isOn       = on  }
-                        if let bri = update.dimming?.brightness { zones[idx].brightness = bri }
-                        zonesByBridge[bridgeID] = zones
-                        zonesMutated = true
+                        var changed = false
+                        if let on = update.on?.on, zones[idx].isOn != on {
+                            zones[idx].isOn = on; changed = true
+                        }
+                        if let bri = update.dimming?.brightness, zones[idx].brightness != bri {
+                            zones[idx].brightness = bri; changed = true
+                        }
+                        if changed {
+                            zonesByBridge[bridgeID] = zones
+                            zonesMutated = true
+                        }
                     }
                 }
 
@@ -2831,15 +2923,21 @@ final class UnifiedOrchestrator {
                         mutated = true
                     }
                     if let xy = update.color?.xy {
-                        rooms[idx].dominantColorX = xy.x
-                        rooms[idx].dominantColorY = xy.y
-                        rooms[idx].dominantMirek  = nil
-                        mutated = true
+                        if rooms[idx].dominantColorX != xy.x || rooms[idx].dominantColorY != xy.y
+                            || rooms[idx].dominantMirek != nil {
+                            rooms[idx].dominantColorX = xy.x
+                            rooms[idx].dominantColorY = xy.y
+                            rooms[idx].dominantMirek  = nil
+                            mutated = true
+                        }
                     } else if let mirek = update.colorTemp?.mirek {
-                        rooms[idx].dominantColorX = nil
-                        rooms[idx].dominantColorY = nil
-                        rooms[idx].dominantMirek  = mirek
-                        mutated = true
+                        if rooms[idx].dominantMirek != mirek
+                            || rooms[idx].dominantColorX != nil || rooms[idx].dominantColorY != nil {
+                            rooms[idx].dominantColorX = nil
+                            rooms[idx].dominantColorY = nil
+                            rooms[idx].dominantMirek  = mirek
+                            mutated = true
+                        }
                     }
                     if mutated {
                         roomsByBridge[bridgeID] = rooms
@@ -2860,15 +2958,21 @@ final class UnifiedOrchestrator {
                         mutated = true
                     }
                     if let xy = update.color?.xy {
-                        zones[idx].dominantColorX = xy.x
-                        zones[idx].dominantColorY = xy.y
-                        zones[idx].dominantMirek  = nil
-                        mutated = true
+                        if zones[idx].dominantColorX != xy.x || zones[idx].dominantColorY != xy.y
+                            || zones[idx].dominantMirek != nil {
+                            zones[idx].dominantColorX = xy.x
+                            zones[idx].dominantColorY = xy.y
+                            zones[idx].dominantMirek  = nil
+                            mutated = true
+                        }
                     } else if let mirek = update.colorTemp?.mirek {
-                        zones[idx].dominantColorX = nil
-                        zones[idx].dominantColorY = nil
-                        zones[idx].dominantMirek  = mirek
-                        mutated = true
+                        if zones[idx].dominantMirek != mirek
+                            || zones[idx].dominantColorX != nil || zones[idx].dominantColorY != nil {
+                            zones[idx].dominantColorX = nil
+                            zones[idx].dominantColorY = nil
+                            zones[idx].dominantMirek  = mirek
+                            mutated = true
+                        }
                     }
                     if mutated {
                         zonesByBridge[bridgeID] = zones
@@ -2878,6 +2982,36 @@ final class UnifiedOrchestrator {
 
             default:
                 continue
+            }
+        }
+        return (rooms: roomsMutated, zones: zonesMutated)
+    }
+
+    /// An SSE `delete` batch: remove the rooms and zones it names from THIS
+    /// bridge's snapshot (e.g. deleted in the official Hue app), flagging a
+    /// rebuild only when something was actually removed.
+    ///
+    /// A `grouped_light` delete alone removes nothing: the bridge also emits
+    /// the room/zone delete when a group goes away, and the service can be
+    /// dropped while its room stays (a room emptied of lights) — hiding the
+    /// room then would be wrong. The next `loadAll` reconciles the rest.
+    private func applySSEDeletes(_ event: SSEEvent, bridgeID: String) -> (rooms: Bool, zones: Bool) {
+        let roomIDs = Set(event.data.filter { $0.type == "room" }.map(\.id))
+        let zoneIDs = Set(event.data.filter { $0.type == "zone" }.map(\.id))
+        var roomsMutated = false
+        var zonesMutated = false
+        if !roomIDs.isEmpty, let rooms = roomsByBridge[bridgeID] {
+            let kept = rooms.filter { !roomIDs.contains($0.id) }
+            if kept.count != rooms.count {
+                roomsByBridge[bridgeID] = kept
+                roomsMutated = true
+            }
+        }
+        if !zoneIDs.isEmpty, let zones = zonesByBridge[bridgeID] {
+            let kept = zones.filter { !zoneIDs.contains($0.id) }
+            if kept.count != zones.count {
+                zonesByBridge[bridgeID] = kept
+                zonesMutated = true
             }
         }
         return (rooms: roomsMutated, zones: zonesMutated)
