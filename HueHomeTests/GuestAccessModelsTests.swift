@@ -161,4 +161,21 @@ final class GuestAccessModelsTests: XCTestCase {
         XCTAssertTrue(features.canAdjust)
         XCTAssertFalse(features.canRecallScenes)
     }
+
+    // ── Minted key refs (revocation's only index) ─────────
+
+    /// A later mint that targets fewer bridges must not drop earlier refs —
+    /// revocation finds keys solely through GuestProfile.mintedKeyRefs.
+    func testMintedKeyRefsAreUnionedNotReplaced() {
+        let bridgeA = GuestKeyStore.account(profileID: "p1", bridgeRecordID: "rec-a")
+        let bridgeB = GuestKeyStore.account(profileID: "p1", bridgeRecordID: "rec-b")
+        let bridgeC = GuestKeyStore.account(profileID: "p1", bridgeRecordID: "rec-c")
+
+        let afterFirstMint = ProfilesAccessView.mergedKeyRefs([], adding: [bridgeA, bridgeB])
+        let afterSecondMint = ProfilesAccessView.mergedKeyRefs(afterFirstMint, adding: [bridgeA, bridgeC])
+
+        XCTAssertEqual(afterSecondMint, [bridgeA, bridgeB, bridgeC],
+                       "bridge B's key must stay revocable; re-minted A isn't duplicated")
+        XCTAssertEqual(ProfilesAccessView.mergedKeyRefs(afterSecondMint, adding: []), afterSecondMint)
+    }
 }
