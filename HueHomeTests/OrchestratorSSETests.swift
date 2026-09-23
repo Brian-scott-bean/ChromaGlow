@@ -481,6 +481,28 @@ final class OrchestratorSSETests: XCTestCase {
         XCTAssertFalse(result.rooms, "values the card already shows are not a change")
     }
 
+    // MARK: - SSE-10 only an HTTP 200 opens the stream
+
+    /// A 401/403/503 still returns a byte stream; it used to be marked
+    /// connected, close at once as a "clean" end, reset the backoff and be
+    /// re-dialled every 5 s forever. Anything but 200 now takes the error
+    /// backoff instead.
+    func testOnlyHTTP200OpensTheEventStream() throws {
+        let url = try XCTUnwrap(URL(string: "https://192.0.2.1/eventstream/clip/v2"))
+        func http(_ status: Int) throws -> URLResponse {
+            try XCTUnwrap(HTTPURLResponse(url: url, statusCode: status,
+                                          httpVersion: "HTTP/1.1", headerFields: nil))
+        }
+        XCTAssertTrue(UnifiedOrchestrator.isAcceptableSSEResponse(try http(200)))
+        for status in [204, 401, 403, 404, 429, 500, 503] {
+            XCTAssertFalse(UnifiedOrchestrator.isAcceptableSSEResponse(try http(status)),
+                           "HTTP \(status) is not an open event stream")
+        }
+        XCTAssertFalse(UnifiedOrchestrator.isAcceptableSSEResponse(
+            URLResponse(url: url, mimeType: nil, expectedContentLength: 0, textEncodingName: nil)),
+            "a non-HTTP response is never a stream")
+    }
+
     // MARK: CRUD fixtures
 
     private final class CRUDSpyClient: BridgeAPIClient, @unchecked Sendable {

@@ -2604,6 +2604,11 @@ final class UnifiedOrchestrator {
         }
     }
 
+    /// Only an HTTP 200 opens the event stream. Pure for testing.
+    nonisolated static func isAcceptableSSEResponse(_ response: URLResponse) -> Bool {
+        (response as? HTTPURLResponse)?.statusCode == 200
+    }
+
     /// Run a persistent SSE connection for one bridge.
     ///
     /// Key energy improvements over the previous implementation:
@@ -2633,7 +2638,15 @@ final class UnifiedOrchestrator {
                 // L-09: the stream URL embeds the bridge LAN IP — log only the bridge id.
                 log.info("SSE: Connecting [\(bridgeID, privacy: .public)]")
 
-                let (bytes, _) = try await sseSession.bytes(for: request)
+                let (bytes, response) = try await sseSession.bytes(for: request)
+                // A 401/403/503 still hands back a byte stream. It used to be
+                // marked connected, end almost at once as a "clean" close, and
+                // reset the backoff — so a revoked key or a busy bridge was
+                // re-dialled every 5 s forever while the UI said connected.
+                guard Self.isAcceptableSSEResponse(response) else {
+                    bytes.task.cancel()
+                    throw HueAPIError.httpError((response as? HTTPURLResponse)?.statusCode ?? -1)
+                }
                 connectionStatus[bridgeID] = .connected
                 StartupTimeline.mark("sse.connected", bridgeID)
                 retryDelay = 5_000_000_000   // reset on successful connection
