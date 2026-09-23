@@ -582,28 +582,27 @@ struct HueTabBar: View {
                 }
             }
         }
-        .padding(.horizontal, HueSpacing.xl)
-        .padding(.vertical, HueSpacing.md)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
         .background {
             Capsule()
-                .fill(
-                    colorScheme == .dark
-                        ? HuePalette.Noir.tabBar.opacity(0.92)
-                        : HuePalette.Estate.tabBar.opacity(0.96)
-                )
+                .fill(.ultraThinMaterial)
+                .overlay {
+                    Capsule().fill(
+                        colorScheme == .dark
+                            ? LuminousPalette.void.opacity(0.62)
+                            : HuePalette.Estate.tabBar.opacity(0.7))
+                }
                 .overlay {
                     Capsule()
                         .strokeBorder(
-                            colorScheme == .dark
-                                ? Color.white.opacity(0.10)
-                                : Color.black.opacity(0.06),
-                            lineWidth: 1
-                        )
+                            LinearGradient(colors: colorScheme == .dark
+                                               ? [Color.white.opacity(0.22), Color.white.opacity(0.05)]
+                                               : [Color.black.opacity(0.08), Color.black.opacity(0.03)],
+                                           startPoint: .top, endPoint: .bottom),
+                            lineWidth: 1)
                 }
-                .shadow(
-                    color: .black.opacity(colorScheme == .dark ? 0.40 : 0.12),
-                    radius: 20, x: 0, y: 8
-                )
+                .shadow(color: .black.opacity(colorScheme == .dark ? 0.5 : 0.14), radius: 24, x: 0, y: 10)
         }
         .padding(.horizontal, HueSpacing.xl)
         .padding(.bottom, 8)           // closer to home indicator — less overlap with cards
@@ -622,33 +621,37 @@ struct HueTabItem: View {
 
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 4) {
-                ZStack {
-                    if isSelected {
-                        Capsule()
-                            .fill(
-                                colorScheme == .dark
-                                    ? HuePalette.amber.opacity(0.18)
-                                    : HuePalette.amberLight.opacity(0.15)
-                            )
-                            .frame(width: 44, height: 32)
-                            .matchedGeometryEffect(id: "tabIndicator", in: namespace)
-                    }
-
-                    Image(systemName: tab.icon)
-                        .font(.system(size: 20, weight: .medium))
-                        .symbolEffect(.bounce, value: isSelected)
-                        .foregroundStyle(
-                            isSelected
-                                ? (colorScheme == .dark ? HuePalette.amber : HuePalette.amberLight)
-                                : (colorScheme == .dark ? HuePalette.Noir.tabInactive : HuePalette.Estate.tabInactive)
-                        )
-                        .frame(width: 44, height: 32)
+            VStack(spacing: 3) {
+                Image(systemName: tab.icon)
+                    .font(.system(size: 19, weight: isSelected ? .bold : .medium))
+                    .symbolEffect(.bounce, value: isSelected)
+                Text(tab.label)
+                    .font(.system(size: 10, weight: isSelected ? .bold : .semibold, design: .rounded))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(
+                isSelected
+                    ? (colorScheme == .dark ? LuminousPalette.void : Color.black)
+                    : (colorScheme == .dark ? HuePalette.Noir.tabInactive : HuePalette.Estate.tabInactive)
+            )
+            .frame(maxWidth: .infinity)
+            .frame(height: 48)
+            .background {
+                if isSelected {
+                    Capsule()
+                        .fill(colorScheme == .dark ? AnyShapeStyle(LuminousPalette.amberGradient)
+                                                   : AnyShapeStyle(HuePalette.amberLight))
+                        .shadow(color: HuePalette.amber.opacity(colorScheme == .dark ? 0.55 : 0.3), radius: 12)
+                        .matchedGeometryEffect(id: "tabIndicator", in: namespace)
                 }
             }
+            .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(LuminousPressStyle(scale: 0.92))
         .frame(maxWidth: .infinity)
+        .accessibilityLabel(tab.label)
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : [.isButton])
+        .accessibilityHint(isSelected ? "Double tap to go back one page" : "")
     }
 }
 
