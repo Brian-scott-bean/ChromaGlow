@@ -249,6 +249,11 @@ struct StudioView: View {
                             // reactive composition failed silently.
                             vm.statusMessage = "⚠ Microphone unavailable — enable access in Settings"
                         }
+                        .onReceive(NotificationCenter.default.publisher(for: .compositionMicCaptureFailed)) { _ in
+                            // Permission is fine; the microphone itself would not
+                            // start (another app, a route change mid-start).
+                            vm.statusMessage = "⚠ The microphone couldn't start — try again in a moment"
+                        }
 
                     // ── Deck page indicator ───────────────────────
                     // Hidden while the AI composer is up. Two reasons, both
