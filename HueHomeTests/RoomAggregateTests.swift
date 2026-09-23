@@ -58,6 +58,13 @@ final class RoomDetailSpyAPIClient: HueAPIClient, @unchecked Sendable {
     ) async throws {
         try record("setGroupedLightEffect")
     }
+    /// What fetchGroupedLight returns (nil = HTTP 404).
+    var groupedLight: HueGroupedLight?
+    override func fetchGroupedLight(id: String) async throws -> HueGroupedLight {
+        try record("fetchGroupedLight")
+        guard let groupedLight else { throw HueAPIError.httpError(404) }
+        return groupedLight
+    }
     override func deleteScene(id: String) async throws { try record("deleteScene") }
     override func renameScene(id: String, name: String) async throws {
         try record("renameScene")
@@ -271,5 +278,65 @@ final class RoomAggregateTests: XCTestCase {
         vm.setColorTemp(mirek: 250, for: vm.lights[0])
         await awaitRoomDetail { vm.toastMessage != nil }
         XCTAssertNil(vm.lights[0].colorTempMirek, "CT rollback restores the pre-write (nil) mirek")
+    }
+
+    // ── Room-level undo ───────────────────────────────────────
+
+    /// A failed room OFF used to set EVERY light to !on — turning on lights
+    /// that were off before the tap. Each card must get its own state back.
+    func testFailedRoomToggleRestoresEachLightsOwnState() async {
+        let spy = RoomDetailSpyAPIClient()
+        spy.failing = ["setGroupedLight"]
+        let vm = liveVM([light("l1", on: true, brightness: 60),
+                         light("l2", on: false, brightness: 30)], api: spy)
+
+        vm.toggleRoom(on: false)
+        XCTAssertEqual(vm.lights.map(\.isOn), [false, false], "optimistic")
+        await awaitRoomDetail { vm.toastMessage != nil }
+
+        XCTAssertEqual(vm.lights.map(\.isOn), [true, false], "l2 was off and must stay off")
+        XCTAssertTrue(vm.roomIsOn)
+    }
+
+    func testFailedRoomBrightnessRestoresTheCardsToo() async {
+        let spy = RoomDetailSpyAPIClient()
+        spy.failing = ["setGroupedLightState"]
+        let vm = liveVM([light("l1", on: true, brightness: 60),
+                         light("l2", on: false, brightness: 30)], api: spy)
+
+        vm.setRoomBrightness(95)
+        await awaitRoomDetail { vm.toastMessage != nil }
+
+        XCTAssertEqual(vm.lights.map(\.brightness), [60, 30])
+        XCTAssertEqual(vm.lights.map(\.isOn), [true, false])
+        XCTAssertEqual(vm.roomBrightness, 70, "back to the pre-write bar value")
+    }
+
+    func testFailedRoomPresetRestoresTheCards() async throws {
+        let spy = RoomDetailSpyAPIClient()
+        spy.failing = ["setGroupedLightEffect"]
+        let vm = liveVM([light("l1", on: false, brightness: 20)], api: spy)
+        let preset = try XCTUnwrap(LightingPreset.all.first)
+
+        vm.applyPreset(preset)
+        vm.toastMessage = nil   // the preset's own "applied" toast
+        await awaitRoomDetail { vm.toastMessage != nil }
+
+        XCTAssertFalse(vm.lights[0].isOn)
+        XCTAssertEqual(vm.lights[0].brightness, 20)
+    }
+
+    /// A grouped_light can report brightness 0; the bar's range is 1…100.
+    func testLoadRoomStateClampsGroupedBrightnessZero() async throws {
+        let spy = RoomDetailSpyAPIClient()
+        spy.groupedLight = try JSONDecoder().decode(HueGroupedLight.self, from: Data("""
+        {"id": "gl-a", "type": "grouped_light", "on": {"on": false}, "dimming": {"brightness": 0}}
+        """.utf8))
+        let vm = liveVM([light("l1", on: false, brightness: 40)], api: spy)
+
+        await vm.loadRoomState()
+
+        XCTAssertFalse(vm.roomIsOn)
+        XCTAssertEqual(vm.roomBrightness, 1)
     }
 }
