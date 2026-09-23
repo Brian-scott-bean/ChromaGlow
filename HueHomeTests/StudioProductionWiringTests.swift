@@ -1822,6 +1822,25 @@ final class StudioProductionWiringTests: XCTestCase {
         XCTAssertTrue(canvas.contains("!KeyboardState.shared.isKeyboardUp && !reduceMotion {"),
                       "the TimelineView is gated on Reduce Motion")
     }
+
+    /// Audit #15 — Warmth READS Kelvin over a mirek range, but the board's
+    /// knob/fader and the look browser's slider had no Kelvin-aware parser:
+    /// typing "2700K" parsed as 2700 mirek and clamped to 2000 K.
+    func testTypingAKelvinWarmthLandsOnThatKelvin() throws {
+        let warmth = try XCTUnwrap(vm.effectCards.flatMap(\.params).first { $0.id == "warmth" })
+        let parse = try XCTUnwrap(warmth.parseDraft, "Warmth has a Kelvin-aware parser")
+        let mirek = try XCTUnwrap(parse("2700K"))
+        XCTAssertEqual(mirek, 1_000_000 / 2700, accuracy: 1e-9)
+        XCTAssertEqual(parse("300"), 300, "a value inside the mirek span stays mirek")
+        let speed = try XCTUnwrap(vm.effectCards.flatMap(\.params).first { $0.id == "speed" })
+        XCTAssertNil(speed.parseDraft, "every other param keeps the plain parse")
+
+        let board = try productionCode("HueHome/UI/Studio/StudioBoardView.swift")
+        XCTAssertEqual(board.components(separatedBy: "parseDraft: param.parseDraft").count - 1, 2,
+                       "both the knob and the fader pass it")
+        let browser = try productionCode("HueHome/UI/Studio/StudioLookBrowserView.swift")
+        XCTAssertTrue(browser.contains("parseDraft: param.parseDraft"))
+    }
 }
 
 /// Holds a `RestSender` busy on demand, so "this closure is still pending"

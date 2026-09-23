@@ -290,7 +290,8 @@ struct LookDetailsPanel: View {
                         }
                     ),
                     range: range,
-                    format: param.format ?? { "\(Int($0.rounded()))" }
+                    format: param.format ?? { "\(Int($0.rounded()))" },
+                    parseDraft: param.parseDraft
                 )
                 // The opacity belongs to the CONTROL, not to the pair.
                 .opacity(opacity)

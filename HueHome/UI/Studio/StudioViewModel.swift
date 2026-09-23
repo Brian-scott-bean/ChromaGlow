@@ -96,6 +96,14 @@ struct StudioParam: Identifiable {
     var entOnly: Bool = false
     var displayValue: String { "\(Int(defaultValue))" }
 
+    /// Exact-entry parser for a readout whose unit is not the value's unit.
+    /// Warmth READS Kelvin over a mirek range: without this, typing the
+    /// "2700K" the readout shows parsed as 2700 mirek and clamped to 500 —
+    /// 2000 K, the opposite end of the scale. Nil → the plain numeric parse.
+    var parseDraft: ((String) -> Double?)? {
+        id == "warmth" ? ComposerWarmthEntry.mirek(from:) : nil
+    }
+
     /// Prominence metadata for the board descriptor (Slice 2). The old
     /// `.advanced` bucket — a user-facing "Advanced section" — is retired
     /// per spec §2.3: there is no Advanced product concept. `.support`
