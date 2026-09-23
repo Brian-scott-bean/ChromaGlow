@@ -401,13 +401,15 @@ private struct StudioContinuousControl: View {
                       defaultValue: param.defaultValue,
                       format: param.format ?? { "\(Int($0.rounded()))" },
                       diameter: isHero ? 84 : 60,
-                      onEditingChanged: editingChanged)
+                      onEditingChanged: editingChanged,
+                      parseDraft: param.parseDraft)
         case .fader:
             StageFader(title: param.label, value: binding, range: range,
                        defaultValue: param.defaultValue,
                        format: param.format ?? { "\(Int($0.rounded()))" },
                        trackHeight: isHero ? 168 : 128,
-                       onEditingChanged: editingChanged)
+                       onEditingChanged: editingChanged,
+                       parseDraft: param.parseDraft)
         }
     }
 }

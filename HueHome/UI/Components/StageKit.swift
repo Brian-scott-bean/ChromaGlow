@@ -106,6 +106,9 @@ struct StageSlider: View {
     let range: ClosedRange<Double>
     var format: (Double) -> String = { "\(Int($0.rounded()))" }
     var onEditingChanged: ((Bool) -> Void)? = nil
+    /// See `StageKnob.parseDraft`: exact entry for a readout whose unit is
+    /// not the value's (a Kelvin readout over a mirek range).
+    var parseDraft: ((String) -> Double?)? = nil
 
     @State private var isTyping = false
     @State private var draft = ""
@@ -115,12 +118,14 @@ struct StageSlider: View {
          value: Binding<Double>,
          range: ClosedRange<Double>,
          format: @escaping (Double) -> String = { "\(Int($0.rounded()))" },
-         onEditingChanged: ((Bool) -> Void)? = nil) {
+         onEditingChanged: ((Bool) -> Void)? = nil,
+         parseDraft: ((String) -> Double?)? = nil) {
         self.title = title
         self._value = value
         self.range = range
         self.format = format
         self.onEditingChanged = onEditingChanged
+        self.parseDraft = parseDraft
     }
 
     /// Parse a typed value and clamp it into range. Accepts a leading number
@@ -179,7 +184,13 @@ struct StageSlider: View {
         guard isTyping else { return }
         isTyping = false
         draftFocused = false
-        guard let parsed = Self.parseDraft(draft, range: range) else { return }
+        let parsed: Double?
+        if let parseDraft {
+            parsed = parseDraft(draft).map { min(range.upperBound, max(range.lowerBound, $0)) }
+        } else {
+            parsed = Self.parseDraft(draft, range: range)
+        }
+        guard let parsed else { return }
         // Bracket like a drag so debounced/burst call sites fire their commit.
         onEditingChanged?(true)
         value = parsed
