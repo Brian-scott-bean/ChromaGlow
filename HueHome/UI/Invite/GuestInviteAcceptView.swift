@@ -163,9 +163,10 @@ struct GuestInviteAcceptView: View {
             // Ordering contract: grant BEFORE addBridge/loadAll, so the
             // first rebuild after integration is already filtered.
             acceptor.onGrantEstablished = { seed in
-                // `_ =`: @discardableResult doesn't survive try?'s optional
-                // wrapping — without it the compiler flags an unused result.
-                _ = try? GuestAccessGrantStore.upsert(
+                // `try`, not `try?`: a grant that fails to save must fail the
+                // join (the acceptor then removes the key) — swallowing it
+                // left a guest key with NO restrictions at all.
+                try GuestAccessGrantStore.upsert(
                     bridgeRecordID: seed.bridgeRecordID,
                     allowedGroupIDs: seed.allowedGroupIDs,
                     features: seed.features,

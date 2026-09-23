@@ -265,6 +265,30 @@ final class GuestInviteAcceptorTests: XCTestCase {
                        "a guest token must never replace an owned credential")
     }
 
+    /// The grant write is part of the join: if it can't be saved, the key
+    /// must not stay behind unrestricted (it used to be `try?`-swallowed and
+    /// the join reported success with NO allowlist at all).
+    func testGrantWriteFailureFailsClosedAndPersistsNoKey() async throws {
+        struct GrantSaveFailed: Error {}
+        let (acceptor, _) = makeAcceptor()
+        var attemptedRecordID: String?
+        acceptor.onGrantEstablished = { seed in
+            attemptedRecordID = seed.bridgeRecordID
+            throw GrantSaveFailed()
+        }
+
+        let outcome = await acceptor.accept(grant: grant(), profileName: "Alex",
+                                            modelContext: context)
+
+        guard case .persistFailed = outcome else {
+            return XCTFail("expected persistFailed, got \(outcome)")
+        }
+        XCTAssertEqual(recordCount(), 0, "the record this join created is removed")
+        let recordID = try XCTUnwrap(attemptedRecordID)
+        XCTAssertThrowsError(try KeychainManager.shared.loadCredentials(for: recordID),
+                             "no guest key may stay behind without its grant")
+    }
+
     /// A LEGACY owned record never recorded its bridgeid. The registrar's
     /// host fallback would reuse it, so the no-downgrade guard must find it
     /// the same way — matching by bid alone let the guest token replace the
