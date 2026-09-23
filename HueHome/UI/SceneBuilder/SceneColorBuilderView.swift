@@ -873,24 +873,26 @@ struct SceneColorBuilderView: View {
     /// Send current light states to the bridge for live preview.
     private func sendPreview() async {
         guard let api = orchestrator.hueClient(for: bridgeID) else { return }
-
-        // Stagger updates across lights to avoid overwhelming the bridge.
+        // ONE PUT per light — on + dimming + color/CT together (it used to be
+        // three sequential requests per light: on, color, brightness) — paced
+        // through the bridge's shared BridgeCommandGate so a preview burst
+        // stays inside the ~10 cmd/s budget alongside every other writer.
+        // No retry: a newer preview supersedes a failed frame, and a newer
+        // preview cancels this task, which stops the gate sending stale ones.
+        let gate = orchestrator.commandGate(for: bridgeID)
         for light in lights where selectedLightIDs.contains(light.id) {
-            // Turn on the light first — setting color/brightness on an off light
-            // has no visible effect on the Hue bridge.
-            try? await api.setLight(id: light.id, on: true)
-            if light.supportsColor, let x = light.colorX, let y = light.colorY {
-                try? await api.setLightColor(id: light.id, x: x, y: y)
-                try? await api.setLightBrightness(id: light.id, brightness: light.brightness)
-            } else if light.supportsColorTemp, let mirek = light.colorTempMirek {
-                try? await api.setLightColorTemp(id: light.id, mirek: mirek)
-                try? await api.setLightBrightness(id: light.id, brightness: light.brightness)
-            } else {
-                // Dimmable-only lights: just set brightness
-                try? await api.setLightBrightness(id: light.id, brightness: light.brightness)
+            guard !Task.isCancelled else { return }
+            let id = light.id
+            let brightness = light.brightness
+            var xy: (Double, Double)? = nil
+            if light.supportsColor, let x = light.colorX, let y = light.colorY { xy = (x, y) }
+            let mirek: Int? = (xy == nil && light.supportsColorTemp) ? light.colorTempMirek : nil
+            let sendXY = xy
+            await gate.send(retry: false) {
+                // on:true — color/brightness on an off light has no visible effect.
+                try await api.setLightEffect(id: id, on: true, brightness: brightness,
+                                             xy: sendXY, mirek: mirek, duration: 0)
             }
-            // Small stagger between lights
-            try? await Task.sleep(for: .milliseconds(50))
         }
     }
 

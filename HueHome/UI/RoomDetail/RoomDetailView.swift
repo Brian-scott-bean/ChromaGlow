@@ -233,7 +233,10 @@ struct RoomDetailView: View {
                 room: room,
                 api: orchestrator.hueClient(for: room.bridgeID),
                 isDemoMode: orchestrator.isDemoMode,
-                initialLights: __seed
+                initialLights: __seed,
+                // Bulk (multi-select) writes share the bridge's pacing gate
+                // with every other bulk writer (M-08).
+                commandGate: orchestrator.commandGate(for: room.bridgeID)
             )
             // Wire the glow-refresh callback so color changes propagate to dashboard cards.
             let bridgeID = room.bridgeID ?? ""
