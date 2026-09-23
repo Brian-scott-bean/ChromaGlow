@@ -96,6 +96,27 @@ final class ColorClipboardTests: XCTestCase {
         XCTAssertEqual(copied?.y, 0.33)
     }
 
+    /// Same invariant for the app's OWN paint: setColor on a CT-mode light
+    /// used to leave mirek set, so Copy Color grabbed the old white.
+    func testCaptureAfterInAppPaintCopiesTheColorNotStaleMirek() {
+        let room = RoomDisplayItem(
+            kind: .room, id: "room-a", name: "Test Room", archetype: nil,
+            isOn: true, brightness: 70, groupedLightID: "gl-a", lightCount: 1,
+            bridgeID: "bridge-a", childResourceRefs: [(rid: "light-1", rtype: "light")]
+        )
+        let vm = RoomDetailViewModel(
+            room: room, api: nil, isDemoMode: true,
+            initialLights: [light(colorTempMirek: 370)]   // CT mode
+        )
+
+        vm.setColor(x: 0.64, y: 0.33, for: vm.lights[0])
+
+        let copied = ColorClipboard.capture(from: vm.lights[0])
+        XCTAssertNil(copied?.mirek, "painting a color leaves CT mode")
+        XCTAssertEqual(copied?.x, 0.64)
+        XCTAssertEqual(copied?.y, 0.33)
+    }
+
     /// Same invariant for the orchestrator's per-light cache (HueLight):
     /// `applying` used to carry `color_temperature` over verbatim on a
     /// color-only event, leaving `updateScene`'s CT fallback stale too.
