@@ -122,7 +122,10 @@ final class CompositionStore: @unchecked Sendable {
             updatedAt: Date(),
             aiPrompt: preset.aiPrompt,
             providerModel: preset.providerModel,
-            preferredTransport: preset.preferredTransport
+            preferredTransport: preset.preferredTransport,
+            // Part of the design: a duplicate that silently dropped the
+            // step sequence was not a copy of what the user duplicated.
+            sequence: preset.sequence
         )
         presets.append(copy)
         persist()

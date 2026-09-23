@@ -135,6 +135,22 @@ final class CompositionStoreTests: XCTestCase {
                        "the migrator must not revert a saved edit on the next launch")
     }
 
+    /// Audit #16 — `duplicate` rebuilt the preset field by field and left
+    /// out `sequence`, so a duplicated sequenced look lost its steps.
+    func testDuplicateKeepsTheSequence() throws {
+        let store = makeStore()
+        var source = try XCTUnwrap(store.presets.first)
+        source.sequence = CompositionSequence(steps: [.init(name: "A", bars: 4),
+                                                      .init(name: "B", bars: 16)],
+                                              loops: false)
+        store.save(source)
+
+        let copy = store.duplicate(source)
+
+        XCTAssertNotEqual(copy.id, source.id)
+        XCTAssertEqual(copy.sequence, source.sequence)
+    }
+
     /// The stamp must not fire for a reset: `delete` saves the catalog copy,
     /// and a reset built-in has to stay eligible for future refreshes.
     func testAResetBuiltInStaysUnedited() throws {
