@@ -35,6 +35,8 @@ struct CopySceneSheet: View {
     @State private var name: String = ""
     @State private var isLoadingDetail = true
     @State private var isLoadingPreview = false
+    /// Tags each preview load; only the newest may write its results.
+    @State private var previewRequestID = 0
     @State private var isWorking = false
     @State private var errorMessage: String?
 
@@ -368,18 +370,25 @@ struct CopySceneSheet: View {
 
     private func loadPreview(for room: RoomDisplayItem) async {
         guard let detail else { return }
+        // Switching rooms quickly overlaps loads; a slower, older response
+        // must not overwrite the newer room's preview (or its error/spinner).
+        previewRequestID += 1
+        let requestID = previewRequestID
         isLoadingPreview = true
-        defer { isLoadingPreview = false }
         // Same-room duplicate gets a distinct default name.
         name = room.id == scene.roomID ? "\(scene.name) 2".prefix(32).description : scene.name
         do {
-            targetLights = try await orchestrator.roomLights(for: room)
-            remapped = SceneCopyEngine.remap(detail: detail, targetLights: targetLights)
+            let lights = try await orchestrator.roomLights(for: room)
+            guard requestID == previewRequestID else { return }
+            targetLights = lights
+            remapped = SceneCopyEngine.remap(detail: detail, targetLights: lights)
         } catch {
+            guard requestID == previewRequestID else { return }
             targetLights = []
             remapped = []
             errorMessage = "Couldn't load '\(room.name)' — check the bridge connection"
         }
+        isLoadingPreview = false
     }
 
     private func confirm() async {
