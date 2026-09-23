@@ -372,6 +372,27 @@ final class OrchestratorGuestAccessTests: XCTestCase {
         XCTAssertEqual(owned.updateCount, 1, "the owner's own bridge still edits")
     }
 
+    // ── Devices tab inherits the room allowlist ───────────
+
+    func testDevicesVisibleOnlyInGrantedRoomsOnGrantedBridges() {
+        let allowed: Set<String> = ["device-in-room-a", "light-in-zone-z1"]
+
+        XCTAssertTrue(DevicesViewModel.isDeviceVisible(
+            deviceID: "anything", serviceRIDs: [], allowedRIDs: nil),
+            "an owned bridge lists every device")
+        XCTAssertTrue(DevicesViewModel.isDeviceVisible(
+            deviceID: "device-in-room-a", serviceRIDs: [], allowedRIDs: allowed),
+            "room children are devices")
+        XCTAssertTrue(DevicesViewModel.isDeviceVisible(
+            deviceID: "bulb-device", serviceRIDs: ["light-in-zone-z1"], allowedRIDs: allowed),
+            "zone children are lights — matched through the device's services")
+        XCTAssertFalse(DevicesViewModel.isDeviceVisible(
+            deviceID: "owner-bedroom-sensor", serviceRIDs: ["motion-1"], allowedRIDs: allowed))
+        XCTAssertFalse(DevicesViewModel.isDeviceVisible(
+            deviceID: "device-in-room-a", serviceRIDs: [], allowedRIDs: []),
+            "an empty allowlist fails closed")
+    }
+
     // ── Helpers ───────────────────────────────────────────
 
     private func decodeSSEEvents(_ json: String) throws -> [SSEEvent] {
