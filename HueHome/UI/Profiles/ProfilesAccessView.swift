@@ -32,6 +32,18 @@ struct ProfilesAccessView: View {
     @State private var revokeOutcomeMessage: String?
     @State private var revokeInFlight = false
 
+    /// Pure: every key ref a profile was EVER issued, existing order first,
+    /// new refs appended, no duplicates (a re-mint for the same bridge
+    /// upserts the same Keychain account, so its ref repeats).
+    nonisolated static func mergedKeyRefs(_ existing: [String], adding new: [String]) -> [String] {
+        var seen = Set(existing)
+        var merged = existing
+        for ref in new where seen.insert(ref).inserted {
+            merged.append(ref)
+        }
+        return merged
+    }
+
     var body: some View {
         ZStack {
             background.ignoresSafeArea()
@@ -116,7 +128,11 @@ struct ProfilesAccessView: View {
                     isRevoked: profile.revokedAt != nil
                 ),
                 onMinted: { refs in
-                    profile.mintedKeyRefs = refs
+                    // UNION, never replace: a mint session only reports the
+                    // bridges it targeted this time, and revocation finds
+                    // keys solely through this list — replacing it orphaned
+                    // every earlier bridge's key (unrevocable from here).
+                    profile.mintedKeyRefs = Self.mergedKeyRefs(profile.mintedKeyRefs, adding: refs)
                     profile.lastInviteAt = Date()
                     try? modelContext.save()
                 }
