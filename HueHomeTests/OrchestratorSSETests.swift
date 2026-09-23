@@ -350,6 +350,191 @@ final class OrchestratorSSETests: XCTestCase {
         XCTAssertNotEqual(BeatClock.shared.source, .tap)
     }
 
+    // MARK: - SSE-09 CRUD edits survive the next rebuild; delete events remove
+
+    /// Deleting a room changed only the merged list; the next rebuild (any SSE
+    /// event) re-derived it from the stale per-bridge snapshot and the room
+    /// came back.
+    func testDeletedRoomStaysDeletedAcrossTheNextSSERebuild() async throws {
+        let (orchestrator, spy) = makeCRUDSUT()
+
+        await orchestrator.deleteRoom(try room("room-001", in: orchestrator))
+        XCTAssertEqual(spy.calls, ["deleteRoom:room-001"])
+        orchestrator.testApplySSEEventsAndRebuild(
+            try decodeSSEEvents(groupedLightJSON(id: "gl-002", on: false)), bridgeID: "bridge-1")
+
+        XCTAssertEqual(orchestrator.allRooms.map(\.id), ["room-002"],
+            "the deleted room must not be resurrected by a rebuild")
+        XCTAssertEqual(orchestrator.testRoomsByBridge()["bridge-1"]?.map(\.id), ["room-002"])
+    }
+
+    func testRenamedRoomKeepsItsNameAcrossTheNextSSERebuild() async throws {
+        let (orchestrator, _) = makeCRUDSUT()
+
+        await orchestrator.renameRoom(try room("room-001", in: orchestrator),
+                                      name: "Den", archetype: "office")
+        orchestrator.testApplySSEEventsAndRebuild(
+            try decodeSSEEvents(groupedLightJSON(id: "gl-002", on: false)), bridgeID: "bridge-1")
+
+        let renamed = try XCTUnwrap(orchestrator.allRooms.first { $0.id == "room-001" })
+        XCTAssertEqual(renamed.name, "Den", "a rebuild must not revert the rename")
+        XCTAssertEqual(renamed.archetype, "office")
+    }
+
+    func testAFailedRoomDeleteRestoresItExactlyOnce() async throws {
+        let (orchestrator, _) = makeCRUDSUT(failWrites: true)
+
+        await orchestrator.deleteRoom(try room("room-001", in: orchestrator))
+
+        XCTAssertEqual(orchestrator.allRooms.filter { $0.id == "room-001" }.count, 1)
+        XCTAssertEqual(orchestrator.testRoomsByBridge()["bridge-1"]?.map(\.id).sorted(),
+                       ["room-001", "room-002"], "the snapshot is restored too")
+    }
+
+    func testAFailedRoomRenameRestoresTheOriginalName() async throws {
+        let (orchestrator, _) = makeCRUDSUT(failWrites: true)
+
+        await orchestrator.renameRoom(try room("room-001", in: orchestrator),
+                                      name: "Den", archetype: "office")
+        orchestrator.testApplySSEEventsAndRebuild(
+            try decodeSSEEvents(groupedLightJSON(id: "gl-002", on: false)), bridgeID: "bridge-1")
+
+        XCTAssertEqual(orchestrator.allRooms.first { $0.id == "room-001" }?.name, "Bedroom")
+    }
+
+    func testDeletedAndRenamedZonesSurviveTheNextRebuild() async throws {
+        let (orchestrator, spy) = makeCRUDSUT()
+        let upstairs = try XCTUnwrap(orchestrator.allZones.first { $0.id == "zone-001" })
+        let downstairs = try XCTUnwrap(orchestrator.allZones.first { $0.id == "zone-002" })
+
+        await orchestrator.deleteZone(upstairs)
+        await orchestrator.renameZone(downstairs, name: "Ground Floor", archetype: "home")
+        XCTAssertEqual(spy.calls, ["deleteZone:zone-001", "renameZone:zone-002"])
+        orchestrator.testApplySSEEventsAndRebuild(
+            try decodeSSEEvents(groupedLightJSON(id: "gl-z02", on: false)), bridgeID: "bridge-1")
+
+        XCTAssertEqual(orchestrator.allZones.map(\.id), ["zone-002"])
+        XCTAssertEqual(orchestrator.allZones.first?.name, "Ground Floor")
+    }
+
+    /// A room or zone deleted elsewhere (the official Hue app) arrives as a
+    /// `delete` batch naming the group and its grouped_light.
+    func testSSEDeleteEventRemovesTheRoomAndZoneItNames() throws {
+        let (orchestrator, _) = makeCRUDSUT()
+        let json = """
+        [{"creationtime":"2024-01-01T00:00:00Z","data":[
+          {"id":"room-001","id_v1":"/groups/1","type":"room"},
+          {"id":"gl-001","id_v1":"/groups/1","type":"grouped_light"},
+          {"id":"zone-001","id_v1":"/groups/9","type":"zone"}
+        ],"id":"evt-d1","type":"delete"}]
+        """
+        let result = orchestrator.testApplySSEEventsAndRebuild(
+            try decodeSSEEvents(json), bridgeID: "bridge-1")
+
+        XCTAssertTrue(result.rooms)
+        XCTAssertTrue(result.zones)
+        XCTAssertEqual(orchestrator.allRooms.map(\.id), ["room-002"])
+        XCTAssertEqual(orchestrator.allZones.map(\.id), ["zone-002"])
+    }
+
+    func testSSEDeleteOfAnotherBridgesRoomIDRemovesNothingHere() throws {
+        let (orchestrator, _) = makeCRUDSUT()
+        let json = """
+        [{"creationtime":"2024-01-01T00:00:00Z","data":[
+          {"id":"room-001","type":"room"}
+        ],"id":"evt-d2","type":"delete"}]
+        """
+        let result = orchestrator.testApplySSEEventsAndRebuild(
+            try decodeSSEEvents(json), bridgeID: "bridge-2")
+
+        XCTAssertFalse(result.rooms, "exact bridge identity — bridge-2's stream cannot delete bridge-1's room")
+        XCTAssertTrue(orchestrator.allRooms.contains { $0.id == "room-001" })
+    }
+
+    /// A grouped_light delete carries no state; it used to fall through to the
+    /// update handler and flag a rebuild anyway.
+    func testAGroupedLightDeleteAloneRemovesAndFlagsNothing() throws {
+        let (orchestrator, _) = makeCRUDSUT()
+        let json = """
+        [{"creationtime":"2024-01-01T00:00:00Z","data":[
+          {"id":"gl-001","type":"grouped_light"}
+        ],"id":"evt-d3","type":"delete"}]
+        """
+        let result = orchestrator.testApplySSEEventsAndRebuild(
+            try decodeSSEEvents(json), bridgeID: "bridge-1")
+
+        XCTAssertFalse(result.rooms)
+        XCTAssertFalse(result.zones)
+        XCTAssertTrue(orchestrator.allRooms.contains { $0.id == "room-001" })
+    }
+
+    func testAGroupedLightUpdateThatChangesNothingFlagsNoRebuild() throws {
+        let orchestrator = makeOrchestratorSSESUT(isOn: true, brightness: 80)
+        let json = """
+        [{"creationtime":"2024-01-01T00:00:00Z","data":[{
+          "id":"gl-001","type":"grouped_light","on":{"on":true},"dimming":{"brightness":80}
+        }],"id":"evt-u1","type":"update"}]
+        """
+        let result = orchestrator.testApplySSEEventsAndRebuild(
+            try decodeSSEEvents(json), bridgeID: "bridge-1")
+
+        XCTAssertFalse(result.rooms, "values the card already shows are not a change")
+    }
+
+    // MARK: CRUD fixtures
+
+    private final class CRUDSpyClient: BridgeAPIClient, @unchecked Sendable {
+        var failWrites = false
+        private let lock = NSLock()
+        private var _calls: [String] = []
+        var calls: [String] { lock.lock(); defer { lock.unlock() }; return _calls }
+
+        private func record(_ call: String) throws {
+            lock.lock(); _calls.append(call); lock.unlock()
+            if failWrites { throw HueAPIError.httpError(500) }
+        }
+        override func deleteRoom(id: String) async throws { try record("deleteRoom:\(id)") }
+        override func deleteZone(id: String) async throws { try record("deleteZone:\(id)") }
+        override func renameRoom(id: String, name: String, archetype: String) async throws {
+            try record("renameRoom:\(id)")
+        }
+        override func renameZone(id: String, name: String, archetype: String) async throws {
+            try record("renameZone:\(id)")
+        }
+    }
+
+    private func makeCRUDSUT(failWrites: Bool = false) -> (UnifiedOrchestrator, CRUDSpyClient) {
+        let spy = CRUDSpyClient(bridgeID: "bridge-1", bridgeName: "Home", ip: "192.0.2.1", token: "t")
+        spy.failWrites = failWrites
+        let orchestrator = UnifiedOrchestrator()
+        orchestrator.injectForTesting(clients: ["bridge-1": spy])
+        func group(_ kind: RoomDisplayItem.Kind, _ id: String, _ name: String, _ gl: String) -> RoomDisplayItem {
+            RoomDisplayItem(kind: kind, id: id, name: name, archetype: nil,
+                            isOn: true, brightness: 80, groupedLightID: gl, lightCount: 2,
+                            bridgeID: "bridge-1", childResourceRefs: [])
+        }
+        orchestrator.testSeedBridgeGroups(
+            bridgeID: "bridge-1",
+            rooms: [group(.room, "room-001", "Bedroom", "gl-001"),
+                    group(.room, "room-002", "Kitchen", "gl-002")],
+            zones: [group(.zone, "zone-001", "Upstairs", "gl-z01"),
+                    group(.zone, "zone-002", "Downstairs", "gl-z02")])
+        orchestrator.testSetGuestGrants([:])   // no grants — just rebuilds both merged lists
+        return (orchestrator, spy)
+    }
+
+    private func room(_ id: String, in orchestrator: UnifiedOrchestrator) throws -> RoomDisplayItem {
+        try XCTUnwrap(orchestrator.allRooms.first { $0.id == id })
+    }
+
+    private func groupedLightJSON(id: String, on: Bool) -> String {
+        """
+        [{"creationtime":"2024-01-01T00:00:00Z","data":[{
+          "id":"\(id)","type":"grouped_light","on":{"on":\(on)}
+        }],"id":"evt-gl","type":"update"}]
+        """
+    }
+
     private func decodeSSEEvents(_ json: String) throws -> [SSEEvent] {
         let data = try XCTUnwrap(json.data(using: .utf8))
         return try UnifiedOrchestrator.sseDecoder.decode(
