@@ -26,26 +26,44 @@ struct SceneMoodCard: View {
 
     var body: some View {
         Button(action: onActivate) {
-            HStack(alignment: .center, spacing: 12) {
-
-                // ── Icon (with optional SPEED badge) ──────────────────────
-                ZStack(alignment: .bottomTrailing) {
-                    Circle()
-                        .fill(scene.accentColor.opacity(scene.isActive ? 0.30 : 0.15))
-                        .frame(width: 44, height: 44)
-                    Image(systemName: scene.icon)
-                        .font(.system(size: 19, weight: .medium))
-                        .foregroundStyle(scene.accentColor)
-                        .symbolEffect(.pulse, isActive: scene.isActive)
-                        .frame(width: 44, height: 44)
-                    if scene.isDynamic {
-                        Image(systemName: "bolt.fill")
-                            .font(.system(size: 8, weight: .bold))
-                            .foregroundStyle(.white)
-                            .padding(3)
-                            .background(Circle().fill(scene.accentColor))
-                            .offset(x: 4, y: 4)
+            // Vertical so the name gets the card's whole width. The old row
+            // (icon · text · play) left a two-column card about 20 pt for
+            // the name, which truncated to its first letter ("B…").
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .top, spacing: 8) {
+                    // ── Icon (with optional SPEED badge) ──────────────────
+                    ZStack(alignment: .bottomTrailing) {
+                        Circle()
+                            .fill(scene.accentColor.opacity(scene.isActive ? 0.30 : 0.15))
+                            .frame(width: 44, height: 44)
+                        Image(systemName: scene.icon)
+                            .font(.system(size: 19, weight: .medium))
+                            .foregroundStyle(scene.accentColor)
+                            .symbolEffect(.pulse, isActive: scene.isActive)
+                            .frame(width: 44, height: 44)
+                        if scene.isDynamic {
+                            Image(systemName: "bolt.fill")
+                                .font(.system(size: 8, weight: .bold))
+                                .foregroundStyle(.white)
+                                .padding(3)
+                                .background(Circle().fill(scene.accentColor))
+                                .offset(x: 4, y: 4)
+                        }
                     }
+                    Spacer(minLength: 4)
+                    // ── Favorite + active (clear of the SPEED button) ─────
+                    HStack(spacing: 6) {
+                        if isFavorite {
+                            Image(systemName: "star.fill")
+                                .font(.system(size: 11))
+                                .foregroundStyle(HuePalette.amber)
+                        }
+                        if scene.isActive {
+                            Circle().fill(.green).frame(width: 7, height: 7)
+                        }
+                    }
+                    .padding(.top, 6)
+                    .padding(.trailing, scene.isDynamic ? 40 : 0)
                 }
 
                 // ── Text ──────────────────────────────────────────────────
@@ -53,7 +71,10 @@ struct SceneMoodCard: View {
                     Text(scene.name)
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(.white)
-                        .lineLimit(1)
+                        // A single word never breaks mid-word — it shrinks.
+                        .lineLimit(scene.name.contains(" ") ? 2 : 1)
+                        .minimumScaleFactor(0.75)
+                        .fixedSize(horizontal: false, vertical: true)
                     HStack(spacing: 6) {
                         if showsRoomLabel {
                             Text(roomName)
@@ -68,33 +89,20 @@ struct SceneMoodCard: View {
                             StageBadge(text: "STUDIO", style: .amber)
                         }
                     }
+                }
 
-                    // Signature strip on every scene: static scenes get a
-                    // still color bar; dynamic scenes animate at their REAL
-                    // recall speed while active (0-1 bridge speed → 0-100).
-                    // True palette colors when the bridge supplied them,
-                    // name-derived accent otherwise.
+                // ── Signature strip + play affordance ─────────────────────
+                // Static scenes get a still color bar; dynamic scenes animate
+                // at their REAL recall speed while active (0-1 bridge speed →
+                // 0-100). True palette colors when the bridge supplied them,
+                // name-derived accent otherwise.
+                HStack(spacing: 8) {
                     LookPreviewStrip(
                         spec: lookSpec,
                         animated: scene.isDynamic && scene.isActive,
                         isRunning: true   // only animates while actively recalling
                     )
-                    .padding(.top, 4)
-                    .frame(maxWidth: 120)
-                }
-
-                Spacer()
-
-                // ── Active indicator + play affordance ────────────────────
-                HStack(spacing: 8) {
-                    if isFavorite {
-                        Image(systemName: "star.fill")
-                            .font(.system(size: 11))
-                            .foregroundStyle(HuePalette.amber)
-                    }
-                    if scene.isActive {
-                        Circle().fill(.green).frame(width: 7, height: 7)
-                    }
+                    .frame(maxWidth: .infinity)
                     Image(systemName: scene.isActive ? "play.circle.fill" : "play.circle")
                         .font(.system(size: 22))
                         .foregroundStyle(scene.isActive
@@ -102,10 +110,9 @@ struct SceneMoodCard: View {
                             : .white.opacity(0.28))
                 }
             }
-            .padding(.horizontal, 16)
+            .padding(.horizontal, 14)
             .padding(.vertical, 14)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .frame(minHeight: 76)
             .background(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .fill(scene.isActive
