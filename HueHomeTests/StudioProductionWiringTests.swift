@@ -1813,6 +1813,15 @@ final class StudioProductionWiringTests: XCTestCase {
         XCTAssertTrue(tray?.contains("vm.explicitStop(card, at: key)") ?? false,
                       "the tray passes the exact key it captured")
     }
+
+    /// Audit #14 — the living-card canvases (Strobe, Thunderstorm flash
+    /// overlays) kept animating under Reduce Motion.
+    func testCardCanvasesHoldStillUnderReduceMotion() throws {
+        let canvas = try productionCode("HueHome/UI/Studio/StudioCardCanvas.swift")
+        XCTAssertTrue(canvas.contains("@Environment(\\.accessibilityReduceMotion) private var reduceMotion"))
+        XCTAssertTrue(canvas.contains("!KeyboardState.shared.isKeyboardUp && !reduceMotion {"),
+                      "the TimelineView is gated on Reduce Motion")
+    }
 }
 
 /// Holds a `RestSender` busy on demand, so "this closure is still pending"
