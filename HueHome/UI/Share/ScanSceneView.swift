@@ -11,6 +11,7 @@
 
 import SwiftUI
 import VisionKit
+import AVFoundation
 
 struct ScanSceneView: View {
 
@@ -25,20 +26,48 @@ struct ScanSceneView: View {
     let onFound: (URL) -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
+    @Environment(\.scenePhase) private var scenePhase
+
+    /// Camera permission, re-read on appear and when returning from Settings.
+    @State private var cameraStatus = AVCaptureDevice.authorizationStatus(for: .video)
 
     static var isSupported: Bool {
         DataScannerViewController.isSupported && DataScannerViewController.isAvailable
     }
 
+    /// Denied/restricted camera access makes `isAvailable` false too — that
+    /// is a fixable setting, not "this device can't scan".
+    private var cameraBlocked: Bool {
+        DataScannerViewController.isSupported
+            && (cameraStatus == .denied || cameraStatus == .restricted)
+    }
+
     var body: some View {
         NavigationStack {
             Group {
-                if Self.isSupported {
+                if cameraBlocked {
+                    cameraDenied
+                } else if Self.isSupported {
                     ScannerRepresentable(onFound: handle)
                         .ignoresSafeArea(edges: .bottom)
                         .overlay(alignment: .bottom) { hintOverlay }
+                } else if DataScannerViewController.isSupported && cameraStatus == .notDetermined {
+                    // Ask first; the view re-evaluates when the answer lands.
+                    ProgressView()
+                        .tint(HuePalette.amber)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .task {
+                            _ = await AVCaptureDevice.requestAccess(for: .video)
+                            cameraStatus = AVCaptureDevice.authorizationStatus(for: .video)
+                        }
                 } else {
                     unsupported
+                }
+            }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active {
+                    cameraStatus = AVCaptureDevice.authorizationStatus(for: .video)
                 }
             }
             .background(StagePalette.stage)
@@ -78,6 +107,31 @@ struct ScanSceneView: View {
             .padding(.vertical, 8)
             .background(Capsule().fill(.black.opacity(0.55)))
             .padding(.bottom, HueSpacing.xxl)
+    }
+
+    private var cameraDenied: some View {
+        VStack(spacing: HueSpacing.md) {
+            Image(systemName: "camera.fill")
+                .font(.system(size: 40, weight: .light))
+                .foregroundStyle(StagePalette.muted)
+            Text("Camera access is off.")
+                .font(HueFont.stageControl)
+                .foregroundStyle(StagePalette.ink)
+            Text("ChromaGlow needs the camera to read QR codes. Turn it on in Settings, then come back — or ask for the link instead.")
+                .font(HueFont.stageStatus)
+                .foregroundStyle(StagePalette.muted)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            Button("Open Settings") {
+                if let url = URL(string: UIApplication.openSettingsURLString) {
+                    openURL(url)
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(HuePalette.amber)
+        }
+        .padding(HueSpacing.xl)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var unsupported: some View {
