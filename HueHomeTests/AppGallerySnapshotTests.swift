@@ -23,12 +23,23 @@ final class AppGallerySnapshotTests: XCTestCase {
         return orchestrator
     }
 
-    private func container() throws -> ModelContainer {
+    /// ONE in-memory container for every gallery screen, alive for the whole
+    /// test process. SwiftUI's `@Query` leaves a SwiftData observer behind
+    /// that outlives its view; when each render had its own container, that
+    /// observer pointed at a freed container and the NEXT test's SwiftData
+    /// save (any test, any class) trapped inside it.
+    private static let sharedContainer: ModelContainer = {
         let schema = Schema([BridgeRecord.self, HueLocalRoom.self, HueLocalScene.self, EffectPreset.self,
                              FavouriteColor.self, ActivityEvent.self, EnergySnapshot.self, AppSettings.self,
                              AppAutomation.self, GuestProfile.self, GuestAccessGrant.self])
-        return try ModelContainer(for: schema, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
-    }
+        do {
+            return try ModelContainer(for: schema, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        } catch {
+            fatalError("gallery container: \(error)")
+        }
+    }()
+
+    private func container() throws -> ModelContainer { Self.sharedContainer }
 
     private func host<V: View>(_ view: V, orchestrator: UnifiedOrchestrator) throws -> (UIWindow, UIHostingController<AnyView>) {
         let root = AnyView(
@@ -47,6 +58,16 @@ final class AppGallerySnapshotTests: XCTestCase {
         window.isHidden = false
         controller.view.layoutIfNeeded()
         return (window, controller)
+    }
+
+    /// Take a hosted screen fully down before the test ends. A hidden window
+    /// that keeps its root alive leaves SwiftUI `@Query` observers running in
+    /// this test process; a later test's SwiftData save then reached them and
+    /// trapped (seen once in a full-suite run).
+    private func dismantle(_ window: UIWindow) {
+        window.rootViewController = nil
+        window.isHidden = true
+        pump(0.2)
     }
 
     private func pump(_ seconds: TimeInterval) {
@@ -69,7 +90,7 @@ final class AppGallerySnapshotTests: XCTestCase {
         let (window, controller) = try host(view, orchestrator: orchestrator)
         pump(settle)
         capture(controller, named: name)
-        window.isHidden = true
+        dismantle(window)
         orchestrator.exitDemoMode()
     }
 
@@ -95,7 +116,7 @@ final class AppGallerySnapshotTests: XCTestCase {
         let (window, controller) = try host(NavigationStack { RoomDetailView(room: room) }, orchestrator: orchestrator)
         pump(3)
         capture(controller, named: "gallery-room-detail")
-        window.isHidden = true
+        dismantle(window)
         orchestrator.exitDemoMode()
     }
 
@@ -105,7 +126,7 @@ final class AppGallerySnapshotTests: XCTestCase {
         let (window, controller) = try host(view, orchestrator: orchestrator)
         pump(1.5)
         capture(controller, named: "gallery-composer")
-        window.isHidden = true
+        dismantle(window)
         orchestrator.exitDemoMode()
     }
 }
