@@ -4,13 +4,20 @@
 
 ---
 
-## Current Status Snapshot (updated 2026-09-16)
+## Current Status Snapshot (updated 2026-09-22)
 
 ### Pointers
 - Canonical agent context: `AGENTS.md`. Claude Code entry point: `CLAUDE.md` points there.
 - Live shared handoff: append-only entries in this `DEVLOG.md`. Git is the shared memory between tools.
 
 ### iOS — where we are RIGHT NOW
+- **v2.2 BUG-FIX SWEEP — BUILD 55, ISOLATED EXPERIMENT, NOT MERGED (2026-09-22).** Branch
+  `experiment/composer-2-v2.2-bugfixes` (on the v2.1 tip `582440a`; rollback tag `checkpoint/pre-composer2-v2.2`):
+  ~120 defects fixed across the whole app — Composer 2, Studio, Home/Room/Scenes, guest access, network, Siri/watch/
+  widgets/automations/demo, audio and flash safety (red flashes now measured in WCAG's R′). Full suite 2384/2386
+  (both failures explained; one was the new gallery test, fixed). **Hardware NOT verified.** Companion branch
+  `experiment/composer-2-v2.2-ui-ux` (build 56, in progress) carries the redesign and the Composer 2 build-out.
+  Entry below.
 - **COMPOSER 2.1 — HARDENING + INTEGRATION PASS ON THE EXPERIMENT BRANCH, BUILD 54, NOT MERGED (2026-09-16).**
   Branch `experiment/composer-2-dream-studio-v2.1` (from the v2.0 prototype `fe7ee82`; rollback tag
   `checkpoint/pre-composer2-v2.1`; pushed to origin for phone testing only). Exact render-slot identity from the
@@ -680,6 +687,81 @@
 ### Gotchas
 - ...
 ```
+
+---
+
+## 2026-09-22 - [Claude] v2.2 bug-fix sweep — ~120 defects fixed across the whole app (build 55)
+
+**Branch:** `experiment/composer-2-v2.2-bugfixes` (from the v2.1 experiment tip `582440a`). **Experiment — no PR, no
+merge, `main` untouched, not pushed.** **Rollback:** tag `checkpoint/pre-composer2-v2.2` at `582440a`.
+Companion branch: `experiment/composer-2-v2.2-ui-ux` (the redesign + Composer 2 build-out) sits on top of this one.
+
+### How
+Eight read-only audits (Composer 2 engine, Composer 2 UI/playback, the Composer 2 ⇄ orchestrator seam, Studio +
+legacy Composer, home surfaces, networking/bridge, shell/extensions, audio/flash safety) → every finding re-verified
+against the code → five fix lanes in isolated worktrees (Studio, home+guest, network, shell+Siri+watch+automations,
+audio+flash) + the Composer 2 lane by Claude, integrated here commit by commit. One commit per fix (Composer 2 grouped).
+
+### Did — by area (highlights; every commit body explains its defect)
+- **Composer 2 (7 commits, ~35 findings):** preview never showed edits and Live could play the look the screen
+  OPENED with (CRITICAL); the screen treated any live session as its own; Studio-card starts could hang the serial
+  chain (and every Dashboard/Siri stop) on an invisible takeover prompt; Composer 2 could stop or retire the row of a
+  Studio look that replaced it (ownership is now box identity: `isDrivingComposition(box:)`, publisher-scoped
+  `removeActiveEffect(bridgeID:roomID:onlyEffectID:)`); a DTLS→REST failover orphaned the look; the Room-mode delta
+  gate looked only at light 0 (most sparkles/lightning never sent); gradient rooms skipped capability-honest sends;
+  preview/live clocks rewound the shared engine (lightning stopped in Room mode); a second saved look for the playing
+  room did nothing; light selection leaked across behaviors; evolving speed ran away over time (Lava Lamp ~14× after
+  10 min); Energy/Drift/onset-trigger/beat-re-anchor/event re-arm dead; flash floors bypassable by speed/beat-lock/
+  heartbeat; chase+bounce tail, replace-over-black colour, palette seam; save-as-new reshuffled the look; preview
+  and live mirrored front-to-back and read height as depth; Dim Flashing Lights never applied; store data-loss edges;
+  legacy import mapping; unsaved work discarded silently; mic capture failures silent.
+- **Studio / legacy Composer (20):** transport switch discarded live edits; hostile share links could crash the app
+  or exceed the flash limit (now clamped); Room-mode direction wrote positions in the wrong order; palette-mode change
+  wiped gradients; Save to Bridge lied about the local copy; delete stopped only the selected room; tray Stop hit
+  whichever room was selected by then; card canvases ignored Reduce Motion; Kelvin entry; + 11 more.
+- **Home, guest access, scenes (23 + 2):** Room Detail lost live updates a second after opening; lights couldn't
+  open from Home (typed NavigationPath); guests could delete/rename the owner's rooms, scenes and entertainment areas
+  and toggle their automations; scene edits could overwrite a scene with the previous look; the scene builder
+  re-brightened bulbs; failures never rolled back; bulk writes flooded the bridge; scene names truncated to one letter
+  in the Scenes grid; one-word room names broke mid-word; + more.
+- **Network / bridge (11):** bridge-stored animation steps all fired at once (`ddx` spacing); dead Entertainment
+  sessions undetected; deleted rooms reappeared / renames reverted via SSE; new bridges got no SSE; failed uploads left
+  rules/sensors behind; SSE ignored HTTP status and had no idle watchdog; signaling colour JSON shape; leaked
+  connections/sessions.
+- **Shell, Siri, watch, widgets, automations, demo (19):** entering Demo Mode from a paired session could turn off
+  the real house; demo scenes leaked to widgets/watch/Siri; scheduled "Wind Down"/"Sunset" automations set 70 % white;
+  watch opening a room re-lit it; Siri "Dim" never asked; guest limits unenforced in widgets/CC/Siri/watch; + more.
+- **Audio / flash safety (12):** mic BPM ~17 % fast on devices; engine not rebuilt after AirPods connect; BPM changes
+  jumped phase; **the red-flash rule missed red pulses at fixed colour — now measured in WCAG's R′ = max(0, R−G−B)**;
+  mic demand leaked on failed starts; HFP instead of A2DP; beat grid late; Perform strobe ignored Dim Flashing Lights.
+
+### Validation
+- `./Scripts/hardening_guards.sh`: all guards passed.
+- Full registered suite (2 workers, on `5755f26` + the gallery test): **2384 passed / 2 failed / 0 skipped**.
+  Both failures were analysed: (1) `GuestInviteAcceptorTests.testGrantWriteFailure…` crashed inside a SwiftData
+  `@Query` observer — caused by the NEW gallery test (per-render containers outlived by SwiftUI's observer); fixed in
+  the gallery (one shared container + full teardown) and re-verified: gallery + invite + pairing + guest suites 35/35
+  in one process, which reproduced the crash before the fix. (2) `WidgetTimelineRobustnessTests.testBoundedFetch…`
+  is a wall-clock budget test that took 7.8 s for a 0.5 s budget while three other builds ran; it passes alone
+  (0.52 s). **A clean full-suite rerun on the final tip is still owed.**
+- Device build (`generic/platform=iOS`, build 55): BUILD SUCCEEDED.
+- Per-lane targeted runs (all green): Studio 573 + 62; home/guest 70 + 54; network 538; shell 480; audio 282/113;
+  Composer 2 suites 192.
+- `AppGallerySnapshotTests` (new) renders Home, Scenes, Studio, More, a room and the Composer in Demo Mode; used to
+  find and verify the two layout bugs.
+
+### Hardware — NOT verified (needs Brian's phone)
+Everything that talks to a bridge or a radio: animation step pacing, signaling colours, DTLS post-handshake failure
+detection, SSE watchdog/401 handling, Room-mode sparkles/lightning after the delta-gate fix, Composer 2 ownership
+against a real Studio replacement and a real failover, automation effect mapping (Sunset fade-to-off), watch re-sync
+and brightness-on-open, Siri prompts, AirPods/Bluetooth audio, red-flash gating on real lights, VoiceOver.
+
+### Gotchas
+- Agents' worktrees were created from old commits (`c2368c8`); integrate agent work by cherry-picking exactly its
+  commits (`git cherry-pick <base>..<branch>`), never by merging the branch.
+- `Scratchpad xcb.sh`-style slot locking was needed: six concurrent `xcodebuild test` runs hung CoreSimulator
+  machine-wide. Keep ≤ 1 simulator test run and ≤ 2 builds at a time.
+- `drawHierarchy` snapshots taller than ~2700 pt at 3× exceed the 8192 px texture limit and render blank.
 
 ---
 
