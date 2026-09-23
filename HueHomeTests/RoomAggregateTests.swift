@@ -10,6 +10,70 @@
 import XCTest
 @testable import HueHome
 
+// MARK: - Offline RoomDetailViewModel client
+
+/// Offline HueAPIClient for RoomDetailViewModel's write paths: records each
+/// call by name and throws (HTTP 503) for any name in `failing`. Internal so
+/// other RoomDetail-facing suites (ColorClipboardTests, …) share it.
+final class RoomDetailSpyAPIClient: HueAPIClient, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _calls: [String] = []
+    private var _failing: Set<String> = []
+
+    var calls: [String] { lock.lock(); defer { lock.unlock() }; return _calls }
+    var failing: Set<String> {
+        get { lock.lock(); defer { lock.unlock() }; return _failing }
+        set { lock.lock(); _failing = newValue; lock.unlock() }
+    }
+
+    override init() { super.init(ip: "192.0.2.50", token: "spy-token") }
+
+    private func record(_ name: String) throws {
+        lock.lock()
+        _calls.append(name)
+        let fail = _failing.contains(name)
+        lock.unlock()
+        if fail { throw HueAPIError.httpError(503) }
+    }
+
+    override func setLight(id: String, on: Bool) async throws { try record("setLight") }
+    override func setLightState(id: String, on: Bool, brightness: Double) async throws {
+        try record("setLightState")
+    }
+    override func setLightColor(id: String, x: Double, y: Double) async throws {
+        try record("setLightColor")
+    }
+    override func setLightColorTemp(id: String, mirek: Int) async throws {
+        try record("setLightColorTemp")
+    }
+    override func setGroupedLight(id: String, on: Bool) async throws {
+        try record("setGroupedLight")
+    }
+    override func setGroupedLightState(id: String, on: Bool, brightness: Double) async throws {
+        try record("setGroupedLightState")
+    }
+    override func setGroupedLightEffect(
+        id: String, on: Bool?, brightness: Double?,
+        xy: (Double, Double)?, mirek: Int?, duration: Int
+    ) async throws {
+        try record("setGroupedLightEffect")
+    }
+    override func deleteScene(id: String) async throws { try record("deleteScene") }
+    override func renameScene(id: String, name: String) async throws {
+        try record("renameScene")
+    }
+}
+
+/// Polls (yielding the main actor) until `condition` holds or `timeout`
+/// passes — RoomDetailViewModel's writes run in unstructured Tasks.
+@MainActor
+func awaitRoomDetail(timeout: TimeInterval = 2, _ condition: () -> Bool) async {
+    let deadline = Date().addingTimeInterval(timeout)
+    while !condition() && Date() < deadline {
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+}
+
 @MainActor
 final class RoomAggregateTests: XCTestCase {
 

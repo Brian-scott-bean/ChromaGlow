@@ -83,6 +83,10 @@ final class RoomDetailViewModel {
     /// Called after a color/CT commit succeeds — injected by RoomDetailView
     /// to trigger orchestrator.refreshDominantColors(for: bridgeID).
     var onColorCommitted: (() -> Void)? = nil
+    /// Called after a scene rename/delete the bridge confirmed — injected by
+    /// RoomDetailView to reload the orchestrator's global scene list, which
+    /// feeds the Scenes tab, Dashboard favorites, widgets, watch, and Siri.
+    var onScenesChanged: (() -> Void)? = nil
     /// Debounce task — cancelled and replaced on every rapid color change.
     private var colorRefreshTask: Task<Void, Never>? = nil
 
@@ -438,16 +442,21 @@ final class RoomDetailViewModel {
 
         Task {
             var anyFailed = false
+            var anyDeleted = false
             for scene in toDelete {
                 do {
                     try await api?.deleteScene(id: scene.id)
                     appendLog("✅ Deleted '\(scene.name)'")
                     scrubSceneIdentityState(for: scene.id)
+                    anyDeleted = true
                 } catch {
                     appendLog("❌ Delete '\(scene.name)' failed: \(error.localizedDescription)")
                     anyFailed = true
                 }
             }
+            // Even a partial batch changed the bridge — the rest of the app
+            // (Scenes tab, favorites, widgets) must stop listing the dead ones.
+            if anyDeleted { onScenesChanged?() }
             if anyFailed {
                 // Rollback: restore original list and re-fetch to get correct state
                 scenes = backup
@@ -857,6 +866,7 @@ final class RoomDetailViewModel {
             do {
                 try await api?.renameScene(id: item.id, name: trimmed)
                 appendLog("✅ Scene renamed to '\(trimmed)'.")
+                onScenesChanged?()
             } catch {
                 appendLog("❌ Rename failed: \(error.localizedDescription)")
                 // Revert
@@ -884,6 +894,7 @@ final class RoomDetailViewModel {
                 try await api?.deleteScene(id: item.id)
                 appendLog("✅ Scene '\(item.name)' deleted.")
                 scrubSceneIdentityState(for: item.id)
+                onScenesChanged?()
             } catch {
                 appendLog("❌ Delete failed: \(error.localizedDescription)")
                 await loadScenes()   // restore strip on failure
@@ -896,7 +907,15 @@ final class RoomDetailViewModel {
     /// provenance badge key behind forever (identity-keyed stores never
     /// self-clean — the build-25 transfer contract).
     private func scrubSceneIdentityState(for sceneID: String) {
-        SceneProvenanceStore.shared.remove(key: sceneID)
+        // Provenance keys are COMPOSITE ("bridgeID:sceneID", the
+        // GlobalSceneItem.id form) — the raw id never matched, so a
+        // RoomDetail delete left the STUDIO badge key behind forever.
+        // (Favorites and usage key on the RAW id — see their contracts.)
+        if let bridgeID = room.bridgeID {
+            SceneProvenanceStore.shared.remove(
+                key: SceneProvenanceStore.key(bridgeID: bridgeID, sceneID: sceneID)
+            )
+        }
         let raw = UserDefaults.standard.string(forKey: "favoriteSceneIDs") ?? ""
         UserDefaults.standard.set(FavoriteSceneCSV.removing(raw, id: sceneID),
                                   forKey: "favoriteSceneIDs")

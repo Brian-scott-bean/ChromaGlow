@@ -124,4 +124,53 @@ final class SceneProvenanceStoreTests: XCTestCase {
         // Never two pills for the same scene.
         XCTAssertEqual(FavoriteSceneCSV.replacing("a,b,c", old: "b", new: "c"), "a,c")
     }
+
+    // ── Room Detail scene changes (hygiene + propagation) ─────
+
+    private func roomDetailVM(api: HueAPIClient) -> RoomDetailViewModel {
+        let room = RoomDisplayItem(
+            kind: .room, id: "room-p", name: "Room", archetype: nil,
+            isOn: true, brightness: 50, groupedLightID: "gl-p",
+            lightCount: 0, bridgeID: "bridge-p", childResourceRefs: []
+        )
+        let vm = RoomDetailViewModel(room: room, api: api)
+        vm.scenes = [SceneDisplayItem(id: "s-p1", name: "Sunset", isActive: false)]
+        return vm
+    }
+
+    /// Provenance keys are "bridgeID:sceneID" — the Room Detail delete used
+    /// the raw id and never removed the STUDIO badge key. The delete must
+    /// also tell the app (global scenes → Scenes tab, favorites, widgets).
+    func testRoomDetailDeleteScrubsCompositeProvenanceKeyAndAnnouncesChange() async {
+        let shared = SceneProvenanceStore.shared
+        shared.markStudioExported(bridgeID: "bridge-p", sceneID: "s-p1")
+        defer { shared.remove(key: "bridge-p:s-p1") }
+        let vm = roomDetailVM(api: RoomDetailSpyAPIClient())
+        var announced = 0
+        vm.onScenesChanged = { announced += 1 }
+
+        vm.deleteScene(vm.scenes[0])
+        await awaitRoomDetail { announced > 0 }
+
+        XCTAssertEqual(announced, 1)
+        XCTAssertFalse(shared.isStudioScene(key: "bridge-p:s-p1"),
+                       "the composite provenance key must be scrubbed")
+    }
+
+    func testRoomDetailRenameAnnouncesOnlyWhenTheBridgeConfirms() async {
+        let spy = RoomDetailSpyAPIClient()
+        let vm = roomDetailVM(api: spy)
+        var announced = 0
+        vm.onScenesChanged = { announced += 1 }
+
+        vm.renameScene(vm.scenes[0], to: "Dusk")
+        await awaitRoomDetail { announced > 0 }
+        XCTAssertEqual(announced, 1)
+
+        spy.failing = ["renameScene"]
+        vm.renameScene(vm.scenes[0], to: "Dawn")
+        await awaitRoomDetail { vm.toastMessage != nil }
+        XCTAssertEqual(announced, 1, "a refused rename changed nothing app-wide")
+        XCTAssertEqual(vm.scenes[0].name, "Dusk", "the refused rename rolled back")
+    }
 }

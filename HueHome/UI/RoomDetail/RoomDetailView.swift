@@ -241,6 +241,12 @@ struct RoomDetailView: View {
                 guard let orchestrator, !bridgeID.isEmpty else { return }
                 orchestrator.refreshDominantColors(for: bridgeID)
             }
+            // Scene renames/deletes made here must reach the global list
+            // (Scenes tab, Dashboard favorites, widgets/watch/Siri publish).
+            vm.onScenesChanged = { [weak orchestrator] in
+                guard let orchestrator else { return }
+                Task { await orchestrator.loadAllScenes() }
+            }
             // Seed came from the same fetchLights that loadAll ran moments ago — a
             // re-fetch now would return identical data and queue behind the
             // post-pairing storm on rate-limited bridges. SSE (subscribed below)
