@@ -259,7 +259,9 @@ struct ProfilesAccessView: View {
     /// removal still exist, with honest copy either way.
     @ViewBuilder
     private var keysOnBridgeSection: some View {
-        let activeBridges = bridges.filter(\.isActive)
+        // "Your" bridges only — a guest-held bridge's keys belong to its
+        // owner (BridgeKeysView also refuses removal there).
+        let activeBridges = bridges.filter { $0.isActive && !orchestrator.isGuestGrantedBridge($0.id) }
         if !activeBridges.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 Text("KEYS ON YOUR BRIDGES")

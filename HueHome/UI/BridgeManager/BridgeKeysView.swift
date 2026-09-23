@@ -19,9 +19,22 @@ struct BridgeKeysView: View {
 
     let bridge: BridgeRecord
 
+    @Environment(UnifiedOrchestrator.self) private var orchestrator
+
     @State private var loadState: LoadState = .loading
     @State private var removingElement: String?
     @State private var outcomeMessage: String?
+    /// Key awaiting the "Remove this key?" confirmation.
+    @State private var pendingRemoval: HueV1Client.WhitelistEntry?
+
+    /// A guest-held (granted) bridge belongs to someone else: its key list
+    /// is shown for honesty, but removal is never offered from this phone.
+    private var isGuestBridge: Bool { orchestrator.isGuestGrantedBridge(bridge.id) }
+
+    /// This phone's own key on the bridge (read once in `load()`). Removing
+    /// it would sign this app out of the bridge with no warning — never
+    /// offered. Compared only; never logged or rendered (H-03).
+    @State private var ownKey: String?
 
     private enum LoadState {
         case loading
@@ -83,6 +96,18 @@ struct BridgeKeysView: View {
         } message: {
             Text(outcomeMessage ?? "")
         }
+        .alert("Remove this key?", isPresented: Binding(
+            get: { pendingRemoval != nil },
+            set: { if !$0 { pendingRemoval = nil } }
+        ), presenting: pendingRemoval) { entry in
+            Button("Remove", role: .destructive) {
+                pendingRemoval = nil
+                Task { await tryRemove(entry) }
+            }
+            Button("Cancel", role: .cancel) { pendingRemoval = nil }
+        } message: { entry in
+            Text("\"\(entry.name)\" will be signed out of \(bridge.name). Whatever app or phone holds this key loses access until it pairs again.")
+        }
     }
 
     // ──────────────────────────────────────────────
@@ -113,27 +138,37 @@ struct BridgeKeysView: View {
                     Spacer()
                 }
 
-                Button {
-                    Task { await tryRemove(entry) }
-                } label: {
-                    if removingElement == entry.element {
-                        ProgressView()
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 10)
-                    } else {
-                        Label("Try Remove", systemImage: "trash")
-                            .font(HueFont.stageChip)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 10)
-                            .background(
-                                RoundedRectangle(cornerRadius: HueRadius.lg)
-                                    .fill(Color.red.opacity(0.12))
-                            )
+                if entry.element == ownKey {
+                    Text("This phone's key — remove the bridge in Bridge Manager instead.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.white.opacity(0.4))
+                } else if isGuestBridge {
+                    Text("Shared with you — only the bridge's owner can remove keys.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.white.opacity(0.4))
+                } else {
+                    Button {
+                        pendingRemoval = entry   // confirm first — this is destructive
+                    } label: {
+                        if removingElement == entry.element {
+                            ProgressView()
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 10)
+                        } else {
+                            Label("Try Remove", systemImage: "trash")
+                                .font(HueFont.stageChip)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 10)
+                                .background(
+                                    RoundedRectangle(cornerRadius: HueRadius.lg)
+                                        .fill(Color.red.opacity(0.12))
+                                )
+                        }
                     }
+                    .buttonStyle(.plain)
+                    .tint(.red)
+                    .disabled(removingElement != nil)
                 }
-                .buttonStyle(.plain)
-                .tint(.red)
-                .disabled(removingElement != nil)
             }
         }
     }
@@ -154,6 +189,7 @@ struct BridgeKeysView: View {
             loadState = .failed("No credentials for this bridge on this phone.")
             return
         }
+        ownKey = (try? KeychainManager.shared.loadCredentials(for: bridge.id))?.token
         do {
             if let entries = try await client.fetchWhitelist() {
                 loadState = .loaded(entries)
@@ -166,7 +202,9 @@ struct BridgeKeysView: View {
     }
 
     private func tryRemove(_ entry: HueV1Client.WhitelistEntry) async {
-        guard let client = makeClient() else { return }
+        // Backstops for the row gating above.
+        guard !isGuestBridge, entry.element != ownKey,
+              let client = makeClient() else { return }
         removingElement = entry.element
         defer { removingElement = nil }
         do {
