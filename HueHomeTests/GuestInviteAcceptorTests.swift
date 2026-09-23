@@ -264,4 +264,30 @@ final class GuestInviteAcceptorTests: XCTestCase {
         XCTAssertEqual(creds.token, "owners-own-full-token",
                        "a guest token must never replace an owned credential")
     }
+
+    /// A LEGACY owned record never recorded its bridgeid. The registrar's
+    /// host fallback would reuse it, so the no-downgrade guard must find it
+    /// the same way — matching by bid alone let the guest token replace the
+    /// owner's full credential.
+    func testLegacyOwnedRecordWithoutIdentityIsNeverDowngraded() async throws {
+        let ownID = UUID().uuidString
+        try KeychainManager.shared.saveCredentials(
+            ip: "192.0.2.44", token: "legacy-owner-token",
+            clientKey: "AABBCCDD", for: ownID
+        )
+        defer { KeychainManager.shared.deleteCredentials(for: ownID) }
+        context.insert(BridgeRecord(id: ownID, name: "Mine", host: "192.0.2.44",
+                                    bridgeIdentifier: nil))
+        try context.save()
+
+        let (acceptor, identityCalls) = makeAcceptor()
+        let outcome = await acceptor.accept(grant: grant(), profileName: "Alex",
+                                            modelContext: context)
+
+        XCTAssertEqual(outcome, .alreadyConnected)
+        XCTAssertEqual(identityCalls(), 0, "the guard must refuse before any network")
+        XCTAssertEqual(try KeychainManager.shared.loadCredentials(for: ownID).token,
+                       "legacy-owner-token")
+        XCTAssertEqual(recordCount(), 1)
+    }
 }

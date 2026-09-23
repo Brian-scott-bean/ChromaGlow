@@ -105,7 +105,8 @@ final class GuestInviteAcceptor {
         //     guest-owned: fall through so a regenerated/newer invite can
         //     update the token and grant in place (the documented update
         //     path — no owner→guest channel exists).
-        if let existing = Self.existingRecord(bid: bid, modelContext: modelContext),
+        if let existing = Self.existingRecord(bid: bid, host: grant.host,
+                                              modelContext: modelContext),
            (try? KeychainManager.shared.loadCredentials(for: existing.id)) != nil {
             let hasGrant = (try? GuestAccessGrantStore.grant(
                 for: existing.id, modelContext: modelContext)) != nil
@@ -243,10 +244,19 @@ final class GuestInviteAcceptor {
     // MARK: - Helpers
     // ──────────────────────────────────────────────
 
-    private static func existingRecord(bid: String, modelContext: ModelContext) -> BridgeRecord? {
+    /// The record the registrar will reuse for this grant — so the guard
+    /// above judges exactly the record whose credentials step 7 overwrites.
+    /// Canonical bridgeid first, then the registrar's host fallback for a
+    /// LEGACY record that never recorded an identity (bridgeIdentifier ==
+    /// nil). Matching by bid alone let such an owned record slip past the
+    /// no-downgrade guard, and the registrar then moved the guest token onto
+    /// it — replacing the owner's full credential.
+    private static func existingRecord(bid: String, host: String,
+                                       modelContext: ModelContext) -> BridgeRecord? {
         // Fetch-all + filter (the BridgePairingRegistrar idiom) — a handful
         // of records, and #Predicate trips the KeyPath-Sendable warning.
-        ((try? modelContext.fetch(FetchDescriptor<BridgeRecord>())) ?? [])
-            .first { $0.bridgeIdentifier == bid }
+        let all = (try? modelContext.fetch(FetchDescriptor<BridgeRecord>())) ?? []
+        return all.first { $0.bridgeIdentifier == bid }
+            ?? all.first { $0.host == host && $0.bridgeIdentifier == nil }
     }
 }
