@@ -79,8 +79,11 @@ final class GuestInviteAcceptor {
     var now: () -> Date = { Date() }
 
     /// Phase 3 hook: persists the GuestAccessGrant. The view wires this to
-    /// GuestAccessGrantStore.upsert + orchestrator.updateGuestGrants.
-    var onGrantEstablished: ((GuestGrantSeed) -> Void)?
+    /// GuestAccessGrantStore.upsert + orchestrator.updateGuestGrants. It
+    /// THROWS when the grant can't be saved: the join then fails closed
+    /// (see `accept` step 7) — a guest key without its grant would be
+    /// completely unrestricted on this phone.
+    var onGrantEstablished: ((GuestGrantSeed) throws -> Void)?
 
     // ──────────────────────────────────────────────
     // MARK: - Accept (one bridge grant)
@@ -163,13 +166,27 @@ final class GuestInviteAcceptor {
                 sortOrder: 999,
                 modelContext: modelContext
             )
-            onGrantEstablished?(GuestGrantSeed(
-                bridgeRecordID: registration.record.id,
-                allowedGroupIDs: grant.allowedGroups,
-                features: grant.features,
-                grantedProfileName: profileName,
-                receivedAt: now()
-            ))
+            do {
+                try onGrantEstablished?(GuestGrantSeed(
+                    bridgeRecordID: registration.record.id,
+                    allowedGroupIDs: grant.allowedGroups,
+                    features: grant.features,
+                    grantedProfileName: profileName,
+                    receivedAt: now()
+                ))
+            } catch {
+                // Fail CLOSED. The key is in the Keychain and the record is
+                // registered, but no grant restricts it — left alone, the
+                // next configure()/loadAll would give this phone the owner's
+                // whole bridge. Remove the credential (and a record this join
+                // created); a reused guest record keeps its previous grant.
+                KeychainManager.shared.deleteCredentials(for: registration.record.id)
+                if !registration.reusedExistingRecord {
+                    modelContext.delete(registration.record)
+                    try? modelContext.save()
+                }
+                return .persistFailed("the access limits couldn't be saved (\(error.localizedDescription))")
+            }
             return .joined(bridgeRecordID: registration.record.id)
         } catch {
             KeychainManager.shared.deleteCredentials(for: recordID)
