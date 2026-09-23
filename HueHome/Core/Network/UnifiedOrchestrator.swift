@@ -1455,6 +1455,12 @@ final class UnifiedOrchestrator {
         )
         wireAuthorizationSignal(client)
         clients[record.id] = client
+        // A re-pair can reuse this record id. The running stream captured the
+        // OLD client — its IP and token — and `startSSE` skips any bridge that
+        // already has a task, so it streamed on stale credentials forever.
+        // Retire it; the start below dials with the new client.
+        sseTasks[record.id]?.cancel()
+        sseTasks.removeValue(forKey: record.id)
         // Legitimate re-registration lifts this bridge's All-Day tombstone —
         // see the matching clear in `configure(bridges:modelContext:)`.
         clearAllDayBridgeTombstone(record.id)
@@ -1462,6 +1468,15 @@ final class UnifiedOrchestrator {
         publishWidgetBridgeCredentials()
         // A just-granted bridge coming online can flip the guest-only shell.
         recomputeGuestAccessInfo()
+        // Every caller follows with `loadAll()`, which never starts SSE (only
+        // launch, demo exit and foreground did) — a bridge added mid-session
+        // had no live updates until the app was next backgrounded. `startSSE`
+        // is a no-op in demo mode and only dials bridges without a stream.
+        startSSE()
+        // `loadAll` fetches scenes once per cold session, so a bridge added
+        // later had none until the Scenes tab was refreshed by hand. (The
+        // guest grant, if any, is already in place — see GuestInviteAcceptor.)
+        Task { [weak self] in await self?.loadAllScenes() }
         log.info("Added bridge \(record.id) (\(record.name)) to orchestrator")
     }
 
@@ -1564,6 +1579,10 @@ final class UnifiedOrchestrator {
         // row is pruned on the next updateGuestGrants/configure pass.
         guestGrantsByBridge.removeValue(forKey: id)
         recomputeGuestAccessInfo()
+        // Its scenes go with it — before the rebuilds, whose widget write
+        // would otherwise republish scenes for a bridge that no longer exists.
+        let keptScenes = globalScenes.filter { $0.bridgeID != id }
+        if keptScenes.count != globalScenes.count { globalScenes = keptScenes }
         rebuildAllRooms()
         rebuildAllZones()
         log.info("Removed bridge \(id)")
@@ -3235,6 +3254,9 @@ final class UnifiedOrchestrator {
     /// pending, and whether the scene publisher treats the live list as truth.
     var testHasPendingWidgetWrite: Bool { widgetWriteTask != nil }
     var testHasLoadedScenesOnce: Bool { hasLoadedScenesOnce }
+
+    /// The running event-stream task for a bridge, if any.
+    func testSSETask(bridgeID: String) -> Task<Void, Never>? { sseTasks[bridgeID] }
     #endif
 
     /// Coalesce SSE-driven rebuilds behind one trailing ~150 ms task. A resetting
