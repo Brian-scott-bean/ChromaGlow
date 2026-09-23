@@ -1871,6 +1871,14 @@ final class StudioProductionWiringTests: XCTestCase {
             accentColorHex: "#FFB340", preferredTransport: nil, category: .myCreations))
     }
 
+    /// Audit #19 — the Beat panel's icon-only BPM −/+ buttons had no
+    /// accessibility labels, so VoiceOver read them as bare symbols.
+    func testBeatPanelTempoButtonsAreLabelled() throws {
+        let panel = try productionCode("HueHome/UI/Components/BeatPanelView.swift")
+        XCTAssertTrue(panel.contains(".accessibilityLabel(\"Decrease tempo\")"))
+        XCTAssertTrue(panel.contains(".accessibilityLabel(\"Increase tempo\")"))
+    }
+
     /// Audit #14 — the living-card canvases (Strobe, Thunderstorm flash
     /// overlays) kept animating under Reduce Motion.
     func testCardCanvasesHoldStillUnderReduceMotion() throws {

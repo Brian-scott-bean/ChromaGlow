@@ -270,11 +270,17 @@ struct BeatPanelView: View {
             .buttonStyle(.bordered)
             .tint(.white.opacity(0.5))
             .disabled(clock.bpm <= 0)
+            // An icon-only button reads as "minus" / "Add" to VoiceOver —
+            // name what it changes.
+            .accessibilityLabel("Decrease tempo")
+            .accessibilityHint("Lowers the beat clock by 1 BPM")
 
             Text(clock.bpm > 0 ? "\(Int(clock.bpm.rounded()))" : "—")
                 .font(.system(size: 15, weight: .bold, design: .monospaced))
                 .foregroundStyle(HuePalette.amber)
                 .frame(minWidth: 44)
+                .accessibilityLabel(clock.bpm > 0
+                                    ? "Tempo \(Int(clock.bpm.rounded())) BPM" : "No tempo")
 
             Button {
                 clock.setBPM(min(300, clock.bpm > 0 ? clock.bpm.rounded() + 1 : 120))
@@ -282,6 +288,8 @@ struct BeatPanelView: View {
             } label: { Image(systemName: "plus") }
             .buttonStyle(.bordered)
             .tint(.white.opacity(0.5))
+            .accessibilityLabel("Increase tempo")
+            .accessibilityHint("Raises the beat clock by 1 BPM")
 
             Spacer()
 
