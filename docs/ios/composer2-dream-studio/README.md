@@ -144,6 +144,42 @@ What changed, by the brief's numbering:
   quiet" (legacy imports keep the legacy behaviour), accessibility-size renders and VoiceOver labels/hints on the new
   controls.
 
+## v2.2 — real lightning, 49 looks, and the luminous Composer (2026-09-22, build 56)
+
+Branches: fixes on `experiment/composer-2-v2.2-bugfixes` (build 55, ~120 defects across the app — see the DEVLOG
+entry); this build-out on `experiment/composer-2-v2.2-ui-ux` (build 56), on top of it.
+
+**New primitives (pure, seeded, draw-for-draw compatible with v2.0 flashes):**
+- Event **shapes**: `flash` (as before), `lightning`, `firework`, `twinkle`, `glow` (`Composer2EventSpec.shape`).
+  `Composer2Lightning` models a real strike — stepped leader, 1–4 return strokes spaced ≥ a flash budget, restrokes
+  rising from the channel's glow, the sky lit around the bolt, a snap then a long afterglow. `distance` makes strikes
+  dimmer/softer/wider/warmer and lets them roll (`propagation`); `activityPeriod`/`activityDepth` make a storm roll
+  in and pass. Fireworks pick a colour from `colors`, burn white-hot and bloom outward.
+- Motion `march` (string-light chase by light ORDER; one flash budget per step), rhythms `twinkle` and `candle`,
+  colour distribution `brightness` (colour follows brightness), master `eventRate` / `eventStrength`.
+- `Composer2FlashShaper` in the live output: runs the wire's own gate on every frame and, instead of letting a rise
+  be held (a stutter), emits the largest step the gate accepts. The wire gate stays the authority.
+
+**Library:** `Composer2ThemeCatalog` files 49 built-ins (ids 1…49, `0000000C-0002-0002-0002-…`) in eight
+categories — Halloween, Christmas & Winter, Holidays, Weather, Nature, Fire & Candle, Party, Calm — defined in
+`Composer2Presets+Seasons.swift` / `+World.swift`. `Composer2BehaviorLibrary` offers 24 ready-made behaviors to stack
+(lightning, fireworks, fireflies, string chase, candle, rain, beat pulse…). `Composer2LabThemeTests` pins gamut C,
+legal/deterministic frames at 1/5/20 lights, and plays every look through the real wire gate (the gate holds
+nothing; the shaper's share is bounded).
+
+**The screen:** Looks · Tune · Layers replace Quick/Customize/Advanced/Expert (those five files are deleted).
+- *Looks* — live library: every card plays its look on a mini stage; For you / categories / Yours; rename,
+  duplicate, delete saved looks in place.
+- *Tune* — Brightness, Speed, Energy; Frequency and Strength for moments; for storms Distance, Random vs Regular
+  (periodic) strikes with an interval, and "The storm passes"; colours; "Another take" (reseed).
+- *Layers* — the stack top-first with live per-layer strips, blend modes, the behavior picker, and a tabbed editor
+  (Colour · Motion · Rhythm · Space · Moments · Sound · Variation · Layer).
+- A luminous hero (orbs that pool light on the floor, additive), an ambient background tinted by the look, a dock
+  with one big Go Live, undo/redo, an EDITED marker, and a Studio entry card that plays the current look.
+
+**Hardware NOT verified** — as for v2.1, plus: how lightning/fireworks/marches read on real bulbs (Room mode sends
+at ~8 Hz and will soften fast strokes; streaming shows them in full), and the flash shaper against a real gate.
+
 ## Verified vs not
 
 **Compile / unit verified:** everything above builds; the thirteen Composer2Lab suites and the full registered suite
