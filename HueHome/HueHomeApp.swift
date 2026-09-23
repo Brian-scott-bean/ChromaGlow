@@ -456,7 +456,8 @@ extension Notification.Name {
     static let studioStopAll      = Notification.Name("studioStopAll")
     // NOTE (Phase 2): composerMicExclusiveBegan removed — capture is unified
     // in AudioAnalysisEngine, so there is no session handoff to coordinate.
-    /// Mic capture unavailable (denied / hardware error) — posted by AudioAnalysisEngine.
+    /// Mic permission denied — posted by AudioAnalysisEngine. A capture that
+    /// fails for any other reason posts `.compositionMicCaptureFailed` instead.
     static let compositionMicPermissionDenied = Notification.Name("compositionMicPermissionDenied")
 }
 

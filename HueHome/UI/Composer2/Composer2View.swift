@@ -152,6 +152,11 @@ struct Composer2View: View {
         .onReceive(NotificationCenter.default.publisher(for: .compositionMicPermissionDenied)) { _ in
             withAnimation(reduceMotion ? nil : HueAnimation.fast) { localNotice = Composer2Copy.micDenied }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .compositionMicCaptureFailed)) { _ in
+            // Permission is fine but the microphone would not start (another
+            // app holding it, a route change mid-start) — say so, not "denied".
+            withAnimation(reduceMotion ? nil : HueAnimation.fast) { localNotice = Composer2Copy.micCaptureFailed }
+        }
         .onDisappear { leave() }
         .environment(orchestrator)
         .preferredColorScheme(.dark)

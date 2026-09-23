@@ -152,6 +152,7 @@ enum Composer2Copy {
     static let liveEndedLost = "Stopped — the lights stopped answering. Try Live again."
     static let liveSeveralAreas = "Several Entertainment Areas cover this room. Choose one in Studio to stream; playing in Room mode."
     static let micDenied = "Microphone access is off, so audio reactions are paused."
+    static let micCaptureFailed = "The microphone couldn't start, so audio reactions are paused. Try again in a moment."
     static let micListening = "Listening…"
     static let micWaiting = "waiting for sound"
 
