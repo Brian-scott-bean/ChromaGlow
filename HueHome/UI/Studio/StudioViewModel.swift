@@ -2724,7 +2724,22 @@ final class StudioViewModel {
                   let gamut = HueColorUtils.Gamut(rawValue: raw) else { continue }
             counts[gamut, default: 0] += 1
         }
-        return counts.max(by: { $0.value < $1.value })?.key ?? .c
+        return Self.dominantGamut(counts: counts)
+    }
+
+    /// The most common gamut, deterministically: ties — and a room with no
+    /// colour lights at all — go to C, the widest authoring gamut and the
+    /// app-wide default, then B before A. `Dictionary.max` chose among equal
+    /// counts in hash order, which varies per launch, so an all-white room
+    /// could clamp its composition to gamut A on one run and C on the next.
+    static func dominantGamut(counts: [HueColorUtils.Gamut: Int]) -> HueColorUtils.Gamut {
+        var best: HueColorUtils.Gamut = .c
+        var bestCount = counts[.c] ?? 0
+        for gamut in [HueColorUtils.Gamut.b, .a] where (counts[gamut] ?? 0) > bestCount {
+            best = gamut
+            bestCount = counts[gamut] ?? 0
+        }
+        return best
     }
 
     func apply(_ card: StudioCard) async {

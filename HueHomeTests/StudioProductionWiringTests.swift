@@ -1814,6 +1814,18 @@ final class StudioProductionWiringTests: XCTestCase {
                       "the tray passes the exact key it captured")
     }
 
+    /// Audit #17 — the dominant gamut came from `Dictionary.max`, which picks
+    /// among equal counts in per-launch hash order: an all-white room (all
+    /// zero) could resolve to A on one launch and C on the next.
+    func testDominantGamutIsDeterministicAndDefaultsToC() {
+        XCTAssertEqual(StudioViewModel.dominantGamut(counts: [.a: 0, .b: 0, .c: 0]), .c)
+        XCTAssertEqual(StudioViewModel.dominantGamut(counts: [:]), .c)
+        XCTAssertEqual(StudioViewModel.dominantGamut(counts: [.a: 2, .b: 2, .c: 2]), .c)
+        XCTAssertEqual(StudioViewModel.dominantGamut(counts: [.a: 3, .b: 3, .c: 1]), .b)
+        XCTAssertEqual(StudioViewModel.dominantGamut(counts: [.a: 4, .b: 3, .c: 1]), .a)
+        XCTAssertEqual(StudioViewModel.dominantGamut(counts: [.a: 1, .b: 0, .c: 5]), .c)
+    }
+
     /// Audit #14 — the living-card canvases (Strobe, Thunderstorm flash
     /// overlays) kept animating under Reduce Motion.
     func testCardCanvasesHoldStillUnderReduceMotion() throws {
