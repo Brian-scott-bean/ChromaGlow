@@ -252,4 +252,50 @@ final class PairingPersistenceTests: XCTestCase {
         let all = try context.fetch(FetchDescriptor<BridgeRecord>())
         XCTAssertEqual(all.count, 2)
     }
+
+    // ──────────────────────────────────────────────
+    // MARK: - Family Sharing: owner pairing over a guest-held record
+    // ──────────────────────────────────────────────
+
+    /// A full link-button pairing of a bridge this phone held as a GUEST
+    /// reuses the record (same bridgeid) — its guest grant must go, or the
+    /// owner key stays filtered/refused by the stale allowlist.
+    func testOwnerPairingOverGuestHeldRecordDropsTheGuestGrant() throws {
+        let config = ModelConfiguration(isStoredInMemoryOnly: true)
+        let container = try ModelContainer(for: BridgeRecord.self, GuestAccessGrant.self,
+                                           configurations: config)
+        let context = ModelContext(container)
+        let canonical = "FEDCBA9876543210"
+
+        // The guest-held record, as GuestInviteAcceptor leaves it.
+        let guestID = UUID().uuidString
+        mintedIDs.append(guestID)
+        try KeychainManager.shared.saveCredentials(ip: Self.hostA, token: "guest-token",
+                                                   clientKey: nil, for: guestID)
+        context.insert(BridgeRecord(id: guestID, name: "Shared", host: Self.hostA,
+                                    bridgeIdentifier: canonical))
+        try context.save()
+        try GuestAccessGrantStore.upsert(bridgeRecordID: guestID, allowedGroupIDs: ["room-a"],
+                                         features: [GuestFeature.onOff],
+                                         grantedProfileName: "Alex", modelContext: context)
+
+        // A full link-button pairing of the same physical bridge.
+        let ownerMint = UUID().uuidString
+        mintedIDs.append(ownerMint)
+        try KeychainManager.shared.saveCredentials(ip: Self.hostA, token: Self.tokenA,
+                                                   clientKey: "AABBCCDD", for: ownerMint)
+        let registration = try BridgePairingRegistrar.register(
+            mintedID: ownerMint, host: Self.hostA, canonicalBridgeID: canonical,
+            preferredName: "Bridge", sortOrder: 999, modelContext: context
+        )
+        XCTAssertTrue(registration.reusedExistingRecord)
+
+        XCTAssertTrue(BridgeSetupContent.dropGuestGrantAfterOwnerPairing(registration,
+                                                                       modelContext: context))
+        XCTAssertNil(try GuestAccessGrantStore.grant(for: guestID, modelContext: context),
+                     "the owner credential must not stay guest-filtered")
+        XCTAssertFalse(BridgeSetupContent.dropGuestGrantAfterOwnerPairing(registration,
+                                                                        modelContext: context),
+                       "nothing left to drop — idempotent")
+    }
 }

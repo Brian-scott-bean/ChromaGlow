@@ -99,6 +99,8 @@ struct BridgeSetupContent: View {
     /// committed together, not deferred to a button tap the user may skip).
     @State private var pairedRecord: BridgeRecord?
     @Environment(\.modelContext) private var modelContext
+    /// Injected app-wide at the WindowGroup root (sheets inherit it).
+    @Environment(UnifiedOrchestrator.self) private var orchestrator
 
     // Pulse animation for bridge icon
     @State private var pulsing = false
@@ -819,9 +821,33 @@ struct BridgeSetupContent: View {
                 modelContext: modelContext
             )
             pairedRecord = registration.record
+            // The registrar moved a FULL owner key onto what may have been a
+            // guest-held record; its grant must go, or the stale allowlist
+            // keeps filtering rooms and refusing owner actions.
+            if Self.dropGuestGrantAfterOwnerPairing(registration, modelContext: modelContext) {
+                orchestrator.updateGuestGrants(from: modelContext)
+            }
         } catch {
             vm.phase = .error("Pairing succeeded but the bridge could not be saved — please try pairing again.\n(\(error.localizedDescription))")
         }
+    }
+
+    /// A link-button pairing is an OWNER credential. When the registrar
+    /// reused a record this phone held as a guest (same bridgeid), delete that
+    /// record's guest grant. Invite joins never come through here (they use
+    /// GuestInviteAcceptor), so this cannot strip a legitimate grant.
+    /// Returns true when a grant was removed.
+    @discardableResult
+    static func dropGuestGrantAfterOwnerPairing(
+        _ registration: BridgePairingRegistrar.Registration,
+        modelContext: ModelContext
+    ) -> Bool {
+        guard registration.reusedExistingRecord,
+              (try? GuestAccessGrantStore.grant(for: registration.record.id,
+                                                modelContext: modelContext)) != nil
+        else { return false }
+        return (try? GuestAccessGrantStore.deleteGrant(for: registration.record.id,
+                                                       modelContext: modelContext)) != nil
     }
 
     // MARK: - Share Invite drain
