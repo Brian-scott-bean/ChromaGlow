@@ -228,15 +228,19 @@ struct ScenesTabView: View {
         // Delete confirmation — uses presenting: so the scene name is always available
         .alert("Delete Scene", isPresented: $showDeleteAlert, presenting: sceneToDelete) { scene in
             Button("Delete \"\(scene.name)\"", role: .destructive) {
-                orchestrator.deleteGlobalScene(scene)
-                // Hygiene: a deleted scene leaves no provenance badge key,
-                // dangling favorite, or usage history behind.
-                provenance.remove(key: scene.id)
-                favoriteSceneIDsRaw = FavoriteSceneCSV.removing(favoriteSceneIDsRaw,
-                                                                id: scene.bridgeSceneID)
-                SceneUsageStore.shared.remove(bridgeSceneID: scene.bridgeSceneID)
                 sceneToDelete  = nil
                 showDeleteAlert = false
+                Task {
+                    // Hygiene: a deleted scene leaves no provenance badge key,
+                    // dangling favorite, or usage history behind — but only
+                    // once the bridge confirmed. A failed delete restores the
+                    // scene, which must come back with its ★ and history.
+                    guard await orchestrator.deleteGlobalScene(scene) else { return }
+                    provenance.remove(key: scene.id)
+                    favoriteSceneIDsRaw = FavoriteSceneCSV.removing(favoriteSceneIDsRaw,
+                                                                    id: scene.bridgeSceneID)
+                    SceneUsageStore.shared.remove(bridgeSceneID: scene.bridgeSceneID)
+                }
             }
             Button("Cancel", role: .cancel) {
                 sceneToDelete  = nil

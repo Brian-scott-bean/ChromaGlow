@@ -120,15 +120,9 @@ struct DashboardView: View {
             DashboardAmbientBackground(hour: currentHour)
                 .ignoresSafeArea()
         }
-        .overlay(alignment: .top) {
-            if let msg = orchestrator.toastMessage {
-                HueToastView(message: msg)
-                    .padding(.top, 8)
-                    .transition(.move(edge: .top).combined(with: .opacity))
-                    .allowsHitTesting(false)
-                    .zIndex(10)
-            }
-        }
+        // orchestrator.toastMessage renders app-wide from MainTabView (it
+        // used to live only here, so Scenes-tab/Room Detail refusals and
+        // failures were invisible) — never render it twice.
         .overlay(alignment: .bottom) {
             if let msg = presetToast {
                 Text(msg)
@@ -143,7 +137,6 @@ struct DashboardView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .animation(.spring(response: 0.4, dampingFraction: 0.75), value: orchestrator.toastMessage)
         .animation(.spring(response: 0.4, dampingFraction: 0.8), value: presetToast)
         .navigationTitle(orchestrator.isDemoMode ? "My Lights  ✦ Demo" : "My Lights")
         .navigationBarTitleDisplayMode(.large)

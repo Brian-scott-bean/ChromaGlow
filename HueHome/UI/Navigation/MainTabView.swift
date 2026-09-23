@@ -110,6 +110,31 @@ struct MainTabView: View {
                 music.deactivate()
             }
         }
+        // The orchestrator's toast (bridge failures, guest refusals, scene
+        // CRUD) renders HERE, over every tab — it used to be drawn only by
+        // DashboardView, so messages raised on Scenes/Room Detail were
+        // invisible. Room Detail's own vm toast stays its own overlay.
+        .overlay(alignment: .top) {
+            ZStack {
+                if let message = orchestrator.toastMessage {
+                    HueToastView(message: message)
+                        .padding(.top, 8)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
+            .allowsHitTesting(false)
+            .animation(.spring(response: 0.4, dampingFraction: 0.75),
+                       value: orchestrator.toastMessage)
+        }
+        // Backstop dismissal: several paths assign toastMessage directly
+        // (no showToast timer); now that it shows everywhere it must never
+        // stick. showToast's own 3 s clear usually gets there first.
+        .task(id: orchestrator.toastMessage) {
+            guard let shown = orchestrator.toastMessage else { return }
+            try? await Task.sleep(for: .seconds(3.5))
+            guard !Task.isCancelled, orchestrator.toastMessage == shown else { return }
+            orchestrator.toastMessage = nil
+        }
         .task { await prewarmDeferredTabs() }
         // Cold launch from a share link: `onOpenURL` fired (and bumped
         // openToken) before this view existed, so the onChange below never

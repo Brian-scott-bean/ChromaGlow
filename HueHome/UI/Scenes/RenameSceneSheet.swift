@@ -32,6 +32,11 @@ struct RenameSceneSheet: View {
                         .font(.system(size: 18, weight: .medium))
                         .foregroundStyle(.white)
                         .tint(glowColor)
+                        .onChange(of: text) { _, newValue in
+                            // Hue bridge limits scene names to 32 characters
+                            // (same cap as every other scene-name field).
+                            if newValue.count > 32 { text = String(newValue.prefix(32)) }
+                        }
                         .padding(16)
                         .background(
                             RoundedRectangle(cornerRadius: 14)
@@ -52,7 +57,7 @@ struct RenameSceneSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
-                        let trimmed = text.trimmingCharacters(in: .whitespaces)
+                        let trimmed = String(text.trimmingCharacters(in: .whitespaces).prefix(32))
                         if !trimmed.isEmpty { onRename(trimmed) }
                         dismiss()
                     }
