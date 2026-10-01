@@ -1,6 +1,7 @@
 // SplashView.swift
-// ChromaGlow — Splash / Bridge Check
-// Shown on cold start. Checks Keychain, then calls onPaired or routes to BridgeSetupView.
+// ChromaGlow — Splash / Bridge Check (Luminous)
+// Shown on cold start: the icon's spectrum ring glowing on the void. Checks
+// Keychain, then calls onPaired or routes to BridgeSetupView.
 
 import SwiftUI
 
@@ -20,7 +21,6 @@ struct SplashView: View {
     /// scenePhase safety net against double-firing.
     @State private var didRoute:        Bool    = false
 
-    @Environment(\.colorScheme) var colorScheme
     @Environment(\.scenePhase)  private var scenePhase
 
     var body: some View {
@@ -40,72 +40,78 @@ struct SplashView: View {
 
     // MARK: - Splash Layout
 
+    /// The brand mark: the icon's neon spectrum ring, glowing on the void.
+    private var brandMark: some View {
+        ZStack {
+            Circle()
+                .fill(RadialGradient(colors: [LuminousPalette.violet.opacity(0.35), .clear],
+                                     center: .center, startRadius: 0, endRadius: 110))
+                .frame(width: 220, height: 220)
+            Circle()
+                .trim(from: 0.08, to: 0.92)
+                .stroke(LuminousPalette.spectrum, style: StrokeStyle(lineWidth: 10, lineCap: .round))
+                .frame(width: 92, height: 92)
+                .rotationEffect(.degrees(0))
+                .shadow(color: LuminousPalette.magenta.opacity(0.8), radius: 14)
+                .shadow(color: LuminousPalette.cyan.opacity(0.5), radius: 24)
+            Capsule()
+                .fill(LinearGradient(colors: [LuminousPalette.cyan, LuminousPalette.violet],
+                                     startPoint: .leading, endPoint: .trailing))
+                .frame(width: 40, height: 8)
+                .offset(x: 26)
+                .shadow(color: LuminousPalette.cyan.opacity(0.8), radius: 10)
+        }
+        .accessibilityHidden(true)
+    }
+
     private var splashContent: some View {
         ZStack {
-            (colorScheme == .dark ? HuePalette.Noir.background : HuePalette.Estate.background)
+            LinearGradient(colors: [LuminousPalette.void, LuminousPalette.night, LuminousPalette.void],
+                           startPoint: .top, endPoint: .bottom)
                 .ignoresSafeArea()
 
             VStack(spacing: 0) {
                 Spacer()
 
-                // Icon
-                ZStack {
-                    AmberRadialGlow(radius: 70)
-                    Circle()
-                        .fill(HuePalette.amber.opacity(0.15))
-                        .frame(width: 90, height: 90)
-                    Image(systemName: "lightbulb.fill")
-                        .font(.system(size: 42, weight: .medium))
-                        .foregroundStyle(LinearGradient.hueAmberVertical)
-                }
-                .scaleEffect(iconScale)
-                .opacity(iconOpacity)
+                brandMark
+                    .scaleEffect(iconScale)
+                    .opacity(iconOpacity)
 
-                Spacer().frame(height: 28)
+                Spacer().frame(height: 8)
 
-                // Title
-                VStack(spacing: 4) {
+                VStack(spacing: 6) {
                     Text("ChromaGlow")
-                        .font(.system(size: 34, weight: .bold, design: .rounded))
-                        .foregroundStyle(
-                            LinearGradient(
-                                colors: [Color(hue: 0.08, saturation: 0.85, brightness: 0.98),
-                                         Color(hue: 0.78, saturation: 0.75, brightness: 0.95)],
-                                startPoint: .leading, endPoint: .trailing
-                            )
-                        )
-                    Text("Your lighting ecosystem")
-                        .font(HueFont.caption)
-                        .foregroundStyle(colorScheme == .dark
-                                         ? HuePalette.Noir.textTertiary
-                                         : HuePalette.Estate.textTertiary)
+                        .font(.system(size: 38, weight: .heavy, design: .rounded))
+                        .foregroundStyle(LinearGradient(colors: [LuminousPalette.ink, LuminousPalette.ink.opacity(0.75)],
+                                                        startPoint: .top, endPoint: .bottom))
+                    Text("Light that feels alive")
+                        .font(.subheadline)
+                        .foregroundStyle(LuminousPalette.inkSecondary)
+                        .opacity(subtitleOpacity)
                 }
                 .opacity(titleOpacity)
 
                 Spacer()
 
-                // Progress bar + Demo button
+                // Progress line + Demo button
                 VStack(spacing: 24) {
                     VStack(spacing: 10) {
                         GeometryReader { geo in
                             ZStack(alignment: .leading) {
                                 Capsule()
-                                    .fill(colorScheme == .dark
-                                          ? HuePalette.Noir.sliderTrack
-                                          : HuePalette.Estate.sliderTrack)
+                                    .fill(Color.white.opacity(0.08))
                                     .frame(height: 4)
                                 Capsule()
-                                    .fill(LinearGradient.hueAmberFill)
+                                    .fill(LuminousPalette.signalGradientHorizontal)
                                     .frame(width: geo.size.width * barProgress, height: 4)
+                                    .shadow(color: LuminousPalette.cyan.opacity(0.6), radius: 6)
                             }
                         }
                         .frame(height: 4)
 
                         Text("Starting up…")
-                            .font(HueFont.micro)
-                            .foregroundStyle(colorScheme == .dark
-                                             ? HuePalette.Noir.textTertiary
-                                             : HuePalette.Estate.textTertiary)
+                            .font(.caption)
+                            .foregroundStyle(LuminousPalette.inkTertiary)
                     }
                     .opacity(barOpacity)
 
@@ -115,17 +121,14 @@ struct SplashView: View {
                     } label: {
                         HStack(spacing: 6) {
                             Image(systemName: "sparkles")
-                                .font(.system(size: 12, weight: .medium))
+                                .font(.system(size: 12, weight: .bold))
                             Text("Explore Demo")
-                                .font(.system(size: 14, weight: .medium))
+                                .font(.system(.subheadline, design: .rounded).weight(.bold))
                         }
-                        .foregroundStyle(HuePalette.amber.opacity(0.75))
+                        .foregroundStyle(LuminousPalette.cyan)
                         .padding(.horizontal, 20)
-                        .padding(.vertical, 10)
-                        .background {
-                            Capsule()
-                                .strokeBorder(HuePalette.amber.opacity(0.25), lineWidth: 1)
-                        }
+                        .frame(minHeight: 44)
+                        .background(Capsule().strokeBorder(LuminousPalette.cyan.opacity(0.3), lineWidth: 1))
                     }
                     .buttonStyle(.plain)
                     .opacity(showDemoButton ? 1 : 0)
@@ -135,6 +138,7 @@ struct SplashView: View {
             }
             .padding(.horizontal, 40)
         }
+        .preferredColorScheme(.dark)
         .onAppear(perform: startIntroAnimation)
         // Route from a lifecycle-bound Task, not onAppear + DispatchQueue.asyncAfter.
         // On a fresh install the main thread is busy creating the SwiftData store and

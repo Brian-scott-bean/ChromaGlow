@@ -1,9 +1,11 @@
 // BridgeSetupView.swift
-// CastChroma — Onboarding
+// ChromaGlow — Onboarding (Luminous)
 //
-// Premium step-driven onboarding flow.
-// Phases: idle → scanning → bridgeFound → pairing → paired → error
-// Developer console is hidden behind a DEBUG-only toggle.
+// Step-driven pairing in the app's own language: a small dark stage of
+// lamps that comes alive as you go — dark while you start, one lamp glows
+// when the bridge is found, the whole room lights in the spectrum when
+// you're paired. Phases: idle → scanning → bridgeFound → pairing → paired →
+// error. Developer console is hidden behind a DEBUG-only toggle.
 
 import SwiftUI
 import SwiftData
@@ -43,19 +45,12 @@ struct BridgeSetupView: View {
                 // busy nothing can animate, but a friendly still frame beats a
                 // frozen splash.
                 ZStack {
-                    LinearGradient(
-                        colors: [
-                            Color(red: 0.05, green: 0.05, blue: 0.12),
-                            Color(red: 0.08, green: 0.06, blue: 0.16),
-                            Color(red: 0.05, green: 0.05, blue: 0.12)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint:   .bottomTrailing
-                    )
-                    .ignoresSafeArea()
+                    LinearGradient(colors: [LuminousPalette.void, LuminousPalette.night, LuminousPalette.void],
+                                   startPoint: .top, endPoint: .bottom)
+                        .ignoresSafeArea()
                     Text("Getting things ready…")
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.55))
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(LuminousPalette.inkSecondary)
                 }
             }
         }
@@ -102,58 +97,30 @@ struct BridgeSetupContent: View {
     /// Injected app-wide at the WindowGroup root (sheets inherit it).
     @Environment(UnifiedOrchestrator.self) private var orchestrator
 
-    // Pulse animation for bridge icon
-    @State private var pulsing = false
-
     var body: some View {
         ZStack {
-            // ── Background gradient ──────────────────────────────
-            LinearGradient(
-                colors: [
-                    Color(red: 0.05, green: 0.05, blue: 0.12),
-                    Color(red: 0.08, green: 0.06, blue: 0.16),
-                    Color(red: 0.05, green: 0.05, blue: 0.12)
-                ],
-                startPoint: .topLeading,
-                endPoint:   .bottomTrailing
-            )
-            .ignoresSafeArea()
+            // The room the lamps will light — tinted by where pairing is.
+            // (Radial gradients on one Canvas; never a large .blur(), which
+            // was a multi-second CPU rasterisation on device.)
+            LuminousAmbience(colors: ambienceColors, intensity: 0.8)
 
-            // Subtle ambient glow behind icon. RadialGradient, NOT .blur():
-            // the 60pt gaussian on a 320pt layer was a multi-second CPU
-            // rasterization on device (CGDisplayListDrawInContextDelegate in
-            // the build-12 hang stacks), re-paid on every accent change.
-            Circle()
-                .fill(
-                    RadialGradient(
-                        colors: [accentColor.opacity(0.08), accentColor.opacity(0.0)],
-                        center: .center,
-                        startRadius: 0,
-                        endRadius: 160
-                    )
-                )
-                .frame(width: 320, height: 320)
-                .offset(y: -80)
-
-            VStack(spacing: 0) {
-                // ── Top: logo / step icon ────────────────────────
-                Spacer()
-                bridgeIcon
-                    .padding(.bottom, 32)
-
-                // ── Phase content card ───────────────────────────
-                phaseContent
-                    .padding(.horizontal, 28)
-
-                Spacer()
-                Spacer()
-
-                // ── Debug log (DEBUG builds only) ────────────────
-                #if DEBUG
-                debugToggle
-                    .padding(.horizontal, 28)
-                    .padding(.bottom, 8)
-                #endif
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 22) {
+                    LuminousStateChip(text: phaseChip, dot: accentColor, glowing: isPulsing)
+                        .padding(.top, 8)
+                    setupStage
+                    phaseContent
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    // ── Debug log (DEBUG builds only) ────────────────
+                    #if DEBUG
+                    debugToggle
+                        .padding(.top, 8)
+                    #endif
+                }
+                .padding(.horizontal, HueSpacing.screenH)
+                .padding(.bottom, 32)
+                .frame(maxWidth: 560)
+                .frame(maxWidth: .infinity)
             }
         }
         .preferredColorScheme(.dark)
@@ -198,7 +165,6 @@ struct BridgeSetupContent: View {
         .onChange(of: DeepLinkCoordinator.shared.openToken) { _, _ in drainPendingInvite() }
         .onAppear {
             StartupTimeline.mark("setup.appear")
-            pulsing = true
         }
         .onChange(of: vm.phase) { _, newPhase in
             switch newPhase {
@@ -218,46 +184,32 @@ struct BridgeSetupContent: View {
 
     private var accentColor: Color {
         switch vm.phase {
-        case .idle:          return Color(hue: 0.11, saturation: 0.9, brightness: 0.95)
-        case .scanning:      return .cyan
-        case .bridgeFound:   return .green
-        case .pairing:       return .orange
-        case .paired:        return Color(hue: 0.11, saturation: 0.9, brightness: 0.95)
-        case .error:         return .red
+        case .idle:          return LuminousPalette.cyan
+        case .scanning:      return LuminousPalette.cyan
+        case .bridgeFound:   return LuminousPalette.live
+        case .pairing:       return LuminousPalette.amber
+        case .paired:        return LuminousPalette.live
+        case .error:         return LuminousPalette.amber
         }
     }
 
-    // MARK: - Bridge Icon
-
-    private var bridgeIcon: some View {
-        ZStack {
-            // Outer pulse ring
-            Circle()
-                .strokeBorder(accentColor.opacity(pulsing ? 0.0 : 0.35), lineWidth: 1.5)
-                .frame(width: 110, height: 110)
-                .scaleEffect(pulsing ? 1.45 : 1.0)
-                .animation(
-                    isPulsing ? .easeOut(duration: 1.6).repeatForever(autoreverses: false) : .default,
-                    value: pulsing
-                )
-
-            // Inner glow disc
-            Circle()
-                .fill(accentColor.opacity(0.12))
-                .frame(width: 88, height: 88)
-
-            // Icon
-            Image(systemName: phaseIcon)
-                .font(.system(size: 38, weight: .medium))
-                .foregroundStyle(
-                    LinearGradient(
-                        colors: [accentColor, accentColor.opacity(0.7)],
-                        startPoint: .top, endPoint: .bottom
-                    )
-                )
-                .symbolEffect(.bounce, value: vm.phase == .idle ? 0 : 1)
+    private var ambienceColors: [Color] {
+        switch vm.phase {
+        case .paired:   return Self.spectrum
+        case .error:    return [LuminousPalette.amber.opacity(0.6)]
+        default:        return [accentColor, LuminousPalette.violet]
         }
-        .animation(.spring(response: 0.5, dampingFraction: 0.7), value: phaseIcon)
+    }
+
+    private var phaseChip: String {
+        switch vm.phase {
+        case .idle:        return isAddingAdditional ? "Add a bridge" : "Welcome to ChromaGlow"
+        case .scanning:    return "Looking for your bridge"
+        case .bridgeFound: return "Bridge found"
+        case .pairing:     return "Pairing"
+        case .paired:      return "Paired"
+        case .error:       return "Needs attention"
+        }
     }
 
     private var isPulsing: Bool {
@@ -265,6 +217,52 @@ struct BridgeSetupContent: View {
         case .scanning, .pairing: return true
         default: return false
         }
+    }
+
+    // MARK: - The stage that comes alive
+
+    /// The lamps of a room-to-be, in the icon's spectrum.
+    private static let spectrum: [Color] = [Color(hex: "#FFD24A"), Color(hex: "#FF7A3D"), Color(hex: "#FF3D8B"),
+                                            Color(hex: "#9B5CFF"), Color(hex: "#3D8BFF"), Color(hex: "#3DFFB0")]
+
+    /// How many lamps are lit at each step: dark → one → the room.
+    private var litLamps: Int {
+        switch vm.phase {
+        case .idle, .error:  return 0
+        case .scanning:      return 1
+        case .bridgeFound:   return 2
+        case .pairing:       return 4
+        case .paired:        return Self.spectrum.count
+        }
+    }
+
+    private var setupStage: some View {
+        let lamps = Self.spectrum.enumerated().map { i, color in
+            (color: color, level: i < litLamps ? 0.9 : 0.0)
+        }
+        return ZStack(alignment: .bottomLeading) {
+            Canvas(rendersAsynchronously: false) { ctx, size in
+                LuminousMiniRoomStage.draw(in: &ctx, size: size, lamps: lamps)
+            }
+            .frame(height: 150)
+            Image(systemName: phaseIcon)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(accentColor)
+                .frame(width: 34, height: 34)
+                .background(Circle().fill(.ultraThinMaterial))
+                .overlay(Circle().strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
+                .symbolEffect(.pulse, isActive: isPulsing)
+                .padding(12)
+        }
+        .luminousStageFrame(isLive: isPaired)
+        .animation(.easeInOut(duration: 0.6), value: litLamps)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(litLamps) of \(Self.spectrum.count) lamps lit")
+    }
+
+    private var isPaired: Bool {
+        if case .paired = vm.phase { return true }
+        return false
     }
 
     private var phaseIcon: String {
@@ -301,36 +299,24 @@ struct BridgeSetupContent: View {
     // MARK: - Idle
 
     private var idleContent: some View {
-        VStack(spacing: 24) {
-            VStack(spacing: 10) {
-                Text("Connect Your Bridge")
-                    .font(.system(size: 28, weight: .bold))
-                    .foregroundStyle(.white)
-                    .multilineTextAlignment(.center)
-
-                Text("Make sure your iPhone and Hue Bridge are on the same Wi-Fi network.")
-                    .font(.system(size: 15))
-                    .foregroundStyle(.white.opacity(0.55))
-                    .multilineTextAlignment(.center)
-            }
+        VStack(alignment: .leading, spacing: 22) {
+            LuminousScreenTitle(title: isAddingAdditional ? "Add a bridge" : "Let's light up your home",
+                                eyebrow: "Connect your bridge",
+                                eyebrowSymbol: "wifi.router",
+                                eyebrowTint: LuminousPalette.cyan,
+                                subtitle: "Make sure your iPhone and Hue Bridge are on the same Wi-Fi network.")
 
             VStack(spacing: 12) {
-                // Primary CTA
-                primaryButton("Scan for Bridge", icon: "magnifyingglass") {
+                LuminousPrimaryButton(title: "Scan for Bridge", symbol: "magnifyingglass") {
                     vm.startScan()
                 }
-
-                // Manual fallback
-                secondaryButton("Enter IP Manually", icon: "keyboard") {
+                LuminousSecondaryButton(title: "Enter IP Manually", symbol: "keyboard") {
                     showManualEntry = true
                 }
-
                 // Someone else's bridge — scan their home-join invite QR.
-                secondaryButton("Join a Shared Home", icon: "qrcode.viewfinder") {
+                LuminousSecondaryButton(title: "Join a Shared Home", symbol: "qrcode.viewfinder") {
                     showInviteScanner = true
                 }
-
-                // Demo
                 if onDemo != nil {
                     demoButton
                 }
@@ -342,47 +328,30 @@ struct BridgeSetupContent: View {
     // MARK: - Scanning
 
     private var scanningContent: some View {
-        VStack(spacing: 24) {
-            VStack(spacing: 10) {
-                Text("Searching…")
-                    .font(.system(size: 28, weight: .bold))
-                    .foregroundStyle(.white)
+        VStack(alignment: .leading, spacing: 22) {
+            LuminousScreenTitle(title: "Searching…",
+                                eyebrow: "Looking on your network",
+                                eyebrowSymbol: "antenna.radiowaves.left.and.right",
+                                eyebrowTint: LuminousPalette.cyan,
+                                subtitle: vm.scanningLabel)
+                .animation(.easeInOut(duration: 0.4), value: vm.scanningLabel)
 
-                Text(vm.scanningLabel)
-                    .font(.system(size: 15))
-                    .foregroundStyle(.white.opacity(0.55))
-                    .multilineTextAlignment(.center)
-                    .animation(.easeInOut(duration: 0.4), value: vm.scanningLabel)
+            // Discovery method steps
+            LuminousGroup {
+                discoveryStepRow(icon: "wifi", label: "Scanning your Wi-Fi",
+                                 active: vm.scanningLabel.contains("Wi"))
+                LuminousRowDivider()
+                discoveryStepRow(icon: "cloud", label: "Philips cloud discovery",
+                                 active: vm.scanningLabel.contains("cloud"))
+                LuminousRowDivider()
+                discoveryStepRow(icon: "keyboard", label: "Manual IP entry", active: false, muted: true)
             }
-
-            // Discovery method step indicators
-            VStack(spacing: 8) {
-                discoveryStepRow(
-                    icon: "wifi",
-                    label: "Scanning your Wi-Fi",
-                    active: vm.scanningLabel.contains("Wi")
-                )
-                discoveryStepRow(
-                    icon: "cloud",
-                    label: "Philips cloud discovery",
-                    active: vm.scanningLabel.contains("cloud")
-                )
-                discoveryStepRow(
-                    icon: "keyboard",
-                    label: "Manual IP entry",
-                    active: false,
-                    muted: true
-                )
-            }
-            .padding(16)
-            .background(RoundedRectangle(cornerRadius: 16).fill(.white.opacity(0.05)))
-            .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.white.opacity(0.08), lineWidth: 1))
 
             if !vm.discoveredBridgeChoices.isEmpty {
                 discoveredBridgeChooser
             }
 
-            secondaryButton("Enter IP Manually", icon: "keyboard") {
+            LuminousSecondaryButton(title: "Enter IP Manually", symbol: "keyboard") {
                 vm.resetToIdle()
                 showManualEntry = true
             }
@@ -391,126 +360,82 @@ struct BridgeSetupContent: View {
     }
 
     private var discoveredBridgeChooser: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(vm.discoveredBridgeChoices.count == 1 ? "Bridge found — select to continue" : "Bridges found — select yours")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.70))
-
-            ForEach(vm.discoveredBridgeChoices) { bridge in
+        LuminousGroup(title: vm.discoveredBridgeChoices.count == 1 ? "Bridge found — select to continue" : "Bridges found — select yours") {
+            ForEach(Array(vm.discoveredBridgeChoices.enumerated()), id: \.element.id) { index, bridge in
                 Button {
                     vm.selectDiscoveredBridge(bridge)
                 } label: {
-                    HStack(spacing: 12) {
-                        Image(systemName: "wifi.router")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(accentColor)
-                            .frame(width: 28)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(bridge.name)
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(.white)
-                                .lineLimit(2)
-                                .multilineTextAlignment(.leading)
-                            Text("\(bridge.host):\(bridge.port)")
-                                .font(.system(size: 12, weight: .medium, design: .monospaced))
-                                .foregroundStyle(.white.opacity(0.55))
-                        }
-                        Spacer(minLength: 0)
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.35))
-                    }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 12)
-                    .background(RoundedRectangle(cornerRadius: 14).fill(.white.opacity(0.07)))
-                    .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(accentColor.opacity(0.25), lineWidth: 1))
+                    LuminousRow(symbol: "wifi.router", tint: LuminousPalette.live,
+                                title: bridge.name, subtitle: "\(bridge.host):\(bridge.port)")
                 }
                 .buttonStyle(.plain)
+                if index < vm.discoveredBridgeChoices.count - 1 { LuminousRowDivider() }
             }
         }
-        .padding(16)
-        .background(RoundedRectangle(cornerRadius: 16).fill(.white.opacity(0.05)))
-        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.white.opacity(0.08), lineWidth: 1))
     }
 
     private func discoveryStepRow(icon: String, label: String, active: Bool, muted: Bool = false) -> some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 14) {
             ZStack {
-                Circle()
-                    .fill(active ? accentColor.opacity(0.2) : .white.opacity(0.05))
-                    .frame(width: 32, height: 32)
                 if active {
-                    ProgressView()
-                        .scaleEffect(0.6)
-                        .tint(accentColor)
+                    Circle().fill(accentColor.opacity(0.2)).frame(width: 36, height: 36)
+                    ProgressView().scaleEffect(0.7).tint(accentColor)
                 } else {
-                    Image(systemName: icon)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(muted ? .white.opacity(0.25) : .white.opacity(0.45))
+                    LuminousIconBadge(symbol: icon, tint: LuminousPalette.inkSecondary, size: 36, lit: !muted)
                 }
             }
+            .frame(width: 36, height: 36)
             Text(label)
-                .font(.system(size: 13, weight: active ? .semibold : .regular))
-                .foregroundStyle(active ? .white : (muted ? .white.opacity(0.25) : .white.opacity(0.50)))
-            Spacer()
+                .font(.body.weight(active ? .semibold : .regular))
+                .foregroundStyle(active ? LuminousPalette.ink : (muted ? LuminousPalette.inkTertiary : LuminousPalette.inkSecondary))
+            Spacer(minLength: 0)
             if active {
                 Text("Active")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.caption.weight(.heavy))
                     .foregroundStyle(accentColor)
-                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .padding(.horizontal, 8)
+                    .frame(minHeight: 22)
                     .background(Capsule().fill(accentColor.opacity(0.15)))
             }
         }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .frame(minHeight: 56)
+        .accessibilityElement(children: .combine)
     }
 
     // MARK: - Bridge Found
 
     private func bridgeFoundContent(bridge: BridgeEndpoint) -> some View {
-        VStack(spacing: 24) {
-            VStack(spacing: 10) {
-                Text("Bridge Found!")
-                    .font(.system(size: 28, weight: .bold))
-                    .foregroundStyle(.white)
+        VStack(alignment: .leading, spacing: 22) {
+            LuminousScreenTitle(title: "Bridge found",
+                                eyebrow: "\(bridge.name) · \(bridge.host)",
+                                eyebrowSymbol: "wifi",
+                                eyebrowTint: LuminousPalette.live,
+                                subtitle: "One last step and your lights are yours.")
 
-                // Bridge info pill
-                HStack(spacing: 8) {
-                    Image(systemName: "wifi")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(accentColor)
-                    Text("\(bridge.name)  ·  \(bridge.host)")
-                        .font(.system(size: 13, weight: .medium, design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.75))
-                }
-                .padding(.horizontal, 14).padding(.vertical, 8)
-                .background(Capsule().fill(.white.opacity(0.08)))
-            }
-
-            // Link-button instruction card
+            // Link-button instruction
             HStack(alignment: .top, spacing: 14) {
-                ZStack {
-                    Circle().fill(.orange.opacity(0.18)).frame(width: 40, height: 40)
-                    Image(systemName: "hand.tap.fill")
-                        .font(.system(size: 16))
-                        .foregroundStyle(.orange)
-                }
+                LuminousIconBadge(symbol: "hand.tap.fill", tint: LuminousPalette.amber, size: 40)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Press the bridge button")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(.white)
+                        .font(LuminousType.cardTitleSmall)
+                        .foregroundStyle(LuminousPalette.ink)
                     Text("Push the round button on top of your Hue Bridge, then tap Pair below. You have about 30 seconds.")
-                        .font(.system(size: 13))
-                        .foregroundStyle(.white.opacity(0.55))
+                        .font(.footnote)
+                        .foregroundStyle(LuminousPalette.inkSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .padding(16)
-            .background(RoundedRectangle(cornerRadius: 16).fill(.white.opacity(0.05)))
-            .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.orange.opacity(0.2), lineWidth: 1))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .luminousGlass(accent: LuminousPalette.amber, selected: true)
 
             VStack(spacing: 12) {
-                primaryButton("Pair with Bridge", icon: "link") {
+                LuminousPrimaryButton(title: "Pair with Bridge", symbol: "link") {
                     vm.pairWithBridge(bridge)
                 }
-                secondaryButton("Scan Again", icon: "arrow.clockwise") {
+                LuminousSecondaryButton(title: "Scan Again", symbol: "arrow.clockwise") {
                     vm.resetToIdle()
                     vm.startScan()
                 }
@@ -522,58 +447,34 @@ struct BridgeSetupContent: View {
     // MARK: - Pairing
 
     private func pairingContent(bridge: BridgeEndpoint) -> some View {
-        VStack(spacing: 20) {
-            VStack(spacing: 10) {
-                Text("Connecting…")
-                    .font(.system(size: 28, weight: .bold))
-                    .foregroundStyle(.white)
-                Text("Pairing with \(bridge.name). Don't close the app.")
-                    .font(.system(size: 15))
-                    .foregroundStyle(.white.opacity(0.55))
-                    .multilineTextAlignment(.center)
-            }
-        }
-        .transition(.opacity.combined(with: .move(edge: .bottom)))
+        LuminousScreenTitle(title: "Connecting…",
+                            eyebrow: bridge.name,
+                            eyebrowSymbol: "link",
+                            eyebrowTint: LuminousPalette.amber,
+                            subtitle: "Pairing with \(bridge.name). Don't close the app.")
+            .transition(.opacity.combined(with: .move(edge: .bottom)))
     }
 
-    // MARK: - Paired ✅
+    // MARK: - Paired
 
     private func pairedContent(ip: String, token: String) -> some View {
-        VStack(spacing: 24) {
-            VStack(spacing: 10) {
-                Text("You're all set!")
-                    .font(.system(size: 28, weight: .bold))
-                    .foregroundStyle(.white)
-                Text("ChromaGlow is paired with your bridge and ready to go.")
-                    .font(.system(size: 15))
-                    .foregroundStyle(.white.opacity(0.55))
-                    .multilineTextAlignment(.center)
-            }
-
-            // Bridge summary pill
-            HStack(spacing: 8) {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
-                    .font(.system(size: 13))
-                Text(ip)
-                    .font(.system(size: 13, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.75))
-            }
-            .padding(.horizontal, 14).padding(.vertical, 8)
-            .background(Capsule().fill(.green.opacity(0.10)))
+        VStack(alignment: .leading, spacing: 22) {
+            LuminousScreenTitle(title: "You're all set",
+                                eyebrow: "Paired · \(ip)",
+                                eyebrowSymbol: "checkmark.seal.fill",
+                                eyebrowTint: LuminousPalette.live,
+                                subtitle: "ChromaGlow is paired with your bridge and ready to go.")
 
             VStack(spacing: 12) {
-                primaryButton(
-                    isAddingAdditional ? "Add to ChromaGlow" : "Continue to App",
-                    icon: isAddingAdditional ? "plus.circle.fill" : "lightbulb.fill"
-                ) {
+                LuminousPrimaryButton(title: isAddingAdditional ? "Add to ChromaGlow" : "Continue to App",
+                                      symbol: isAddingAdditional ? "plus.circle.fill" : "lightbulb.fill") {
                     handlePairedAction(ip: ip, token: token)
                 }
-                // Round-2 Item 2: multi-bridge homes can pair everything in one
-                // onboarding pass. The just-paired record is already persisted
+                // Multi-bridge homes can pair everything in one onboarding
+                // pass. The just-paired record is already persisted
                 // (committed at .paired), so returning to scanning loses nothing.
                 if !isAddingAdditional {
-                    secondaryButton("Pair Another Bridge", icon: "plus.circle") {
+                    LuminousSecondaryButton(title: "Pair Another Bridge", symbol: "plus.circle") {
                         vm.resetToIdle()
                         vm.startScan()
                     }
@@ -586,22 +487,18 @@ struct BridgeSetupContent: View {
     // MARK: - Error
 
     private func errorContent(message: String) -> some View {
-        VStack(spacing: 24) {
-            VStack(spacing: 10) {
-                Text("Something went wrong")
-                    .font(.system(size: 28, weight: .bold))
-                    .foregroundStyle(.white)
-                Text(message)
-                    .font(.system(size: 15))
-                    .foregroundStyle(.white.opacity(0.55))
-                    .multilineTextAlignment(.center)
-            }
-
+        VStack(alignment: .leading, spacing: 22) {
+            LuminousScreenTitle(title: "Something went wrong",
+                                eyebrow: "Couldn't finish pairing",
+                                eyebrowSymbol: "exclamationmark.triangle.fill",
+                                eyebrowTint: LuminousPalette.amber,
+                                subtitle: nil)
+            LuminousNotice(text: message, symbol: "exclamationmark.circle.fill", tint: LuminousPalette.amber)
             VStack(spacing: 12) {
-                primaryButton("Try Again", icon: "arrow.clockwise") {
+                LuminousPrimaryButton(title: "Try Again", symbol: "arrow.clockwise") {
                     vm.resetToIdle()
                 }
-                secondaryButton("Enter IP Manually", icon: "keyboard") {
+                LuminousSecondaryButton(title: "Enter IP Manually", symbol: "keyboard") {
                     vm.resetToIdle()
                     showManualEntry = true
                 }
@@ -610,80 +507,37 @@ struct BridgeSetupContent: View {
         .transition(.opacity.combined(with: .move(edge: .bottom)))
     }
 
-    // MARK: - Reusable Button Styles
-
-    private func primaryButton(_ label: String, icon: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 10) {
-                Image(systemName: icon)
-                    .font(.system(size: 15, weight: .semibold))
-                Text(label)
-                    .font(.system(size: 16, weight: .semibold))
-            }
-            .foregroundStyle(Color(red: 0.05, green: 0.05, blue: 0.12))
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 17)
-            .background(
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(accentColor)
-                    .shadow(color: accentColor.opacity(0.4), radius: 18, x: 0, y: 6)
-            )
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func secondaryButton(_ label: String, icon: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 8) {
-                Image(systemName: icon)
-                    .font(.system(size: 13, weight: .medium))
-                Text(label)
-                    .font(.system(size: 14, weight: .medium))
-            }
-            .foregroundStyle(.white.opacity(0.60))
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 14)
-            .background(
-                RoundedRectangle(cornerRadius: 14)
-                    .fill(.white.opacity(0.07))
-                    .overlay(RoundedRectangle(cornerRadius: 14)
-                        .strokeBorder(.white.opacity(0.10), lineWidth: 1))
-            )
-        }
-        .buttonStyle(.plain)
-    }
+    // MARK: - Demo
 
     private var demoButton: some View {
         Button {
             withAnimation(.easeInOut(duration: 0.3)) { onDemo?() }
         } label: {
             HStack(spacing: 6) {
-                Image(systemName: "sparkles").font(.system(size: 12))
+                Image(systemName: "sparkles").font(.system(size: 13, weight: .bold))
                 Text("Explore Demo")
-                    .font(.system(size: 14, weight: .medium))
+                    .font(.system(.subheadline, design: .rounded).weight(.bold))
             }
-            .foregroundStyle(accentColor.opacity(0.75))
+            .foregroundStyle(LuminousPalette.cyan)
+            .frame(maxWidth: .infinity)
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .padding(.top, 4)
+        .buttonStyle(LuminousPressStyle())
+        .accessibilityHint("Try the app with a sample home — no bridge needed")
     }
 
     // MARK: - Manual IP Sheet
 
     private var manualIPSheet: some View {
         NavigationStack {
-            ZStack {
-                Color(red: 0.06, green: 0.06, blue: 0.13).ignoresSafeArea()
-                VStack(spacing: 24) {
-                    VStack(spacing: 8) {
-                        Text("Enter Bridge IP")
-                            .font(.system(size: 22, weight: .bold))
-                            .foregroundStyle(.white)
-                        Text("Find your bridge IP in the Philips Hue app under Settings → My Hue System → Hue Bridges.")
-                            .font(.system(size: 14))
-                            .foregroundStyle(.white.opacity(0.5))
-                            .multilineTextAlignment(.center)
-                    }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    LuminousScreenTitle(title: "Enter bridge IP",
+                                        eyebrow: "Manual connection",
+                                        eyebrowSymbol: "keyboard",
+                                        eyebrowTint: LuminousPalette.cyan,
+                                        subtitle: "Find your bridge IP in the Philips Hue app under Settings → My Hue System → Hue Bridges.")
 
                     TextField("192.168.1.100", text: $manualIP)
                         // numbersAndPunctuation, not decimalPad — the pad has no
@@ -694,48 +548,34 @@ struct BridgeSetupContent: View {
                         .focused($manualIPFocused)
                         .submitLabel(.go)
                         .onSubmit { connectManualIP() }
-                        .font(.system(size: 17, design: .monospaced))
-                        .foregroundStyle(.white)
-                        .padding(14)
-                        .background(RoundedRectangle(cornerRadius: 12).fill(.white.opacity(0.08)))
-                        .overlay(RoundedRectangle(cornerRadius: 12)
-                            .strokeBorder(.white.opacity(0.15), lineWidth: 1))
+                        .font(.system(.title3, design: .monospaced))
+                        .foregroundStyle(LuminousPalette.ink)
+                        .padding(16)
+                        .luminousGlass(radius: 16, accent: LuminousPalette.cyan, selected: manualIPFocused)
                         .onAppear { manualIPFocused = true }
                         .onChange(of: manualIP) { manualIPError = nil }
 
                     if let manualIPError {
-                        Text(manualIPError)
-                            .font(.system(size: 13))
-                            .foregroundStyle(Color(red: 1.0, green: 0.45, blue: 0.4))
-                            .multilineTextAlignment(.center)
+                        LuminousNotice(text: manualIPError, symbol: "exclamationmark.circle.fill", tint: LuminousPalette.amber)
                     }
 
-                    Button {
+                    LuminousPrimaryButton(title: "Connect", symbol: "link") {
                         connectManualIP()
-                    } label: {
-                        Text("Connect")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(Color(red: 0.05, green: 0.05, blue: 0.12))
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 16)
-                            .background(RoundedRectangle(cornerRadius: 14).fill(accentColor))
                     }
-                    .buttonStyle(.plain)
                     .disabled(manualIP.trimmingCharacters(in: .whitespaces).isEmpty)
-
-                    Spacer()
                 }
-                .padding(28)
+                .padding(HueSpacing.screenH)
             }
-            .navigationBarTitleDisplayMode(.inline)
+            .background { LuminousAmbience(colors: [LuminousPalette.cyan]) }
+            .luminousNavigationChrome()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { showManualEntry = false }
-                        .foregroundStyle(.white.opacity(0.6))
+                        .foregroundStyle(LuminousPalette.inkSecondary)
                 }
             }
         }
-        .preferredColorScheme(.dark)
+        .luminousSheet()
     }
 
     /// Shared by the Connect button and the keyboard's Go key.
@@ -771,7 +611,8 @@ struct BridgeSetupContent: View {
                     Image(systemName: showDebugLog ? "chevron.up" : "chevron.down")
                         .font(.system(size: 10))
                 }
-                .foregroundStyle(.white.opacity(0.25))
+                .foregroundStyle(LuminousPalette.inkTertiary)
+                .frame(minHeight: 44)
             }
             .buttonStyle(.plain)
 
