@@ -140,4 +140,28 @@ final class AppGallerySnapshotTests: XCTestCase {
         }
         orchestrator.exitDemoMode()
     }
+
+    // MARK: - Lead: onboarding & tour
+
+    func testSplash() async throws {
+        try await render(SplashView(), named: "gallery-splash", settle: 0.4)
+    }
+
+    func testBridgeSetup() async throws {
+        try await render(BridgeSetupView(onPaired: {}, onDemo: {}), named: "gallery-bridge-setup", settle: 1.0)
+    }
+
+    func testWelcomeTour() async throws {
+        try await render(WelcomeTourView(pages: TutorialCatalog.pages) {}, named: "gallery-welcome-tour", settle: 0.8)
+    }
+
+    func testTourComposerArt() async throws {
+        let art = TutorialIllustrationView(kind: .studio, accent: Color(hex: "#668AFF"), isActive: false)
+            .frame(height: 250)
+            .luminousStageFrame()
+            .padding(20)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(LuminousPalette.void)
+        try await render(art, named: "gallery-tour-composer-art", settle: 0.4)
+    }
 }

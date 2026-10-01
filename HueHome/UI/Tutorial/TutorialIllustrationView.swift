@@ -448,42 +448,56 @@ private struct StudioArt: View {
     let t: Double
     let live: Bool
 
-    private static let decks = ["EFFECTS", "LIVE", "COMPOSER"]
+    private static let modes = ["Looks", "Tune", "Layers"]
 
     var body: some View {
-        let deck = TourMotionMath.hop(t, count: 3, period: 2.5)
-        let thumbA = 0.3 + 0.35 * TourMotionMath.pulse(t, period: 4.0)
-        let thumbB = 0.65 - 0.35 * TourMotionMath.pulse(t, period: 5.0)
+        // The Composer: Looks · Tune · Layers over a look playing on a room —
+        // a storm whose strikes land well under three a second.
+        let mode = TourMotionMath.hop(t, count: 3, period: 2.5)
+        let strike = TourMotionMath.pulse(t, period: 3.2)
 
-        VStack(spacing: 14) {
-            HStack(spacing: 18) {
+        VStack(spacing: 12) {
+            HStack(spacing: 2) {
                 ForEach(0..<3, id: \.self) { i in
-                    VStack(spacing: 4) {
-                        MonoTag(text: Self.decks[i], color: i == deck ? accent : StagePalette.muted)
-                        Capsule()
-                            .fill(accent)
-                            .frame(width: 26, height: 2)
-                            .opacity(i == deck ? 1 : 0)
-                    }
+                    Text(Self.modes[i])
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .foregroundStyle(i == mode ? LuminousPalette.void : LuminousPalette.ink.opacity(0.7))
+                        .padding(.horizontal, 14)
+                        .frame(height: 26)
+                        .background {
+                            if i == mode { Capsule().fill(LuminousPalette.signalGradientHorizontal) }
+                        }
                 }
             }
+            .padding(3)
+            .background(Capsule().fill(Color.white.opacity(0.06)))
+            .overlay(Capsule().strokeBorder(Color.white.opacity(0.1), lineWidth: 1))
+
             MockCard(glow: 0.35, accent: accent) {
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Canvas(rendersAsynchronously: false) { ctx, size in
+                        let flash = max(0, strike - 0.78) / 0.22
+                        let lamps = (0..<7).map { i -> (color: Color, level: Double) in
+                            let hit = live ? flash * (i % 3 == 0 ? 1 : 0.55) : 0
+                            return (hit > 0.3 ? Color.white : Color(hex: "#5B6CFF"), 0.3 + 0.65 * hit)
+                        }
+                        LuminousMiniRoomStage.draw(in: &ctx, size: size, lamps: lamps)
+                    }
+                    .frame(height: 66)
                     HStack {
-                        Text("Candlelight Chase")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(StagePalette.ink)
+                        Text("Thunderstorm")
+                            .font(.system(size: 13, weight: .heavy, design: .rounded))
+                            .foregroundStyle(LuminousPalette.ink)
                         Spacer()
-                        MonoTag(text: "LIVE", color: Color(hex: "#40D9BF"))
-                    }
-                    PatternStripView(pattern: .chase, accent: accent, animated: live)
-                    HStack(spacing: 10) {
-                        MonoTag(text: "SPEED")
-                        MockSlider(fraction: thumbA, accent: accent)
-                    }
-                    HStack(spacing: 10) {
-                        MonoTag(text: "GLOW ")
-                        MockSlider(fraction: thumbB, accent: accent)
+                        HStack(spacing: 4) {
+                            Image(systemName: "dot.radiowaves.left.and.right")
+                            Text("Go Live")
+                        }
+                        .font(.system(size: 11, weight: .heavy, design: .rounded))
+                        .foregroundStyle(LuminousPalette.void)
+                        .padding(.horizontal, 10)
+                        .frame(height: 24)
+                        .background(Capsule().fill(LuminousPalette.signalGradient))
                     }
                 }
             }
@@ -509,7 +523,7 @@ private struct ComposerArt: View {
         let saved = TourMotionMath.segment(p, from: 0.72, to: 0.84)
 
         VStack(spacing: 10) {
-            layerChip(tag: "PALETTE", reveal: l0) {
+            layerChip(tag: "COLOUR", reveal: l0) {
                 LinearGradient(colors: [Color(hex: "#FF6B6B"), accent, Color(hex: "#40C9FF")],
                                startPoint: .leading, endPoint: .trailing)
                     .frame(height: 10)
@@ -518,7 +532,7 @@ private struct ComposerArt: View {
             layerChip(tag: "MOTION", reveal: l1) {
                 PatternStripView(pattern: .comet, accent: accent, animated: live)
             }
-            layerChip(tag: "REACTION", reveal: l2) {
+            layerChip(tag: "MOMENTS", reveal: l2) {
                 HStack(spacing: 5) {
                     ForEach(0..<9, id: \.self) { i in
                         let h = 0.25 + 0.75 * TourMotionMath.pulse(t + Double(i) * 0.35, period: 2.2)
@@ -532,7 +546,7 @@ private struct ComposerArt: View {
             HStack(spacing: 6) {
                 Image(systemName: "checkmark.circle.fill")
                     .font(.system(size: 12))
-                Text("Saved to your deck")
+                Text("Saved to Yours")
                     .font(.system(size: 11, weight: .semibold))
             }
             .foregroundStyle(Color(hex: "#40D9BF"))

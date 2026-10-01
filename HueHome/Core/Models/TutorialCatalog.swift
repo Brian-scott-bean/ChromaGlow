@@ -57,7 +57,7 @@ enum TutorialCatalog {
     private static let teal   = "#40D9BF"
     private static let blue   = "#668AFF"
 
-    /// The full tour, in presentation order. Owners see all 12; guests see 9.
+    /// The full tour, in presentation order. Owners see all 13; guests see 9.
     static let pages: [TutorialPage] = [
         TutorialPage(
             id: "tour.welcome",
@@ -67,33 +67,33 @@ enum TutorialCatalog {
             footnote: "You can replay this tour anytime from the More tab.",
             audience: .everyone,
             illustration: .welcome,
-            accentHex: amber
+            accentHex: purple
         ),
         TutorialPage(
             id: "tour.rooms",
             eyebrow: "HOME",
-            title: "Your rooms, one tap away",
-            body: "Every room lives on the Home tab. Tap a card to switch the room on or off, slide across it to set brightness, and press and hold to wash the whole room in a color.",
+            title: "Your rooms, drawn as light",
+            body: "Every room lives on the Home tab, and each glowing dot is one of its lamps in its real color. Tap the power button to switch a room, drag its glow to dim it, hold the card to wash it in a color, and tap it to step inside.",
             footnote: nil,
             audience: .everyone,
             illustration: .rooms,
-            accentHex: amber
+            accentHex: teal
         ),
         TutorialPage(
             id: "tour.moods",
             eyebrow: "HOME",
             title: "Set the mood in one tap",
-            body: "Energize, Read, Relax, and Sleep retune every light at once. Star the scenes you love and they wait for you right on the dashboard — and All Off is there when you head out the door.",
-            footnote: "When an effect is running, a Now Playing bar appears on Home so you can stop it from anywhere.",
+            body: "Energize, Read, Relax, and Sleep retune every light at once. Star the scenes you love and they join the moods on Home — and All Off sits at the top when you head out the door.",
+            footnote: "Whatever is playing on your lights sits at the top of Home with its own Stop button.",
             audience: .everyone,
             illustration: .moods,
-            accentHex: amber
+            accentHex: teal
         ),
         TutorialPage(
             id: "tour.roomDetail",
             eyebrow: "ROOMS",
             title: "Every light, your way",
-            body: "Open a room to shape each light on its own. Copy a color from one light and paste it onto another, or arm Paint mode and tap it across as many lights as you like. Favorite shades live in My Colors — drag one straight onto a light.",
+            body: "Open a room to see its lights on a stage, then shape each one: tap a lamp to tune it, copy a color from one light and paste it onto another, or arm Paint mode and tap it across as many as you like. Favorite shades live in My Colors.",
             footnote: nil,
             audience: .everyone,
             illustration: .roomDetail,
@@ -102,8 +102,8 @@ enum TutorialCatalog {
         TutorialPage(
             id: "tour.scenes",
             eyebrow: "SCENES",
-            title: "A library of looks",
-            body: "Every scene lives here, grouped by room, with your starred favorites floating on top. Each card previews its real colors and motion before you play it. Copy a scene you love into another room, and give moving scenes their own pace with the speed control.",
+            title: "A still mood for every room",
+            body: "Every scene lives in the Scenes tab, grouped by room, with what's on now and your starred favorites on top. Each card glows in its own colors. Copy a scene you love into another room, and give moving scenes their own pace with the speed control.",
             footnote: nil,
             audience: .everyone,
             illustration: .scenes,
@@ -111,19 +111,19 @@ enum TutorialCatalog {
         ),
         TutorialPage(
             id: "tour.studio",
-            eyebrow: "STUDIO",
+            eyebrow: "LOOKS",
             title: "Where the show begins",
-            body: "Pick a room, then flip through three decks: Effects that run on the bridge itself, Live modes that react to sound, and everything you compose yourself — sixty-six built-in looks, every card previewing its real colors and motion. Tap one to start it, then tune it to taste in the mixer.",
-            footnote: nil,
+            body: "The Composer tab is a library of looks that move — storms with real lightning, fireplaces, Halloween, fireworks, parties — and every card is playing. Tap one to see it on your room, then Go Live to send it to your lights.",
+            footnote: "Bulb effects, Live modes and your older looks wait in Studio Classic, at the bottom of the Composer.",
             audience: .ownerOnly,
             illustration: .studio,
-            accentHex: amber
+            accentHex: blue
         ),
         TutorialPage(
             id: "tour.composer",
             eyebrow: "COMPOSER",
             title: "Compose your own light",
-            body: "Layer a palette, a motion, and a reaction into a scene that's yours alone — the editor draws your Brightness Shape as a live curve, with a mic meter when sound drives it. Save it with its own icon and color, or share it as a QR code a friend can scan.",
+            body: "Open any look and make it yours. Tune shapes its brightness, speed and energy, and how often the lightning strikes; Layers stacks color, motion, rhythm and moments into something nobody else has. Save it and it lives under Yours.",
             footnote: nil,
             audience: .ownerOnly,
             illustration: .composer,
@@ -133,7 +133,7 @@ enum TutorialCatalog {
             id: "tour.perform",
             eyebrow: "PERFORM",
             title: "Take the stage",
-            body: "Load two looks onto decks A and B and crossfade between them as the night builds. Punch pads fire one-shot moments, and beat sync keeps every light on tempo.",
+            body: "Load two looks onto decks A and B and crossfade between them as the night builds. Punch pads fire one-shot moments, and beat sync keeps every light on tempo. Perform lives in Studio Classic.",
             footnote: "Own a Hue Tap Dial? Pair it in More → Physical Controls and spin it as your DJ controller.",
             audience: .ownerOnly,
             illustration: .perform,
@@ -143,7 +143,7 @@ enum TutorialCatalog {
             id: "tour.music",
             eyebrow: "MUSIC",
             title: "Lights that move to your music",
-            body: "Pick a music source in Studio — follow along with Apple Music, or let Auto-Detect Song name whatever's playing nearby, even vinyl. Beat-synced looks lock onto the song's tempo, and one tap on the album art paints your lights in its colors.",
+            body: "Pick a music source at the top of the Composer — follow along with Apple Music, or let Auto-Detect Song name whatever's playing nearby, even vinyl. Looks that follow the beat lock onto the song's tempo.",
             footnote: "While music plays, a strip on Home shows the song and the beat — tap it anytime to switch sources.",
             audience: .ownerOnly,
             illustration: .music,
@@ -188,7 +188,7 @@ enum TutorialCatalog {
             footnote: "Replay this tour anytime from More. Want a safe place to explore? Demo Mode sets up a whole sample home.",
             audience: .everyone,
             illustration: .wrap,
-            accentHex: amber
+            accentHex: purple
         ),
     ]
 

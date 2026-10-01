@@ -2,7 +2,8 @@
 // ChromaGlow — the Welcome Tour pager
 //
 // The full-screen tour surface: a swipeable TabView over TutorialCatalog
-// pages in the StageKit dark-stage look. Content comes from the caller
+// pages in the Luminous look — the room behind the page glows in its
+// colour, so swiping through the tour changes the light. Content comes from the caller
 // (already audience-filtered — see WelcomeTourWiring / MoreView), so this
 // view owns nothing but the page index. Skip and Done both land in
 // `onFinish`; the caller decides what "finished" means (set the seen flag
@@ -24,12 +25,13 @@ struct WelcomeTourView: View {
 
     private var isLastPage: Bool { pageIndex >= pages.count - 1 }
     private var accent: Color {
-        Color(hex: pages.indices.contains(pageIndex) ? pages[pageIndex].accentHex : "#FFC107")
+        Color(hex: pages.indices.contains(pageIndex) ? pages[pageIndex].accentHex : "#8C59FF")
     }
 
     var body: some View {
         ZStack {
-            StagePalette.stage.ignoresSafeArea()
+            LuminousAmbience(colors: [accent, LuminousPalette.violet])
+                .animation(.easeInOut(duration: 0.8), value: pageIndex)
             VStack(spacing: 0) {
                 topBar
                 pager
@@ -51,15 +53,13 @@ struct WelcomeTourView: View {
 
     private var topBar: some View {
         HStack {
-            Text(headerTitle)
-                .font(HueFont.stageTag)
-                .tracking(1.2)
-                .foregroundStyle(StagePalette.muted)
+            LuminousEyebrow(text: headerTitle)
             Spacer()
             if !isLastPage {
                 Button("Skip") { onFinish() }
-                    .font(HueFont.stageChip)
-                    .foregroundStyle(StagePalette.muted)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(LuminousPalette.inkSecondary)
+                    .frame(minWidth: 44, minHeight: 44)
                     .accessibilityLabel("Skip the tour")
             }
         }
@@ -88,26 +88,25 @@ struct WelcomeTourView: View {
                                          isActive: index == pageIndex)
                     .frame(height: 250)
                     .frame(maxWidth: .infinity)
+                    .luminousStageFrame()
+                    .padding(.horizontal, 20)
                     .padding(.top, 12)
 
                 VStack(alignment: .leading, spacing: 10) {
-                    Text(page.eyebrow)
-                        .font(HueFont.stageTag)
-                        .tracking(1.2)
-                        .foregroundStyle(pageAccent)
+                    LuminousEyebrow(text: page.eyebrow, tint: pageAccent)
                     Text(page.title)
-                        .font(HueFont.tourTitle)
-                        .foregroundStyle(StagePalette.ink)
+                        .font(.system(.title, design: .rounded).weight(.heavy))
+                        .foregroundStyle(LuminousPalette.ink)
                         .fixedSize(horizontal: false, vertical: true)
                     Text(page.body)
-                        .font(HueFont.tourBody)
-                        .foregroundStyle(StagePalette.ink.opacity(0.72))
+                        .font(.body)
+                        .foregroundStyle(LuminousPalette.ink.opacity(0.75))
                         .lineSpacing(3)
                         .fixedSize(horizontal: false, vertical: true)
                     if let footnote = page.footnote {
                         Text(footnote)
-                            .font(HueFont.stageStatus)
-                            .foregroundStyle(StagePalette.muted)
+                            .font(.footnote)
+                            .foregroundStyle(LuminousPalette.inkSecondary)
                             .lineSpacing(2)
                             .fixedSize(horizontal: false, vertical: true)
                             .padding(.top, 2)
@@ -123,19 +122,11 @@ struct WelcomeTourView: View {
 
     private var footer: some View {
         HStack(spacing: 12) {
-            Button {
+            LuminousRoundButton(symbol: "chevron.left", label: "Previous page", size: 44) {
                 withAnimation(HueAnimation.adaptive(HueAnimation.toggle, reduceMotion: reduceMotion)) {
                     pageIndex = max(0, pageIndex - 1)
                 }
-            } label: {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(StagePalette.ink.opacity(0.8))
-                    .frame(width: 44, height: 44)
-                    .background(Circle().fill(Color.white.opacity(0.06)))
-                    .overlay(Circle().strokeBorder(StagePalette.line, lineWidth: 1))
             }
-            .accessibilityLabel("Previous page")
             .opacity(pageIndex == 0 ? 0 : 1)
             .disabled(pageIndex == 0)
             .accessibilityHidden(pageIndex == 0)
@@ -144,7 +135,7 @@ struct WelcomeTourView: View {
             pageDots
             Spacer()
 
-            Button {
+            LuminousPrimaryButton(title: isLastPage ? "Done" : "Next", compact: true) {
                 if isLastPage {
                     HapticManager.shared.success()
                     onFinish()
@@ -153,16 +144,8 @@ struct WelcomeTourView: View {
                         pageIndex = min(pages.count - 1, pageIndex + 1)
                     }
                 }
-            } label: {
-                Text(isLastPage ? "Done" : "Next")
-                    .font(HueFont.stageName)
-                    .lineLimit(1)
-                    .fixedSize()   // never let the dots row squeeze this into a wrap
-                    .foregroundStyle(.black)
-                    .padding(.horizontal, 26)
-                    .frame(height: 44)
-                    .background(Capsule().fill(HuePalette.amber))
             }
+            .fixedSize()   // never let the dots row squeeze this into a wrap
             .accessibilityLabel(isLastPage ? "Finish tour" : "Next page")
         }
         .padding(.horizontal, 24)
@@ -178,6 +161,7 @@ struct WelcomeTourView: View {
                 Capsule()
                     .fill(i == pageIndex ? accent : Color.white.opacity(0.30))
                     .frame(width: i == pageIndex ? 14 : 5, height: 5)
+                    .shadow(color: i == pageIndex ? accent.opacity(0.8) : .clear, radius: 4)
             }
         }
         .animation(HueAnimation.adaptive(HueAnimation.toggle, reduceMotion: reduceMotion), value: pageIndex)
