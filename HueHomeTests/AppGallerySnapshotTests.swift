@@ -140,4 +140,86 @@ final class AppGallerySnapshotTests: XCTestCase {
         }
         orchestrator.exitDemoMode()
     }
+
+    // MARK: - Lane More
+    //
+    // The setup screens (More, Settings, Automations, Devices, Bridges,
+    // People, Physical Controls, Entertainment Areas, Share Invite), rendered
+    // in a tall window so the whole scroll is reviewable as one image.
+
+    private func renderTall<V: View>(_ view: V, named name: String, height: CGFloat = 1600,
+                                     settle: TimeInterval = 1.2) async throws {
+        let orchestrator = await demoOrchestrator()
+        let tall = CGSize(width: size.width, height: height)
+        let root = AnyView(
+            view
+                .environment(orchestrator)
+                .environment(DeepLinkCoordinator())
+                .environment(MusicSessionCoordinator.shared)
+                .modelContainer(try container())
+                .preferredColorScheme(.dark)
+        )
+        let controller = UIHostingController(rootView: root)
+        controller.overrideUserInterfaceStyle = .dark
+        let window = UIWindow(frame: CGRect(origin: .zero, size: tall))
+        window.overrideUserInterfaceStyle = .dark
+        window.rootViewController = controller
+        window.isHidden = false
+        controller.view.layoutIfNeeded()
+        pump(settle)
+        let image = UIGraphicsImageRenderer(size: tall).image { _ in
+            controller.view.drawHierarchy(in: CGRect(origin: .zero, size: tall), afterScreenUpdates: true)
+        }
+        let attachment = XCTAttachment(image: image)
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        XCTAssertNotNil(image.cgImage, name)
+        dismantle(window)
+        orchestrator.exitDemoMode()
+    }
+
+    func testLaneMoreMoreTall() async throws {
+        try await renderTall(NavigationStack { MoreView() }, named: "lane-more-more", height: 1500)
+    }
+
+    func testLaneMoreSettings() async throws {
+        try await renderTall(NavigationStack { SettingsView(onForget: {}) }, named: "lane-more-settings", height: 1900)
+    }
+
+    func testLaneMoreAutomations() async throws {
+        try await renderTall(NavigationStack { AutomationsView() }, named: "lane-more-automations", height: 1300)
+    }
+
+    func testLaneMoreCreateAutomation() async throws {
+        try await renderTall(CreateAutomationView(), named: "lane-more-create-automation", height: 1500)
+    }
+
+    func testLaneMoreDevices() async throws {
+        try await renderTall(NavigationStack { DevicesView() }, named: "lane-more-devices", height: 1300, settle: 2)
+    }
+
+    func testLaneMoreBridgeManager() async throws {
+        try await renderTall(NavigationStack { BridgeManagerView() }, named: "lane-more-bridges", height: 1000)
+    }
+
+    func testLaneMoreProfilesAccess() async throws {
+        try await renderTall(NavigationStack { ProfilesAccessView() }, named: "lane-more-profiles", height: 1300)
+    }
+
+    func testLaneMorePhysicalControls() async throws {
+        try await renderTall(NavigationStack { PhysicalControlsView() }, named: "lane-more-physical-controls", height: 1000)
+    }
+
+    func testLaneMoreEntertainmentAreas() async throws {
+        try await renderTall(NavigationStack { EntertainmentAreasView() }, named: "lane-more-entertainment-areas", height: 1000)
+    }
+
+    func testLaneMoreShareInvite() async throws {
+        try await renderTall(ShareInviteSheet(), named: "lane-more-share-invite", height: 1100)
+    }
+
+    func testLaneMoreMusicPicker() async throws {
+        try await renderTall(MusicSourcePicker(), named: "lane-more-music-picker", height: 1000)
+    }
 }
