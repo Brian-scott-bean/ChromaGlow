@@ -2973,7 +2973,8 @@ final class UnifiedOrchestrator {
                         if let on = update.on?.on, rooms[idx].isOn != on {
                             rooms[idx].isOn = on; changed = true
                         }
-                        if let bri = update.dimming?.brightness, rooms[idx].brightness != bri {
+                        // 0 only means "off" — keep the level the room returns at (M-2).
+                        if let bri = update.dimming?.brightness, bri > 0, rooms[idx].brightness != bri {
                             rooms[idx].brightness = bri; changed = true
                         }
                         if changed {
@@ -2990,7 +2991,8 @@ final class UnifiedOrchestrator {
                         if let on = update.on?.on, zones[idx].isOn != on {
                             zones[idx].isOn = on; changed = true
                         }
-                        if let bri = update.dimming?.brightness, zones[idx].brightness != bri {
+                        // 0 only means "off" — keep the level the zone returns at (M-2).
+                        if let bri = update.dimming?.brightness, bri > 0, zones[idx].brightness != bri {
                             zones[idx].brightness = bri; changed = true
                         }
                         if changed {

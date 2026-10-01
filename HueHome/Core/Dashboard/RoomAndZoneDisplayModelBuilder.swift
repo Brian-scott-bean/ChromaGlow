@@ -45,6 +45,8 @@ enum RoomAndZoneDisplayModelBuilder {
                         .map { $0.dimming?.brightness ?? 100 }
                         .reduce(0, +) / Double(onLights.count)
                     brightness = max(1, avg)
+                } else {
+                    brightness = Self.offLevel(roomLights, fallback: brightness)
                 }
             }
 
@@ -103,6 +105,8 @@ enum RoomAndZoneDisplayModelBuilder {
                         .map { $0.dimming?.brightness ?? 100 }
                         .reduce(0, +) / Double(onLights.count)
                     brightness = max(1, avg)
+                } else {
+                    brightness = Self.offLevel(zoneLights, fallback: brightness)
                 }
             }
 
@@ -145,5 +149,18 @@ enum RoomAndZoneDisplayModelBuilder {
             roomLightMap: roomLightMap,
             zoneLightMap: zoneLightMap
         )
+    }
+}
+
+extension RoomAndZoneDisplayModelBuilder {
+    /// The level an OFF room will come back at. Its grouped_light reports
+    /// brightness 0 while off, which the card clamped to 1% — so powering a
+    /// room on from Home showed 1% until the next full load restored the
+    /// real level (build-60 regression M-2). The member lights keep the
+    /// level they will return at; their average is the honest answer.
+    static func offLevel(_ lights: [HueLight], fallback: Double) -> Double {
+        let levels = lights.compactMap { $0.dimming?.brightness }.filter { $0 > 0 }
+        guard !levels.isEmpty else { return fallback }
+        return min(100, max(1, levels.reduce(0, +) / Double(levels.count)))
     }
 }

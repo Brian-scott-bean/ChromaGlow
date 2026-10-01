@@ -51,6 +51,11 @@ struct HomeRoomCard: View {
     /// What the stage draws: the lamps, dark while the room is (locally) off.
     private var stageLights: [LightDisplayItem] {
         guard localIsOn else { return lights.map { var l = $0; l.isOn = false; return l } }
+        // Just switched on here: the cached lamps still say off until the
+        // bridge confirms (~3 s on the phone) — light them at the room's level.
+        if !lights.isEmpty, !lights.contains(where: \.isOn) {
+            return lights.map { var l = $0; l.isOn = true; l.brightness = localBrightness; return l }
+        }
         return lights
     }
 
