@@ -57,6 +57,7 @@ struct RoomDetailView: View {
     @State private var showCreateAutomation = false
     @State private var sceneToRename:    SceneDisplayItem? = nil
     @State private var sceneRenameDraft: String = ""
+    @State private var sceneToDelete:    SceneDisplayItem? = nil   // asks before the bridge delete
 
     // ── Scene Edit Mode ──────────────────────────────────────────────────────
     @State private var sceneToEdit:       SceneDisplayItem? = nil  // drives SceneColorBuilder in edit mode
@@ -266,6 +267,24 @@ struct RoomDetailView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This removes \"\(liveRoom.name)\" from your bridge.")
+        }
+        // ── Delete Scene (long-press menu) ───────────────────────────────────
+        .confirmationDialog(
+            "Delete \"\(sceneToDelete?.name ?? "scene")\"?",
+            isPresented: Binding(
+                get: { sceneToDelete != nil },
+                set: { if !$0 { sceneToDelete = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: sceneToDelete
+        ) { scene in
+            Button("Delete Scene", role: .destructive) {
+                vm.deleteScene(scene)
+                sceneToDelete = nil
+            }
+            Button("Cancel", role: .cancel) { sceneToDelete = nil }
+        } message: { scene in
+            Text("\"\(scene.name)\" will be permanently removed from your bridge.")
         }
         .alert("Rename Scene", isPresented: Binding(
             get: { sceneToRename != nil },
@@ -878,7 +897,9 @@ struct RoomDetailView: View {
                         }
                         Divider()
                         Button(role: .destructive) {
-                            vm.deleteScene(scene)
+                            // Asks first, like the Scenes tab and the Select
+                            // dock — the bridge delete has no undo.
+                            sceneToDelete = scene
                         } label: {
                             Label("Delete Scene", systemImage: "trash")
                         }
