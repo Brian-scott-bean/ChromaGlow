@@ -4,8 +4,8 @@
 // Lists every entertainment_configuration on every connected bridge, with
 // rename + delete, and presents EntertainmentConfigBuilderView to create new
 // areas. Reached from More → Entertainment Areas. The bridge is the source of
-// truth — Studio/Sync enumerate configs from it when they load, so no local
-// state has to be kept in sync here.
+// truth — the Composer and Studio Classic enumerate configs from it when they
+// load, so no local state has to be kept in sync here. Luminous page.
 
 import SwiftUI
 
@@ -26,7 +26,6 @@ struct EntertainmentAreasView: View {
     @State private var showDelete    = false
 
     private let manager = EntertainmentConfigManager()
-    private let amber = Color(red: 1.0, green: 0.76, blue: 0.20)
 
     private struct AreaRef {
         let bridgeID: String
@@ -41,41 +40,33 @@ struct EntertainmentAreasView: View {
     }
 
     var body: some View {
-        ZStack {
-            HuePalette.Noir.background.ignoresSafeArea()
-
-            ScrollView(showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 24) {
-                    if let errorMessage {
-                        Text(errorMessage)
-                            .font(.system(size: 12))
-                            .foregroundStyle(.red.opacity(0.8))
-                    }
-
-                    if isLoading && areasByBridge.isEmpty {
-                        HStack {
-                            Spacer()
-                            ProgressView().tint(.white)
-                            Spacer()
-                        }
-                        .padding(.top, 60)
-                    } else if totalAreaCount == 0 {
-                        emptyState
-                    } else {
-                        bridgeSections
-                    }
-                }
-                .padding(.horizontal, HueSpacing.screenH)
-                .padding(.top, HueSpacing.xxl)
-                .padding(.bottom, 80)
+        LuminousPage(title: "Entertainment Areas",
+                     eyebrow: "Control",
+                     eyebrowSymbol: "dot.radiowaves.left.and.right",
+                     tint: LuminousPalette.cyan,
+                     subtitle: "Light zones that answer instantly — the Composer streams its looks to them.",
+                     ambience: [LuminousPalette.cyan, LuminousPalette.violet]) {
+            if let errorMessage {
+                LuminousNotice(text: errorMessage, symbol: "exclamationmark.triangle.fill", tint: LuminousPalette.danger)
             }
-            .refreshable { await load() }
+
+            if isLoading && areasByBridge.isEmpty {
+                HStack(spacing: 12) {
+                    ProgressView().tint(LuminousPalette.cyan)
+                    Text("Asking your bridges for their areas…")
+                        .font(.subheadline)
+                        .foregroundStyle(LuminousPalette.inkSecondary)
+                    Spacer(minLength: 0)
+                }
+                .padding(16)
+                .luminousGlass()
+            } else if totalAreaCount == 0 {
+                emptyState
+            } else {
+                bridgeSections
+            }
         }
-        .navigationTitle("Entertainment Areas")
-        .navigationBarTitleDisplayMode(.large)
-        .toolbarColorScheme(.dark, for: .navigationBar)
-        .toolbarBackground(.hidden, for: .navigationBar)
-        .preferredColorScheme(.dark)
+        .refreshable { await load() }
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 if !ownedBridgeIDs.isEmpty {
@@ -83,9 +74,10 @@ struct EntertainmentAreasView: View {
                         showBuilder = true
                     } label: {
                         Image(systemName: "plus")
-                            .fontWeight(.semibold)
-                            .foregroundStyle(amber)
+                            .fontWeight(.bold)
+                            .foregroundStyle(LuminousPalette.cyan)
                     }
+                    .accessibilityLabel("New Entertainment Area")
                 }
             }
         }
@@ -132,30 +124,19 @@ struct EntertainmentAreasView: View {
     private var bridgeSections: some View {
         ForEach(sortedBridgeIDs, id: \.self) { bridgeID in
             let areas = areasByBridge[bridgeID] ?? []
-            VStack(alignment: .leading, spacing: 10) {
-                // Bridge header — only meaningful in multi-bridge homes,
-                // but always shown so the M-18 routing is visible.
-                Text((orchestrator.bridgeName(for: bridgeID) ?? "Bridge").uppercased())
-                    .font(.system(size: 11, weight: .semibold))
-                    .tracking(0.8)
-                    .foregroundStyle(.white.opacity(0.45))
-                    .padding(.leading, 4)
-
-                GlassmorphicCard(isActive: false, glowColor: amber) {
-                    VStack(spacing: 12) {
-                        ForEach(Array(areas.enumerated()), id: \.element.id) { index, config in
-                            if index > 0 {
-                                Divider().background(Color.white.opacity(0.08))
-                            }
-                            areaRow(bridgeID: bridgeID, config: config)
-                        }
-                        if areas.isEmpty {
-                            Text("No entertainment areas on this bridge yet.")
-                                .font(.system(size: 12))
-                                .foregroundStyle(.white.opacity(0.4))
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                    }
+            // Bridge header — only meaningful in multi-bridge homes, but
+            // always shown so the M-18 routing is visible.
+            LuminousGroup(title: orchestrator.bridgeName(for: bridgeID) ?? "Bridge") {
+                ForEach(Array(areas.enumerated()), id: \.element.id) { index, config in
+                    if index > 0 { LuminousRowDivider() }
+                    areaRow(bridgeID: bridgeID, config: config)
+                }
+                if areas.isEmpty {
+                    Text("No entertainment areas on this bridge yet.")
+                        .font(.footnote)
+                        .foregroundStyle(LuminousPalette.inkSecondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(16)
                 }
             }
         }
@@ -163,22 +144,9 @@ struct EntertainmentAreasView: View {
 
     private func areaRow(bridgeID: String, config: EntertainmentConfig) -> some View {
         let lightCount = Set(config.channels.flatMap(\.lightServiceIDs)).count
-        return HStack(spacing: 12) {
-            ZStack {
-                Circle().fill(amber.opacity(0.18)).frame(width: 36, height: 36)
-                Image(systemName: "dot.radiowaves.left.and.right")
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(amber)
-            }
-            VStack(alignment: .leading, spacing: 2) {
-                Text(config.name)
-                    .font(.system(size: 15, weight: .regular))
-                    .foregroundStyle(.white)
-                Text("\(lightCount) light\(lightCount == 1 ? "" : "s") · \(config.channels.count) channel\(config.channels.count == 1 ? "" : "s")")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.white.opacity(0.45))
-            }
-            Spacer()
+        return LuminousRow(symbol: "dot.radiowaves.left.and.right", tint: LuminousPalette.cyan,
+                           title: config.name,
+                           subtitle: "\(lightCount) light\(lightCount == 1 ? "" : "s") · \(config.channels.count) channel\(config.channels.count == 1 ? "" : "s")") {
             Menu {
                 Button {
                     renameTarget = AreaRef(bridgeID: bridgeID, config: config)
@@ -194,48 +162,29 @@ struct EntertainmentAreasView: View {
                     Label("Delete", systemImage: "trash")
                 }
             } label: {
-                Image(systemName: "ellipsis.circle")
-                    .font(.system(size: 17))
-                    .foregroundStyle(.white.opacity(0.5))
-                    .frame(width: 32, height: 32)
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(LuminousPalette.inkSecondary)
+                    .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
             }
+            .accessibilityLabel("Rename or delete \(config.name)")
         }
     }
 
+    @ViewBuilder
     private var emptyState: some View {
-        VStack(spacing: 14) {
-            Image(systemName: "dot.radiowaves.left.and.right")
-                .font(.system(size: 34))
-                .foregroundStyle(amber.opacity(0.6))
-            Text("No Entertainment Areas")
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(.white)
-            Text("Entertainment areas are special light zones that respond instantly — Studio's directional motion and music sync use them.")
-                .font(.system(size: 13))
-                .foregroundStyle(.white.opacity(0.5))
-                .multilineTextAlignment(.center)
-            if !ownedBridgeIDs.isEmpty {
-                Button {
-                    showBuilder = true
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "plus.circle.fill")
-                        Text("New Entertainment Area")
-                            .fontWeight(.semibold)
-                    }
-                    .font(.system(size: 14))
-                    .foregroundStyle(.black)
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 11)
-                    .background(Capsule().fill(amber))
-                }
-                .buttonStyle(.plain)
-                .padding(.top, 6)
-            }
+        if ownedBridgeIDs.isEmpty {
+            LuminousEmptyState(symbol: "dot.radiowaves.left.and.right",
+                               title: "No Entertainment Areas",
+                               message: "Entertainment areas are special light zones that respond instantly — the Composer streams to them, and Studio Classic's directional motion and music sync use them.")
+        } else {
+            LuminousEmptyState(symbol: "dot.radiowaves.left.and.right",
+                               title: "No Entertainment Areas",
+                               message: "Entertainment areas are special light zones that respond instantly — the Composer streams to them, and Studio Classic's directional motion and music sync use them.",
+                               actionTitle: "New Entertainment Area",
+                               action: { showBuilder = true })
         }
-        .frame(maxWidth: .infinity)
-        .padding(.top, 60)
     }
 
     // ──────────────────────────────────────────────

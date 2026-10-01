@@ -1,9 +1,10 @@
 // SettingsView.swift
-// CastChroma — Epic 7 / Story 7.1
+// ChromaGlow — Settings (Luminous).
 //
-// Glassmorphic settings sheet: bridge info, connection ping, token display,
-// "Forget Bridge" (destructive), and app version.
-// Presented as a .sheet from the Dashboard toolbar ⚙ button.
+// Bridges (manage, live connection, Forget All), All Day Scenes, the bridge
+// key preview, Advanced (Demo Mode, Clean Bridge Resources), the app, and
+// the build footer with the Signify non-affiliation line (required here and
+// in More). Presented as a sheet from More.
 
 import SwiftUI
 import SwiftData
@@ -59,6 +60,8 @@ enum CleanBridgeTarget {
 
 // MARK: - SettingsView
 
+/// Settings, in the Luminous language: glass groups over the dark room.
+/// Presented as a sheet from More (it carries its own Done).
 struct SettingsView: View {
 
     let onForget: () -> Void          // caller handles dismiss after clearing Keychain
@@ -87,40 +90,38 @@ struct SettingsView: View {
     /// wiped the bridge the user never chose (round 3).
     @State private var cleanBridgeFrozenID: String? = nil
 
-    private let glowColor = Color(red: 1.0, green: 0.76, blue: 0.2)
-
     // MARK: - Body
 
     var body: some View {
-        ZStack {
-            ambientBackground
-
-            ScrollView(showsIndicators: false) {
-                VStack(spacing: 24) {
-                    bridgesSection       // multi-bridge management + connection info
-                    allDayScenesSection
-                    accountSection
-                    developerSection
-                    appSection
-                    buildMetadataFooter
-                }
-                .padding(.horizontal, 20)
-                .padding(.top, 24)
-                .padding(.bottom, 80)  // extra bottom pad for tab bar
+        ScrollView(showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 22) {
+                LuminousScreenTitle(title: "Settings",
+                                    eyebrow: "ChromaGlow",
+                                    eyebrowSymbol: "gearshape.fill",
+                                    eyebrowTint: LuminousPalette.cyan,
+                                    subtitle: "Bridges, all-day light, and the app itself.")
+                bridgesSection       // multi-bridge management + connection info
+                allDayScenesSection
+                accountSection
+                developerSection
+                appSection
+                buildMetadataFooter
             }
+            .padding(.horizontal, HueSpacing.screenH)
+            .padding(.top, 8)
+            .padding(.bottom, 36)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .navigationTitle("Settings")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbarColorScheme(.dark, for: .navigationBar)
-        .toolbarBackground(.hidden, for: .navigationBar)
+        .background { LuminousAmbience(colors: [LuminousPalette.cyan, LuminousPalette.violet], intensity: 0.6) }
+        .luminousPageChrome(title: "Settings")
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button("Done") { dismiss() }
                     .fontWeight(.semibold)
-                    .foregroundStyle(Color(red: 1.0, green: 0.76, blue: 0.20)) // amber
+                    .foregroundStyle(LuminousPalette.cyan)
             }
         }
-        .preferredColorScheme(.dark)
+        .luminousSheet()
         .alert("Forget All Bridges?", isPresented: $showForgetAlert) {
             Button("Forget All", role: .destructive) {
                 // 0. Stop the orchestrator's debounced widget/watch publisher
@@ -175,131 +176,57 @@ struct SettingsView: View {
     }
 
     // ──────────────────────────────────────────────
-    // MARK: - All Day Scenes Section
+    // MARK: - Bridges
     // ──────────────────────────────────────────────
-
-    private var allDayScenesSection: some View {
-        settingsGroup(header: "ALL DAY") {
-            NavigationLink(destination: AllDayScenesView()) {
-                HStack(spacing: 12) {
-                    iconCircle("sun.max.fill", color: glowColor)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("All Day Scenes")
-                            .font(.subheadline)
-                            .foregroundStyle(.white)
-                        Text("Circadian lighting that follows sunrise & sunset")
-                            .font(.caption)
-                            .foregroundStyle(.white.opacity(0.45))
-                    }
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.30))
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-        }
-    }
-
-    // ──────────────────────────────────────────────
-    // MARK: - Background
-    // ──────────────────────────────────────────────
-
-    private var ambientBackground: some View {
-        ZStack {
-            Color(red: 0.055, green: 0.055, blue: 0.08).ignoresSafeArea()
-            Circle()
-                .fill(RadialGradient(
-                    colors: [glowColor.opacity(0.14), .clear],
-                    center: .center, startRadius: 0, endRadius: 200
-                ))
-                .frame(width: 340)
-                .offset(x: 100, y: -200)
-                .blur(radius: 20)
-            Circle()
-                .fill(RadialGradient(
-                    colors: [Color(red: 0.4, green: 0.3, blue: 1).opacity(0.12), .clear],
-                    center: .center, startRadius: 0, endRadius: 160
-                ))
-                .frame(width: 260)
-                .offset(x: -120, y: 140)
-                .blur(radius: 20)
-        }
-        .ignoresSafeArea()
-    }
 
     private var bridgesSection: some View {
-        settingsGroup(header: orchestrator.isDemoMode ? "DEMO MODE" : "BRIDGES") {
+        LuminousGroup(title: orchestrator.isDemoMode ? "Demo Mode" : "Bridges") {
             if orchestrator.isDemoMode {
                 Button {
                     NotificationCenter.default.post(name: .hueDemoExited, object: nil)
                 } label: {
-                    HStack(spacing: 12) {
-                        iconCircle("sparkles", color: glowColor)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Exit Demo Mode")
-                                .font(.subheadline)
-                                .foregroundStyle(.white)
-                            Text("Connect to a real Hue Bridge")
-                                .font(.caption)
-                                .foregroundStyle(.white.opacity(0.45))
-                        }
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(glowColor.opacity(0.5))
+                    LuminousRow(symbol: "sparkles", tint: LuminousPalette.amber, title: "Exit Demo Mode",
+                                subtitle: "Connect to a real Hue Bridge") {
+                        LuminousTextBadge(text: "Live", tint: LuminousPalette.amber)
                     }
-                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(LuminousRowButtonStyle())
             } else {
                 // ── Manage Bridges link ────────────────────────────────────
                 NavigationLink(destination: BridgeManagerView()) {
-                    HStack(spacing: 12) {
-                        iconCircle("network", color: glowColor)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Manage Bridges")
-                                .font(.subheadline)
-                                .foregroundStyle(.white)
-                            Text("\(bridges.count) registered  ·  \(orchestrator.activeBridgeCount) active")
-                                .font(.caption)
-                                .foregroundStyle(.white.opacity(0.45))
-                        }
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.30))
-                    }
-                    .contentShape(Rectangle())
+                    LuminousRow(symbol: "network", tint: LuminousPalette.cyan, title: "Manage Bridges",
+                                subtitle: "\(bridges.count) registered  ·  \(orchestrator.activeBridgeCount) active")
                 }
-                .buttonStyle(.plain)
-
-                Divider().background(Color.white.opacity(0.08))
-
+                .buttonStyle(LuminousRowButtonStyle())
+                LuminousRowDivider()
                 // ── Live connection status (SSE-driven, always accurate) ──────
                 liveConnectionRow
-
-                Divider().background(Color.white.opacity(0.08))
-
+                LuminousRowDivider()
                 // ── Forget All Bridges (destructive) ─────────────────────
                 Button {
                     showForgetAlert = true
                 } label: {
-                    HStack(spacing: 12) {
-                        iconCircle("minus.circle.fill", color: .red)
-                        Text("Forget All Bridges")
-                            .font(.subheadline)
-                            .foregroundStyle(.red)
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(.red.opacity(0.45))
-                    }
-                    .contentShape(Rectangle())
+                    LuminousRow(symbol: "minus.circle.fill", tint: LuminousPalette.danger,
+                                title: "Forget All Bridges",
+                                subtitle: "Removes every bridge and its key from this phone",
+                                subtitleTint: LuminousPalette.danger.opacity(0.8))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(LuminousRowButtonStyle())
             }
+        }
+    }
+
+    // ──────────────────────────────────────────────
+    // MARK: - All Day Scenes Section
+    // ──────────────────────────────────────────────
+
+    private var allDayScenesSection: some View {
+        LuminousGroup(title: "All Day") {
+            NavigationLink(destination: AllDayScenesView()) {
+                LuminousRow(symbol: "sun.max.fill", tint: Color(hex: "#FFD36B"), title: "All Day Scenes",
+                            subtitle: "Circadian lighting that follows sunrise & sunset")
+            }
+            .buttonStyle(LuminousRowButtonStyle())
         }
     }
 
@@ -308,45 +235,19 @@ struct SettingsView: View {
     // ──────────────────────────────────────────────
 
     private var developerSection: some View {
-        settingsGroup(header: "ADVANCED") {
-            Button {
-                if orchestrator.isDemoMode {
-                    NotificationCenter.default.post(name: .hueDemoExited, object: nil)
-                } else {
+        LuminousGroup(title: "Advanced") {
+            // In Demo Mode the Bridges group above already carries Exit Demo
+            // Mode — the same action twice on one screen was noise.
+            if !orchestrator.isDemoMode {
+                Button {
                     orchestrator.enterDemoMode()
+                } label: {
+                    LuminousRow(symbol: "sparkles", tint: LuminousPalette.cyan, title: "Preview Demo Mode",
+                                subtitle: "Explore the app with a sample home")
                 }
-            } label: {
-                HStack(spacing: 12) {
-                    iconCircle(
-                        orchestrator.isDemoMode ? "sparkles.slash" : "sparkles",
-                        color: orchestrator.isDemoMode ? .orange : glowColor
-                    )
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(orchestrator.isDemoMode ? "Exit Demo Mode" : "Preview Demo Mode")
-                            .font(.subheadline)
-                            .foregroundStyle(orchestrator.isDemoMode ? .orange : .white)
-                        Text(orchestrator.isDemoMode
-                             ? "Resume real bridge connection"
-                             : "Explore the app with a sample home")
-                            .font(.caption)
-                            .foregroundStyle(.white.opacity(0.45))
-                    }
-                    Spacer()
-                    // Live indicator
-                    if orchestrator.isDemoMode {
-                        Text("LIVE")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(.orange)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 3)
-                            .background(Capsule().fill(.orange.opacity(0.15)))
-                    }
-                }
-                .contentShape(Rectangle())
+                .buttonStyle(LuminousRowButtonStyle())
+                LuminousRowDivider()
             }
-            .buttonStyle(.plain)
-
-            Divider().background(Color.white.opacity(0.08))
 
             // ── Clean Bridge Resources ───────────────────────────────
             //
@@ -368,24 +269,16 @@ struct SettingsView: View {
                     showCleanBridgeConfirm = true
                 }
             } label: {
-                HStack(spacing: 12) {
-                    iconCircle("trash.circle", color: Color(red: 1.0, green: 0.55, blue: 0.25))
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Clean Bridge Resources")
-                            .font(.subheadline)
-                            .foregroundStyle(.white)
-                        Text(cleanBridgeResult ?? "Tidy up leftover ChromaGlow animation data on your bridge")
-                            .font(.caption)
-                            .foregroundStyle(.white.opacity(0.45))
-                    }
-                    Spacer()
+                LuminousRow(symbol: "trash.circle", tint: Color(hex: "#FF8C40"), title: "Clean Bridge Resources",
+                            subtitle: cleanBridgeResult ?? "Tidy up leftover ChromaGlow animation data on your bridge") {
                     if isCleaningBridge {
-                        ProgressView().tint(.white).scaleEffect(0.7)
+                        ProgressView().tint(LuminousPalette.ink).scaleEffect(0.8)
+                    } else {
+                        LuminousChevron()
                     }
                 }
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(LuminousRowButtonStyle())
             .disabled(isCleaningBridge || orchestrator.isDemoMode)
             .opacity(orchestrator.isDemoMode ? 0.4 : 1.0)
             // Which bridge? Asked before anything is confirmed, never guessed.
@@ -440,14 +333,15 @@ struct SettingsView: View {
     // ──────────────────────────────────────────────
 
     private var accountSection: some View {
-        settingsGroup(header: "ACCOUNT") {
-            // Token preview row
-            settingsRow(
-                icon: "key.fill",
-                iconColor: Color(red: 0.5, green: 0.7, blue: 1.0),
-                title: "Bridge Connection Key",
-                value: tokenPreview
-            )
+        LuminousGroup(title: "Account") {
+            LuminousRow(symbol: "key.fill", tint: LuminousPalette.violet, title: "Bridge Connection Key") {
+                Text(tokenPreview)
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(LuminousPalette.inkSecondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .accessibilityElement(children: .combine)
         }
     }
 
@@ -456,70 +350,35 @@ struct SettingsView: View {
     // ──────────────────────────────────────────────
 
     private var appSection: some View {
-        settingsGroup(header: "APP") {
-            HStack(spacing: 12) {
-                // App icon proxy
-                ZStack {
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(LinearGradient(
-                            colors: [
-                                Color(red: 0.12, green: 0.10, blue: 0.22),
-                                Color(red: 0.08, green: 0.07, blue: 0.14)
-                            ],
-                            startPoint: .topLeading, endPoint: .bottomTrailing
-                        ))
-                        .frame(width: 44, height: 44)
-                    Image(systemName: "lightbulb.fill")
-                        .font(.system(size: 20))
-                        .foregroundStyle(glowColor)
-                }
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("ChromaGlow")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.white)
-                    Text("Version \(BuildMetadata.current.marketingVersion) · Build \(BuildMetadata.current.buildNumber)")
-                        .font(.caption2)
-                        .foregroundStyle(.white.opacity(0.40))
-                }
-
-                Spacer()
-            }
-
-            Divider().background(Color.white.opacity(0.08))
-
-            Toggle(isOn: $allowLandscapeRotation) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Allow Landscape Rotation")
-                        .font(.subheadline)
-                        .foregroundStyle(.white)
-                    Text("Off keeps Studio locked to portrait by default.")
-                        .font(.caption)
-                        .foregroundStyle(.white.opacity(0.45))
-                }
-            }
-            .tint(glowColor)
-
-            Divider().background(Color.white.opacity(0.08))
-
+        LuminousGroup(title: "App") {
+            LuminousAppIdentityRow()
+            LuminousRowDivider(inset: 16)
+            LuminousToggleRow(symbol: "rectangle.landscape.rotate", tint: LuminousPalette.cyan,
+                              title: "Allow Landscape Rotation",
+                              subtitle: "Off keeps Studio locked to portrait by default.",
+                              isOn: $allowLandscapeRotation)
+            LuminousRowDivider()
             HStack {
                 Text("Connection")
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.45))
+                    .font(.footnote)
+                    .foregroundStyle(LuminousPalette.inkSecondary)
                 Spacer()
                 Text("Philips Hue Bridge")
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.30))
+                    .font(.footnote)
+                    .foregroundStyle(LuminousPalette.inkTertiary)
             }
-
-            Divider().background(Color.white.opacity(0.08))
-
+            .padding(.horizontal, 16)
+            .frame(minHeight: 44)
+            .accessibilityElement(children: .combine)
+            LuminousRowDivider(inset: 16)
             HStack {
                 Text("Built with ♥ for Hue")
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.30))
+                    .font(.footnote)
+                    .foregroundStyle(LuminousPalette.inkTertiary)
                 Spacer()
             }
+            .padding(.horizontal, 16)
+            .frame(minHeight: 44)
         }
     }
 
@@ -542,13 +401,14 @@ struct SettingsView: View {
                 Text("Working tree modified")
             }
             Text("ChromaGlow is an independent app and is not affiliated with, endorsed by, or a product of Signify (Philips Hue). Philips Hue is a trademark of Signify Holding.")
-                .padding(.top, 2)
+                .padding(.top, 6)
         }
         .font(.caption2)
-        .foregroundStyle(.white.opacity(0.35))
+        .foregroundStyle(LuminousPalette.inkTertiary)
         .frame(maxWidth: .infinity)
         .multilineTextAlignment(.center)
         .padding(.top, 4)
+        .padding(.horizontal, 12)
     }
 
     @ViewBuilder
@@ -565,93 +425,21 @@ struct SettingsView: View {
     }
 
     // ──────────────────────────────────────────────
-    // MARK: - Reusable Primitives
-    // ──────────────────────────────────────────────
-
-    private func settingsGroup<Content: View>(
-        header: String,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        // Materialize the non-escaping content closure BEFORE it enters
-        // GlassmorphicCard's stored (escaping) @ViewBuilder property.
-        let built = content()
-        return VStack(alignment: .leading, spacing: 10) {
-            Text(header)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.45))
-                .padding(.leading, 4)
-
-            GlassmorphicCard(isActive: false, glowColor: glowColor) {
-                VStack(spacing: 10) {
-                    built   // Value (not closure) — safe to capture in escaping context
-                }
-            }
-        }
-    }
-
-    private func settingsRow(icon: String, iconColor: Color, title: String, value: String) -> some View {
-        HStack(spacing: 12) {
-            iconCircle(icon, color: iconColor)
-            Text(title)
-                .font(.subheadline)
-                .foregroundStyle(.white)
-            Spacer()
-            Text(value)
-                .font(.system(.caption, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.45))
-                .lineLimit(1)
-                .truncationMode(.middle)
-        }
-    }
-
-    private func iconCircle(_ name: String, color: Color) -> some View {
-        ZStack {
-            Circle()
-                .fill(color.opacity(0.18))
-                .frame(width: 32, height: 32)
-            Image(systemName: name)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(color)
-        }
-    }
-
-    // ──────────────────────────────────────────────
     // MARK: - Live Connection Status
     // ──────────────────────────────────────────────
 
     /// Reads orchestrator.connectionStatus (updated live by SSE) — no manual ping needed.
     private var liveConnectionRow: some View {
-        let statuses  = orchestrator.connectionStatus
-        let connected = statuses.values.filter { if case .connected = $0 { return true }; return false }.count
-        let total     = statuses.count
-        let color: Color = {
-            if total == 0          { return .white.opacity(0.35) }
-            if connected == total  { return .green }
-            if connected == 0      { return .red }
-            return .orange
-        }()
-        let label: String = {
-            if total == 0 { return "No bridges configured" }
-            if connected == total { return "All \(total) bridge\(total == 1 ? "" : "s") connected" }
-            return "\(connected) of \(total) connected"
-        }()
-
-        return HStack(spacing: 12) {
-            iconCircle("wifi", color: color)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Connection")
-                    .font(.subheadline)
-                    .foregroundStyle(.white)
-                Text(label)
-                    .font(.caption)
-                    .foregroundStyle(color.opacity(0.85))
-            }
-            Spacer()
+        let summary = BridgeConnectionSummary(orchestrator.connectionStatus)
+        return LuminousRow(symbol: "wifi", tint: summary.tint, title: "Connection",
+                           subtitle: summary.label, subtitleTint: summary.tint) {
             Circle()
-                .fill(color)
+                .fill(summary.tint)
                 .frame(width: 8, height: 8)
+                .shadow(color: summary.tint, radius: summary.isHealthy ? 4 : 0)
+                .accessibilityHidden(true)
         }
-        .padding(.vertical, 2)
+        .accessibilityElement(children: .combine)
     }
 
     // ──────────────────────────────────────────────
@@ -683,8 +471,9 @@ struct SettingsView: View {
     /// bridges are you about to wipe?" — so the user must name it, and until
     /// they do this is nil and the action cannot run.
     ///
-    /// Also not `HueAPIClient.shared`: that is whichever client was configured
-    /// last, which on a two-bridge home need not be the one on screen.
+    /// Also not the shared singleton client: that is whichever client was
+    /// configured last, which on a two-bridge home need not be the one on
+    /// screen.
     private var cleanBridgeTargetID: String? {
         CleanBridgeTarget.resolve(registered: orchestrator.registeredBridgeIDs,
                                   selected: cleanBridgeSelectedID)
@@ -774,6 +563,8 @@ private struct AllDayScenesView: View {
     @State private var isRequestingLocation = false
     @State private var errorText: String? = nil
 
+    private let sun = Color(hex: "#FFD36B")
+
     private var hasAnchor: Bool {
         anchorLat.isFinite && anchorLon.isFinite && !anchorTz.isEmpty
     }
@@ -782,135 +573,76 @@ private struct AllDayScenesView: View {
         anchorUpdatedAt > 0 ? Date(timeIntervalSince1970: anchorUpdatedAt) : nil
     }
 
-    var body: some View {
-        ZStack {
-            Color(red: 0.055, green: 0.055, blue: 0.08).ignoresSafeArea()
+    private var isRunning: Bool { enabled && hasAnchor }
 
-            ScrollView(showsIndicators: false) {
-                VStack(spacing: 18) {
-                    headerCard
-                    controlsCard
-                    if let err = errorText {
-                        Text(err)
-                            .font(.caption)
-                            .foregroundStyle(.red.opacity(0.85))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
-                .padding(.horizontal, 20)
-                .padding(.top, 24)
-                .padding(.bottom, 80)
+    var body: some View {
+        LuminousPage(title: "All Day Scenes",
+                     eyebrow: "Circadian Auto‑Pilot",
+                     eyebrowSymbol: "sun.max.fill",
+                     tint: sun,
+                     subtitle: "A gentle all-day curve based on sunrise and sunset.",
+                     ambience: [sun, Color(hex: "#FF9F5C")]) {
+            HStack(spacing: 10) {
+                LuminousLiveBadge(state: isRunning ? .active : .paused, text: isRunning ? "Live" : "Off")
+                Spacer(minLength: 0)
+            }
+            LuminousNotice(text: "Uses a one-time location anchor to calculate daily solar times. Your location is not tracked continuously.",
+                           symbol: "location.circle.fill", tint: sun)
+            controlsCard
+            if let err = errorText {
+                LuminousNotice(text: err, symbol: "exclamationmark.triangle.fill", tint: LuminousPalette.danger)
             }
         }
-        .navigationTitle("All Day Scenes")
-        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button("Done") { dismiss() }
                     .fontWeight(.semibold)
-                    .foregroundStyle(Color(red: 1.0, green: 0.76, blue: 0.20))
+                    .foregroundStyle(LuminousPalette.cyan)
             }
         }
-        .preferredColorScheme(.dark)
-    }
-
-    private var headerCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                Image(systemName: "sun.max.fill")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(Color(red: 1.0, green: 0.76, blue: 0.20))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Circadian Auto‑Pilot")
-                        .font(.headline)
-                        .foregroundStyle(.white)
-                    Text("A gentle all-day curve based on sunrise and sunset.")
-                        .font(.caption)
-                        .foregroundStyle(.white.opacity(0.55))
-                }
-                Spacer()
-                livePill
-            }
-
-            Text("Uses a one-time location anchor to calculate daily solar times. Your location is not tracked continuously.")
-                .font(.caption)
-                .foregroundStyle(.white.opacity(0.45))
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(16)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18))
-        .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(.white.opacity(0.10), lineWidth: 1))
     }
 
     private var controlsCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Toggle(isOn: Binding(
-                get: { enabled },
-                set: { newValue in
-                    enabled = newValue
-                    if newValue, let anchor = orchestrator.loadAllDayAnchor() {
-                        orchestrator.startAllDayScenes(anchor: anchor)
-                    } else if !newValue {
-                        orchestrator.stopAllDayScenes()
-                    }
-                }
-            )) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Enable All Day Scenes")
-                        .foregroundStyle(.white)
-                    Text("Applies a slow, natural shift to your rooms, skipping any that are already playing something.")
-                        .font(.caption)
-                        .foregroundStyle(.white.opacity(0.45))
-                }
-            }
-            .tint(Color(red: 1.0, green: 0.76, blue: 0.20))
-
-            Divider().background(Color.white.opacity(0.10))
-
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Location anchor")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.white)
-                    Text(hasAnchor ? anchorSummary : "Not set")
-                        .font(.caption)
-                        .foregroundStyle(.white.opacity(0.5))
-                        .lineLimit(2)
-                }
-                Spacer()
+        LuminousGroup {
+            LuminousToggleRow(symbol: "sun.horizon.fill", tint: sun, title: "Enable All Day Scenes",
+                              subtitle: "Applies a slow, natural shift to your rooms, skipping any that are already playing something.",
+                              isOn: Binding(
+                                get: { enabled },
+                                set: { newValue in
+                                    enabled = newValue
+                                    if newValue, let anchor = orchestrator.loadAllDayAnchor() {
+                                        orchestrator.startAllDayScenes(anchor: anchor)
+                                    } else if !newValue {
+                                        orchestrator.stopAllDayScenes()
+                                    }
+                                }
+                              ))
+            LuminousRowDivider()
+            LuminousRow(symbol: "location.fill", tint: LuminousPalette.cyan, title: "Location anchor",
+                        subtitle: hasAnchor ? anchorSummary : "Not set") {
                 Button {
                     Task { await requestOneTimeLocation() }
                 } label: {
-                    if isRequestingLocation {
-                        ProgressView().tint(.white).scaleEffect(0.85)
-                    } else {
-                        Text(hasAnchor ? "Refresh" : "Set")
-                            .font(.system(size: 13, weight: .semibold))
+                    Group {
+                        if isRequestingLocation {
+                            ProgressView().tint(LuminousPalette.void).scaleEffect(0.8)
+                        } else {
+                            Text(hasAnchor ? "Refresh" : "Set")
+                                .font(.system(.subheadline, design: .rounded).weight(.heavy))
+                        }
                     }
+                    .foregroundStyle(LuminousPalette.void)
+                    .padding(.horizontal, 16)
+                    .frame(minHeight: 36)
+                    .background(Capsule().fill(LuminousPalette.signalGradient))
+                    .frame(minHeight: 44)
+                    .contentShape(Capsule())
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(Color.white.opacity(0.12))
+                .buttonStyle(LuminousPressStyle(scale: 0.93))
+                .disabled(isRequestingLocation)
+                .accessibilityLabel(hasAnchor ? "Refresh location anchor" : "Set location anchor")
             }
         }
-        .padding(16)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18))
-        .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(.white.opacity(0.10), lineWidth: 1))
-    }
-
-    private var livePill: some View {
-        let isRunning = enabled && hasAnchor
-        return HStack(spacing: 6) {
-            Circle()
-                .fill(isRunning ? HuePalette.Noir.success : Color.white.opacity(0.25))
-                .frame(width: 7, height: 7)
-            Text(isRunning ? "LIVE" : "OFF")
-                .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(isRunning ? HuePalette.Noir.success : .white.opacity(0.45))
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(Capsule().fill(.white.opacity(0.06)))
-        .overlay(Capsule().strokeBorder(.white.opacity(0.10), lineWidth: 1))
     }
 
     private var anchorSummary: String {

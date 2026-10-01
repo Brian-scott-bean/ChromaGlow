@@ -25,6 +25,7 @@
 //                LuminousPowerButton, LuminousIconBadge, LuminousLiveBadge,
 //                LuminousFactBadge
 //   Lists        LuminousGroup, LuminousRow, LuminousRowDivider, LuminousChevron
+//   Input        LuminousTextField
 //   Feedback     LuminousNotice, LuminousEmptyState
 //   Light        LuminousLight (real lamp state → screen colour and stage frames)
 
@@ -1016,6 +1017,82 @@ struct LuminousRowDivider: View {
     var inset: CGFloat = 66
     var body: some View {
         Rectangle().fill(LuminousPalette.hairline).frame(height: 1).padding(.leading, inset)
+    }
+}
+
+// MARK: - Text field
+
+/// A glass text field: an optional caption above, an optional symbol that
+/// lights when the field is in use, a clear button, a glow while focused,
+/// and an optional character cap whose count appears in the last four.
+struct LuminousTextField: View {
+    var caption: String? = nil
+    let placeholder: String
+    @Binding var text: String
+    var symbol: String? = nil
+    var tint: Color = LuminousPalette.cyan
+    var limit: Int? = nil
+    var autofocus: Bool = false
+    var capitalization: TextInputAutocapitalization = .words
+    var onSubmit: () -> Void = {}
+
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let caption {
+                LuminousEyebrow(text: caption).padding(.horizontal, 6)
+            }
+            HStack(spacing: 10) {
+                if let symbol {
+                    Image(systemName: symbol)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(focused || !text.isEmpty ? tint : LuminousPalette.inkSecondary)
+                        .accessibilityHidden(true)
+                }
+                TextField("", text: $text, prompt: Text(placeholder).foregroundStyle(LuminousPalette.inkTertiary))
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(LuminousPalette.ink)
+                    .textInputAutocapitalization(capitalization)
+                    .tint(tint)
+                    .focused($focused)
+                    .submitLabel(.done)
+                    .onSubmit(onSubmit)
+                    .accessibilityLabel(caption ?? placeholder)
+                if !text.isEmpty {
+                    Button {
+                        text = ""
+                        HapticManager.shared.light()
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 16))
+                            .foregroundStyle(LuminousPalette.inkSecondary)
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Clear")
+                }
+            }
+            .padding(.leading, 16)
+            .padding(.trailing, text.isEmpty ? 16 : 0)
+            .frame(minHeight: 52)
+            .luminousGlass(radius: 16, accent: tint, selected: focused)
+            .animation(.spring(response: 0.3, dampingFraction: 0.8), value: focused)
+
+            if let limit, text.count > limit - 4 {
+                Text("\(max(0, limit - text.count)) characters remaining")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(text.count >= limit ? LuminousPalette.danger : LuminousPalette.inkSecondary)
+                    .padding(.horizontal, 6)
+            }
+        }
+        .onChange(of: text) { _, newValue in
+            if let limit, newValue.count > limit {
+                text = String(newValue.prefix(limit))
+            }
+        }
+        .onAppear { if autofocus { focused = true } }
     }
 }
 

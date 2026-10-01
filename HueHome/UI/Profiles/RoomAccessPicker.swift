@@ -18,82 +18,66 @@ struct RoomAccessPicker: View {
     @Query(sort: \BridgeRecord.sortOrder) private var bridges: [BridgeRecord]
 
     var body: some View {
-        List {
-            if liveGroups.isEmpty {
-                Section {
-                    Text("No rooms loaded yet. Open the dashboard once so this phone has the bridge's room list, then come back.")
-                        .font(HueFont.stageStatus)
-                        .foregroundStyle(StagePalette.muted)
-                        .listRowBackground(Color.white.opacity(0.04))
-                }
-            }
+        ScrollView(showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 20) {
+                LuminousScreenTitle(title: "Rooms",
+                                    eyebrow: "\(selection.count) selected",
+                                    eyebrowSymbol: "checkmark.circle.fill",
+                                    eyebrowTint: LuminousPalette.cyan,
+                                    subtitle: "Only these rooms and zones appear on their phone.")
 
-            ForEach(bridgeSections, id: \.bridgeID) { section in
-                Section {
-                    ForEach(section.groups) { group in
-                        groupRow(group)
-                    }
-                } header: {
-                    HStack {
-                        Text(section.name.uppercased())
-                            .font(.system(size: 11, weight: .semibold))
-                            .tracking(0.8)
-                            .foregroundStyle(.white.opacity(0.45))
-                        Spacer()
-                        Button(allSelected(section) ? "None" : "All") {
-                            toggleAll(section)
-                        }
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(HuePalette.amber)
-                    }
+                if liveGroups.isEmpty {
+                    LuminousNotice(text: "No rooms loaded yet. Open the dashboard once so this phone has the bridge's room list, then come back.",
+                                   symbol: "exclamationmark.circle.fill", tint: LuminousPalette.amber)
                 }
-            }
 
-            if !staleSelectedIDs.isEmpty {
-                Section {
-                    ForEach(staleSelectedIDs, id: \.self) { staleID in
+                ForEach(bridgeSections, id: \.bridgeID) { section in
+                    VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            Text("Unknown room")
-                                .font(HueFont.stageControl)
-                                .foregroundStyle(StagePalette.muted)
+                            LuminousEyebrow(text: section.name)
                             Spacer()
-                            Button("Remove") {
-                                selection.removeAll { $0 == staleID }
+                            Button(allSelected(section) ? "None" : "All") {
+                                HapticManager.shared.selection()
+                                toggleAll(section)
                             }
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(.orange)
+                            .font(.footnote.weight(.bold))
+                            .foregroundStyle(LuminousPalette.cyan)
+                            .frame(minWidth: 44, minHeight: 44)
+                            .accessibilityLabel(allSelected(section) ? "Select none on \(section.name)" : "Select all on \(section.name)")
                         }
-                        .listRowBackground(Color.white.opacity(0.04))
+                        .padding(.horizontal, 6)
+                        LuminousGroup {
+                            ForEach(Array(section.groups.enumerated()), id: \.element.id) { idx, group in
+                                groupRow(group)
+                                if idx < section.groups.count - 1 { LuminousRowDivider() }
+                            }
+                        }
                     }
-                } header: {
-                    Text("NO LONGER FOUND")
-                        .font(.system(size: 11, weight: .semibold))
-                        .tracking(0.8)
-                        .foregroundStyle(.orange.opacity(0.7))
-                } footer: {
-                    Text("These were selected before but no bridge reports them anymore (deleted room, removed bridge).")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.white.opacity(0.3))
+                }
+
+                if !staleSelectedIDs.isEmpty {
+                    LuminousGroup(title: "No longer found",
+                                  footer: "These were selected before but no bridge reports them anymore (deleted room, removed bridge).") {
+                        ForEach(Array(staleSelectedIDs.enumerated()), id: \.element) { idx, staleID in
+                            LuminousRow(symbol: "questionmark.circle", tint: LuminousPalette.amber, title: "Unknown room") {
+                                Button("Remove") {
+                                    selection.removeAll { $0 == staleID }
+                                }
+                                .font(.footnote.weight(.bold))
+                                .foregroundStyle(LuminousPalette.amber)
+                                .frame(minWidth: 44, minHeight: 44)
+                            }
+                            if idx < staleSelectedIDs.count - 1 { LuminousRowDivider() }
+                        }
+                    }
                 }
             }
+            .padding(.horizontal, HueSpacing.screenH)
+            .padding(.top, 8)
+            .padding(.bottom, 32)
         }
-        .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-        .background(
-            LinearGradient(colors: [Color(hex: "#141224"), Color(hex: "#0B0A14")],
-                           startPoint: .top, endPoint: .bottom)
-            .ignoresSafeArea()
-        )
-        .navigationTitle("Rooms")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Text("\(selection.count) selected")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(HuePalette.amber)
-            }
-        }
-        .preferredColorScheme(.dark)
+        .background { LuminousAmbience(colors: [LuminousPalette.cyan, LuminousPalette.violet], intensity: 0.6) }
+        .luminousPageChrome(title: "Rooms")
     }
 
     // ──────────────────────────────────────────────
@@ -140,29 +124,25 @@ struct RoomAccessPicker: View {
     private func groupRow(_ group: RoomDisplayItem) -> some View {
         let isSelected = selection.contains(group.id)
         return Button {
+            HapticManager.shared.selection()
             if isSelected {
                 selection.removeAll { $0 == group.id }
             } else {
                 selection.append(group.id)
             }
         } label: {
-            HStack(spacing: 10) {
-                Image(systemName: group.kind == .zone ? "square.3.layers.3d" : "lamp.ceiling.inverse")
-                    .font(.system(size: 14))
-                    .foregroundStyle(isSelected ? HuePalette.amber : StagePalette.muted)
-                    .frame(width: 22)
-                Text(group.kind == .zone ? "\(group.name) (Zone)" : group.name)
-                    .font(HueFont.stageControl)
-                    .foregroundStyle(StagePalette.ink)
-                Spacer()
+            LuminousRow(symbol: group.kind == .zone ? "square.3.layers.3d" : archetypeIcon(for: group.archetype),
+                        tint: isSelected ? LuminousPalette.cyan : LuminousPalette.inkSecondary,
+                        title: group.kind == .zone ? "\(group.name) (Zone)" : group.name) {
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 18))
-                    .foregroundStyle(isSelected ? HuePalette.amber : .white.opacity(0.2))
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(isSelected ? LuminousPalette.cyan : LuminousPalette.inkTertiary)
+                    .shadow(color: isSelected ? LuminousPalette.cyan.opacity(0.6) : .clear, radius: 6)
+                    .accessibilityHidden(true)
             }
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .listRowBackground(Color.white.opacity(0.04))
+        .buttonStyle(LuminousRowButtonStyle())
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : [.isButton])
     }
 
     private func allSelected(_ section: BridgeSection) -> Bool {

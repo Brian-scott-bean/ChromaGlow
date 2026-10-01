@@ -417,4 +417,146 @@ final class AppGallerySnapshotTests: XCTestCase {
             }
         }
     }
+
+    // MARK: - Lane More
+    //
+    // The setup screens (More, Settings, Automations, Devices, Bridges,
+    // People, Physical Controls, Entertainment Areas, Share Invite), rendered
+    // in a tall window so the whole scroll is reviewable as one image.
+
+    private func renderSetupPage<V: View>(_ view: V, named name: String, height: CGFloat = 1600,
+                                     settle: TimeInterval = 1.2) async throws {
+        let orchestrator = await demoOrchestrator()
+        let tall = CGSize(width: size.width, height: height)
+        let root = AnyView(
+            view
+                .environment(orchestrator)
+                .environment(DeepLinkCoordinator())
+                .environment(MusicSessionCoordinator.shared)
+                .modelContainer(try container())
+                .preferredColorScheme(.dark)
+        )
+        let controller = UIHostingController(rootView: root)
+        controller.overrideUserInterfaceStyle = .dark
+        let window = UIWindow(frame: CGRect(origin: .zero, size: tall))
+        window.overrideUserInterfaceStyle = .dark
+        window.rootViewController = controller
+        window.isHidden = false
+        controller.view.layoutIfNeeded()
+        // Await rather than pump: a synchronous run-loop pump inside this
+        // main-actor test never lets the screen's own `.task` work run, so
+        // views that load on appear would be captured mid-load.
+        pump(0.2)
+        try await Task.sleep(for: .seconds(settle))
+        pump(0.2)
+        let image = UIGraphicsImageRenderer(size: tall).image { _ in
+            controller.view.drawHierarchy(in: CGRect(origin: .zero, size: tall), afterScreenUpdates: true)
+        }
+        let attachment = XCTAttachment(image: image)
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        XCTAssertNotNil(image.cgImage, name)
+        dismantle(window)
+        orchestrator.exitDemoMode()
+    }
+
+    func testLaneMoreMoreTall() async throws {
+        try await renderSetupPage(NavigationStack { MoreView() }, named: "lane-more-more", height: 1500)
+    }
+
+    func testLaneMoreSettings() async throws {
+        try await renderSetupPage(NavigationStack { SettingsView(onForget: {}) }, named: "lane-more-settings", height: 1900)
+    }
+
+    func testLaneMoreAutomations() async throws {
+        try await renderSetupPage(NavigationStack { AutomationsView() }, named: "lane-more-automations", height: 1300, settle: 3)
+    }
+
+    func testLaneMoreCreateAutomation() async throws {
+        try await renderSetupPage(CreateAutomationView(), named: "lane-more-create-automation", height: 1500)
+    }
+
+    func testLaneMoreDevices() async throws {
+        try await renderSetupPage(NavigationStack { DevicesView() }, named: "lane-more-devices", height: 1300, settle: 3)
+    }
+
+    func testLaneMoreBridgeManager() async throws {
+        try await renderSetupPage(NavigationStack { BridgeManagerView() }, named: "lane-more-bridges", height: 1000)
+    }
+
+    func testLaneMoreProfilesAccess() async throws {
+        try await renderSetupPage(NavigationStack { ProfilesAccessView() }, named: "lane-more-profiles", height: 1300)
+    }
+
+    func testLaneMorePhysicalControls() async throws {
+        try await renderSetupPage(NavigationStack { PhysicalControlsView() }, named: "lane-more-physical-controls", height: 1000)
+    }
+
+    func testLaneMoreEntertainmentAreas() async throws {
+        try await renderSetupPage(NavigationStack { EntertainmentAreasView() }, named: "lane-more-entertainment-areas", height: 1000)
+    }
+
+    func testLaneMoreShareInvite() async throws {
+        try await renderSetupPage(ShareInviteSheet(), named: "lane-more-share-invite", height: 1100)
+    }
+
+    /// Profiles & Access with two people on it (inserted for the render
+    /// only, then removed — the container is shared by the whole class).
+    func testLaneMoreProfilesWithPeople() async throws {
+        let context = try container().mainContext
+        let mia = GuestProfile(name: "Mia", icon: "figure.child", colorHex: "#FF9ECF",
+                               allowedGroupIDs: ["demo-room-living", "demo-room-kitchen"])
+        mia.lastInviteAt = Date().addingTimeInterval(-3 * 86_400)
+        let sam = GuestProfile(name: "Sam (guest)", icon: "person.fill", colorHex: "#40D9BF",
+                               allowedGroupIDs: [], features: [GuestFeature.onOff])
+        context.insert(mia)
+        context.insert(sam)
+        try context.save()
+        defer {
+            context.delete(mia)
+            context.delete(sam)
+            try? context.save()
+        }
+        try await renderSetupPage(NavigationStack { ProfilesAccessView() }, named: "lane-more-profiles-people", height: 1300)
+    }
+
+    func testLaneMoreProfileEditor() async throws {
+        try await renderSetupPage(GuestProfileEditorView(profile: nil), named: "lane-more-profile-editor", height: 1500)
+    }
+
+    func testLaneMoreJoinSharedHome() async throws {
+        let payload = HomeJoinPayload(
+            bridges: [SharedBridgeJoin(bid: "001788FFFE000001", host: "192.168.1.20", port: 443,
+                                       name: "Main Bridge", pinPK: "demo")],
+            homeName: "My Home", issuedAt: Date())
+        try await renderSetupPage(JoinSharedHomeView(payload: payload, isAddingAdditional: true),
+                             named: "lane-more-join-home", height: 1000)
+    }
+
+    func testLaneMoreGuestInviteMint() async throws {
+        let spec = GuestInviteSpec(profileID: "demo-profile", profileName: "Mia",
+                                   allowedGroupIDs: ["demo-room-living"], features: GuestFeature.all,
+                                   isRevoked: false)
+        try await renderSetupPage(GuestInviteMintSheet(spec: spec), named: "lane-more-guest-mint", height: 1000)
+    }
+
+    func testLaneMoreEntertainmentBuilder() async throws {
+        try await renderSetupPage(EntertainmentConfigBuilderView(), named: "lane-more-entertainment-builder", height: 1000)
+    }
+
+    /// The app-wide failure toast and the undo toast, over the void.
+    func testLaneMoreToasts() async throws {
+        let toasts = VStack(spacing: 24) {
+            HueToastView(message: "Couldn't reach bridge — Hallway reverted")
+            HueActionToast(message: "Moved to Kitchen", actionTitle: "Undo", action: {})
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(LuminousPalette.void)
+        try await renderSetupPage(toasts, named: "lane-more-toasts", height: 400)
+    }
+
+    func testLaneMoreMusicPicker() async throws {
+        try await renderSetupPage(MusicSourcePicker(), named: "lane-more-music-picker", height: 1000)
+    }
 }

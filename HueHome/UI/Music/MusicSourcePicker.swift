@@ -134,47 +134,43 @@ struct MusicSourcePicker: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(spacing: 16) {
-                    VStack(spacing: 0) {
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 18) {
+                    LuminousScreenTitle(title: "Music Source",
+                                        eyebrow: "Music",
+                                        eyebrowSymbol: "music.note",
+                                        eyebrowTint: LuminousPalette.magenta,
+                                        subtitle: "Where the beat comes from — looks that dance follow it.")
+                    LuminousGroup {
                         ForEach(Array(options.enumerated()), id: \.element.id) { index, option in
                             sourceRow(option)
-                            if index < options.count - 1 { divider }
+                            if index < options.count - 1 { LuminousRowDivider() }
                         }
                     }
-                    .background(cardBackground)
 
-                    VStack(alignment: .leading, spacing: 10) {
-                        Toggle(isOn: $tempoLookupEnabled) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(MusicSourceCatalog.tempoLookupTitle)
-                                    .font(.system(size: 14, weight: .semibold))
-                                    .foregroundStyle(StagePalette.ink)
-                                Text(MusicSourceCatalog.tempoLookupFootnote)
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(StagePalette.muted)
-                            }
-                        }
-                        .tint(HuePalette.amber)
-                        .padding(14)
+                    LuminousGroup(footer: MusicSourceCatalog.pandoraFootnote) {
+                        LuminousToggleRow(symbol: "metronome.fill", tint: LuminousPalette.amber,
+                                          title: MusicSourceCatalog.tempoLookupTitle,
+                                          subtitle: MusicSourceCatalog.tempoLookupFootnote,
+                                          isOn: $tempoLookupEnabled)
                     }
-                    .background(cardBackground)
-
-                    Text(MusicSourceCatalog.pandoraFootnote)
-                        .font(.system(size: 11))
-                        .foregroundStyle(StagePalette.muted)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 4)
                 }
-                .padding(16)
+                .padding(.horizontal, HueSpacing.screenH)
+                .padding(.top, 4)
+                .padding(.bottom, 32)
             }
-            .background(StagePalette.stage)
+            .background { LuminousAmbience(colors: [LuminousPalette.magenta, LuminousPalette.violet], intensity: 0.65) }
             .navigationTitle("Music Source")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(.hidden, for: .navigationBar)
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Color.clear.frame(width: 1, height: 1).accessibilityHidden(true)
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }
-                        .foregroundStyle(HuePalette.amber)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(LuminousPalette.cyan)
                 }
             }
             .alert(item: $activationAlert) { alert in
@@ -191,42 +187,34 @@ struct MusicSourcePicker: View {
             }
         }
         .presentationDetents([.medium, .large])
+        .luminousSheet()
     }
 
     // MARK: Rows
 
     private func sourceRow(_ option: MusicSourceOption) -> some View {
-        Button {
+        let active = activeKind == option.kind
+        return Button {
             select(option.kind)
         } label: {
-            HStack(spacing: 12) {
-                Image(systemName: option.icon)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(activeKind == option.kind ? HuePalette.amber : StagePalette.muted)
-                    .frame(width: 28)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(option.title)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(StagePalette.ink)
-                    Text(option.subtitle)
-                        .font(.system(size: 11))
-                        .foregroundStyle(StagePalette.muted)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer()
-                if activeKind == option.kind {
+            LuminousRow(symbol: option.icon,
+                        tint: active ? LuminousPalette.magenta : LuminousPalette.inkSecondary,
+                        title: option.title,
+                        subtitle: option.subtitle) {
+                if active {
                     Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 16))
-                        .foregroundStyle(HuePalette.amber)
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundStyle(LuminousPalette.magenta)
+                        .shadow(color: LuminousPalette.magenta.opacity(0.6), radius: 6)
+                        .accessibilityHidden(true)
                 }
             }
-            .padding(14)
-            .frame(minHeight: 44)
-            .contentShape(Rectangle())
+            .background(active ? LuminousPalette.magenta.opacity(0.07) : .clear)
             .opacity(isActivating ? 0.5 : 1)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(LuminousRowButtonStyle())
         .disabled(isActivating)
+        .accessibilityAddTraits(active ? [.isButton, .isSelected] : [.isButton])
         .contextMenu {
             // Recovery lever for a dead Spotify link (revoked refresh
             // token): without it, the only way out was clearing the
@@ -241,16 +229,6 @@ struct MusicSourcePicker: View {
                 }
             }
         }
-    }
-
-    private var divider: some View {
-        Rectangle().fill(StagePalette.line).frame(height: 1).padding(.leading, 54)
-    }
-
-    private var cardBackground: some View {
-        RoundedRectangle(cornerRadius: 16)
-            .fill(StagePalette.surface)
-            .overlay(RoundedRectangle(cornerRadius: 16).stroke(StagePalette.line, lineWidth: 1))
     }
 
     private func select(_ kind: MusicSourceOption.Kind) {

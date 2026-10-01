@@ -1,8 +1,14 @@
 // MoreView.swift
-// CastChroma — v0.15.0 More Tab
+// ChromaGlow — More (Luminous).
 //
-// Power-user hub: Automations, Devices, Profiles, Bridge Manager, Settings.
-// Full implementation in v0.16.0. This file is a routed stub that compiles.
+// The setup side of the home, in the same dark room as everything else:
+// a connection chip, the title block, then four glass groups — what runs the
+// lights (Control), who may use them (People), what they talk through
+// (System) and the app itself (App). Rare tasks, so plain rows; every row
+// opens exactly what it always did.
+//
+// Must stay here (App Store runbook / API terms): the Signify non-affiliation
+// line in the identity row, and the GetSongBPM attribution backlink.
 
 import SwiftUI
 
@@ -18,31 +24,34 @@ struct MoreView: View {
     @State private var showEntertainmentAreas = false
     @State private var showShareInvite   = false
 
-    // ── Accent colors (from design token system) ────────────
-    private let purple = Color(hex: "#8C59FF")  // no token yet
-    private let teal   = Color(hex: "#40D9BF")  // no token yet
-    private let blue   = Color(hex: "#668AFF")  // no token yet
+    // Row accents — the same three hues the Welcome Tour paints its pages in.
+    private let purple = Color(hex: "#8C59FF")
+    private let teal   = Color(hex: "#40D9BF")
+    private let blue   = Color(hex: "#668AFF")
 
     var body: some View {
-        ZStack {
-            ambientBackground
-
-            ScrollView(showsIndicators: false) {
-                VStack(spacing: 24) {
-                    controlSection
-                    peopleSection
-                    systemSection
-                    appSection
-                }
-                .padding(.horizontal, HueSpacing.screenH)
-                .padding(.top, HueSpacing.xxl)
-                .padding(.bottom, 80)
+        ScrollView(showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 22) {
+                header
+                LuminousScreenTitle(title: "More",
+                                    eyebrow: "Home setup",
+                                    eyebrowSymbol: "gearshape.2.fill",
+                                    eyebrowTint: LuminousPalette.violet,
+                                    subtitle: summaryLine)
+                controlSection
+                peopleSection
+                systemSection
+                appSection
             }
+            .padding(.horizontal, HueSpacing.screenH)
+            .padding(.top, 8)
+            .padding(.bottom, 28)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .background { LuminousAmbience(colors: [LuminousPalette.violet, teal], intensity: 0.6) }
+        .toolbar(.hidden, for: .navigationBar)
+        // Names this screen to the back button of everything pushed from it.
         .navigationTitle("More")
-        .navigationBarTitleDisplayMode(.large)
-        .toolbarColorScheme(.dark, for: .navigationBar)
-        .toolbarBackground(.hidden, for: .navigationBar)
         .preferredColorScheme(.dark)
         .navigationDestination(isPresented: $showAutomations) { AutomationsView() }
         .navigationDestination(isPresented: $showDevices)     { DevicesView() }
@@ -55,167 +64,145 @@ struct MoreView: View {
                 replayTour = nil
             }
         }
-        // Round-2 Item 4: the ONLY other builder entry point (Studio's prompt)
-        // is conditional on a spatial motion pattern + no existing area, and
-        // the old Sync tab was removed in v0.15.0 — this is the app's
-        // always-reachable place to view, create, rename, and delete
-        // entertainment areas.
+        // The app's always-reachable place to view, create, rename and delete
+        // Entertainment Areas (the Composer's own prompt is conditional).
         .navigationDestination(isPresented: $showEntertainmentAreas) { EntertainmentAreasView() }
     }
 
-    // ──────────────────────────────────────────────
-    // MARK: - Background
-    // ──────────────────────────────────────────────
+    // MARK: - Header
 
-    private var ambientBackground: some View {
-        ZStack {
-            HuePalette.Noir.background.ignoresSafeArea()
-            Circle()
-                .fill(RadialGradient(colors: [HuePalette.amber.opacity(0.14), .clear],
-                                     center: .center, startRadius: 0, endRadius: 200))
-                .frame(width: 340)
-                .offset(x: 100, y: -200)
-                .blur(radius: 20)
-            Circle()
-                .fill(RadialGradient(colors: [purple.opacity(0.12), .clear],
-                                     center: .center, startRadius: 0, endRadius: 160))
-                .frame(width: 260)
-                .offset(x: -120, y: 140)
-                .blur(radius: 20)
-        }
-        .ignoresSafeArea()
+    private var connection: BridgeConnectionSummary {
+        BridgeConnectionSummary(orchestrator.connectionStatus)
     }
 
-    // ──────────────────────────────────────────────
+    private var header: some View {
+        HStack(spacing: 10) {
+            if orchestrator.isDemoMode {
+                LuminousStateChip(text: "Demo home", dot: LuminousPalette.cyan, glowing: true)
+            } else {
+                LuminousStateChip(text: connection.label, dot: connection.tint, glowing: connection.isHealthy)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var summaryLine: String {
+        let bridges = orchestrator.activeBridgeCount
+        let lights = orchestrator.totalLightCount
+        let rooms = orchestrator.allRooms.count
+        let home = "\(lights) light\(lights == 1 ? "" : "s") · \(rooms) room\(rooms == 1 ? "" : "s")"
+        if orchestrator.isDemoMode { return "\(home) in the sample home" }
+        return "\(bridges) bridge\(bridges == 1 ? "" : "s") · \(home)"
+    }
+
     // MARK: - Sections
-    // ──────────────────────────────────────────────
 
     private var controlSection: some View {
-        moreGroup(header: "CONTROL") {
-            moreRow(icon: "bolt.fill", iconColor: purple,
-                    title: "Automations",
-                    subtitle: "Schedules, wake-up, and routines") {
-                showAutomations = true
+        LuminousGroup(title: "Control") {
+            Button { showAutomations = true } label: {
+                LuminousRow(symbol: "bolt.fill", tint: purple, title: "Automations",
+                            subtitle: "Schedules, wake-up, and routines")
             }
-            moreDivider
-            moreRow(icon: "sensor.fill", iconColor: teal,
-                    title: "Devices & Updates",
-                    subtitle: "\(orchestrator.totalLightCount) lights and sensors") {
-                showDevices = true
+            .buttonStyle(LuminousRowButtonStyle())
+            LuminousRowDivider()
+            Button { showDevices = true } label: {
+                LuminousRow(symbol: "sensor.fill", tint: teal, title: "Devices & Updates",
+                            subtitle: "\(orchestrator.totalLightCount) light\(orchestrator.totalLightCount == 1 ? "" : "s") · every device and its firmware")
             }
-            moreDivider
-            moreRow(icon: "dot.radiowaves.left.and.right", iconColor: HuePalette.amber,
-                    title: "Entertainment Areas",
-                    subtitle: "View, create, and edit instant-response light zones") {
-                showEntertainmentAreas = true
+            .buttonStyle(LuminousRowButtonStyle())
+            LuminousRowDivider()
+            Button { showEntertainmentAreas = true } label: {
+                LuminousRow(symbol: "dot.radiowaves.left.and.right", tint: LuminousPalette.cyan,
+                            title: "Entertainment Areas",
+                            subtitle: "View, create, and edit instant-response light zones")
             }
-            moreDivider
+            .buttonStyle(LuminousRowButtonStyle())
+            LuminousRowDivider()
             NavigationLink(destination: PhysicalControlsView()) {
-                moreRowContent(
-                    icon: "dial.medium.fill", iconColor: blue,
-                    title: "Physical Controls",
-                    subtitle: "Tap Dial DJ Mode — set the beat by hand"
-                )
+                LuminousRow(symbol: "dial.medium.fill", tint: blue, title: "Physical Controls",
+                            subtitle: "Tap Dial DJ Mode — set the beat by hand")
             }
-            .buttonStyle(.plain)
+            .buttonStyle(LuminousRowButtonStyle())
         }
     }
 
     private var peopleSection: some View {
-        moreGroup(header: "PEOPLE") {
+        LuminousGroup(title: "People") {
             NavigationLink(destination: ProfilesAccessView()) {
-                moreRowContent(icon: "person.2.fill", iconColor: HuePalette.amber,
-                               title: "Profiles & Access",
-                               subtitle: "Family and guest room control")
+                LuminousRow(symbol: "person.2.fill", tint: LuminousPalette.amber, title: "Profiles & Access",
+                            subtitle: "Family and guest room control")
             }
-            .buttonStyle(.plain)
-            moreDivider
-            moreRow(icon: "qrcode", iconColor: HuePalette.amber,
-                    title: "Share Invite",
-                    subtitle: "Grant access via QR code") { showShareInvite = true }
+            .buttonStyle(LuminousRowButtonStyle())
+            LuminousRowDivider()
+            Button { showShareInvite = true } label: {
+                LuminousRow(symbol: "qrcode", tint: LuminousPalette.magenta, title: "Share Invite",
+                            subtitle: "Grant access via QR code")
+            }
+            .buttonStyle(LuminousRowButtonStyle())
         }
     }
 
     private var systemSection: some View {
-        moreGroup(header: "SYSTEM") {
+        LuminousGroup(title: "System") {
             NavigationLink(destination: BridgeManagerView()) {
-                moreRowContent(
-                    icon: "network", iconColor: HuePalette.amber,
-                    title: "Bridge Manager",
-                    subtitle: "\(orchestrator.activeBridgeCount) bridge\(orchestrator.activeBridgeCount == 1 ? "" : "s") connected"
-                )
+                LuminousRow(symbol: "network", tint: LuminousPalette.cyan, title: "Bridge Manager",
+                            subtitle: "\(orchestrator.activeBridgeCount) bridge\(orchestrator.activeBridgeCount == 1 ? "" : "s") connected")
             }
-            .buttonStyle(.plain)
-            moreDivider
-            // Live connection status (SSE-driven)
-            liveConnectionRow
+            .buttonStyle(LuminousRowButtonStyle())
+            LuminousRowDivider()
+            // Live connection status (SSE-driven) — information, not a door.
+            LuminousRow(symbol: "wifi", tint: connection.tint, title: "Connection",
+                        subtitle: connection.label, subtitleTint: connection.tint) {
+                Circle()
+                    .fill(connection.tint)
+                    .frame(width: 8, height: 8)
+                    .shadow(color: connection.tint, radius: connection.isHealthy ? 4 : 0)
+                    .accessibilityHidden(true)
+            }
+            .accessibilityElement(children: .combine)
         }
     }
 
     private var appSection: some View {
-        moreGroup(header: "APP") {
-            // App identity row
-            HStack(spacing: 12) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(LinearGradient(
-                            colors: [Color(hex: "#1F1A38"), Color(hex: "#141224")],
-                            startPoint: .topLeading, endPoint: .bottomTrailing
-                        ))
-                        .frame(width: 44, height: 44)
-                    Image(systemName: "lightbulb.fill")
-                        .font(.system(size: 20))
-                        .foregroundStyle(HuePalette.amber)
-                }
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("ChromaGlow")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(.white)
-                    Text("Version \(appVersion) · Build \(buildNumber)")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.white.opacity(0.40))
-                    Text("ChromaGlow is an independent app and is not affiliated with, endorsed by, or a product of Signify (Philips Hue). Philips Hue is a trademark of Signify Holding.")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.white.opacity(0.35))
-                }
-                Spacer()
+        LuminousGroup(title: "App") {
+            // Identity + the Signify non-affiliation line (required here).
+            LuminousAppIdentityRow(detail: "ChromaGlow is an independent app and is not affiliated with, endorsed by, or a product of Signify (Philips Hue). Philips Hue is a trademark of Signify Holding.")
+            LuminousRowDivider(inset: 16)
+            Button { showSettings = true } label: {
+                LuminousRow(symbol: "gearshape.fill", tint: LuminousPalette.ink, title: "Settings",
+                            subtitle: "Bridge and app options")
             }
-
-            moreDivider
-
-            moreRow(icon: "gear", iconColor: .white.opacity(0.5),
-                    title: "Settings",
-                    subtitle: "Bridge and app options") {
-                showSettings = true
-            }
-
-            moreDivider
-
-            moreRow(icon: "play.circle.fill", iconColor: teal,
-                    title: "Replay the Tour",
-                    subtitle: "A two-minute tour of everything") {
-                // item-based cover (build-14 precedent): the pages snapshot
-                // rides the presentation, so a mid-tour grant change can't
-                // reshuffle the deck under the reader's thumb.
+            .buttonStyle(LuminousRowButtonStyle())
+            LuminousRowDivider()
+            Button {
+                // Item-based cover: the pages snapshot rides the presentation,
+                // so a mid-tour grant change can't reshuffle the deck.
                 replayTour = TourPresentation(id: 1, pages: TutorialCatalog.pages(
                     includeStudioSuite: !(orchestrator.guestAccessInfo.isGuestOnly && !orchestrator.isDemoMode)))
+            } label: {
+                LuminousRow(symbol: "play.circle.fill", tint: teal, title: "Replay the Tour",
+                            subtitle: "A two-minute tour of everything")
             }
-
-            moreDivider
-
-            // GetSongBPM attribution — REQUIRED by their API terms (free
-            // key in exchange for a backlink; account suspended without it).
-            moreRow(icon: "metronome.fill", iconColor: HuePalette.amber,
-                    title: "Song Tempo Data",
-                    subtitle: "Powered by GetSongBPM.com") {
+            .buttonStyle(LuminousRowButtonStyle())
+            LuminousRowDivider()
+            // GetSongBPM attribution — REQUIRED by their API terms (free key
+            // in exchange for a backlink; account suspended without it).
+            Button {
                 if let url = URL(string: "https://getsongbpm.com") {
                     UIApplication.shared.open(url)
                 }
+            } label: {
+                LuminousRow(symbol: "metronome.fill", tint: LuminousPalette.amber, title: "Song Tempo Data",
+                            subtitle: "Powered by GetSongBPM.com") {
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(LuminousPalette.inkTertiary)
+                        .accessibilityHidden(true)
+                }
             }
-
-            moreDivider
-
-            // Demo mode toggle
+            .buttonStyle(LuminousRowButtonStyle())
+            .accessibilityHint("Opens getsongbpm.com")
+            LuminousRowDivider()
             Button {
                 if orchestrator.isDemoMode {
                     NotificationCenter.default.post(name: .hueDemoExited, object: nil)
@@ -223,150 +210,18 @@ struct MoreView: View {
                     orchestrator.enterDemoMode()
                 }
             } label: {
-                moreRowContent(
-                    icon: orchestrator.isDemoMode ? "sparkles.slash" : "sparkles",
-                    iconColor: orchestrator.isDemoMode ? .orange : HuePalette.amber,
-                    title: orchestrator.isDemoMode ? "Exit Demo Mode" : "Demo Mode",
-                    subtitle: orchestrator.isDemoMode ? "Resume real bridge" : "Explore a sample home",
-                    badge: orchestrator.isDemoMode ? "LIVE" : nil,
-                    badgeColor: .orange
-                )
+                LuminousRow(symbol: orchestrator.isDemoMode ? "sparkles.slash" : "sparkles",
+                            tint: orchestrator.isDemoMode ? LuminousPalette.amber : LuminousPalette.cyan,
+                            title: orchestrator.isDemoMode ? "Exit Demo Mode" : "Demo Mode",
+                            subtitle: orchestrator.isDemoMode ? "Resume real bridge" : "Explore a sample home") {
+                    if orchestrator.isDemoMode {
+                        LuminousTextBadge(text: "Live", tint: LuminousPalette.amber)
+                    } else {
+                        LuminousChevron()
+                    }
+                }
             }
-            .buttonStyle(.plain)
+            .buttonStyle(LuminousRowButtonStyle())
         }
-    }
-
-    // ──────────────────────────────────────────────
-    // MARK: - Live Connection Row
-    // ──────────────────────────────────────────────
-
-    private var liveConnectionRow: some View {
-        let statuses  = orchestrator.connectionStatus
-        let connected = statuses.values.filter { if case .connected = $0 { return true }; return false }.count
-        let total     = statuses.count
-        let color: Color = {
-            if total == 0         { return .white.opacity(0.35) }
-            if connected == total { return .green }
-            if connected == 0     { return .red }
-            return .orange
-        }()
-        let label: String = {
-            if total == 0         { return "No bridges configured" }
-            if connected == total { return "All \(total) bridge\(total == 1 ? "" : "s") connected" }
-            return "\(connected) of \(total) connected"
-        }()
-
-        return HStack(spacing: 12) {
-            iconCircle("wifi", color: color)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Connection")
-                    .font(.system(size: 15, weight: .regular))
-                    .foregroundStyle(.white)
-                Text(label)
-                    .font(.system(size: 12))
-                    .foregroundStyle(color.opacity(0.85))
-            }
-            Spacer()
-            Circle().fill(color).frame(width: 8, height: 8)
-        }
-    }
-
-    // ──────────────────────────────────────────────
-    // MARK: - Reusable Primitives
-    // ──────────────────────────────────────────────
-
-    private var moreDivider: some View {
-        Divider().background(Color.white.opacity(0.08))
-    }
-
-    private func moreGroup<Content: View>(
-        header: String,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        let built = content()
-        return VStack(alignment: .leading, spacing: 10) {
-            Text(header)
-                .font(.system(size: 11, weight: .semibold))
-                .tracking(0.8)
-                .foregroundStyle(.white.opacity(0.45))
-                .padding(.leading, 4)
-
-            GlassmorphicCard(isActive: false, glowColor: HuePalette.amber) {
-                VStack(spacing: 12) { built }
-            }
-        }
-    }
-
-    @discardableResult
-    private func moreRow(
-        icon: String,
-        iconColor: Color,
-        title: String,
-        subtitle: String,
-        badge: String? = nil,
-        badgeColor: Color = HuePalette.amber,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            moreRowContent(icon: icon, iconColor: iconColor,
-                           title: title, subtitle: subtitle,
-                           badge: badge, badgeColor: badgeColor)
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func moreRowContent(
-        icon: String,
-        iconColor: Color,
-        title: String,
-        subtitle: String,
-        badge: String? = nil,
-        badgeColor: Color = HuePalette.amber
-    ) -> some View {
-        HStack(spacing: 12) {
-            iconCircle(icon, color: iconColor)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.system(size: 15, weight: .regular))
-                    .foregroundStyle(.white)
-                Text(subtitle)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.white.opacity(0.45))
-            }
-            Spacer()
-            if let badge {
-                Text(badge)
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(badgeColor)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .background(Capsule().fill(badgeColor.opacity(0.15)))
-            } else {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.28))
-            }
-        }
-        .contentShape(Rectangle())
-    }
-
-    private func iconCircle(_ name: String, color: Color) -> some View {
-        ZStack {
-            Circle().fill(color.opacity(0.18)).frame(width: 36, height: 36)
-            Image(systemName: name)
-                .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(color)
-        }
-    }
-
-    // ──────────────────────────────────────────────
-    // MARK: - Helpers
-    // ──────────────────────────────────────────────
-
-    private var appVersion: String {
-        BuildMetadata.current.marketingVersion
-    }
-    private var buildNumber: String {
-        BuildMetadata.current.buildNumber
     }
 }

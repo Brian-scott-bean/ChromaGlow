@@ -44,49 +44,41 @@ struct BridgeKeysView: View {
     }
 
     var body: some View {
-        ZStack {
-            LinearGradient(colors: [Color(hex: "#141224"), Color(hex: "#0B0A14")],
-                           startPoint: .top, endPoint: .bottom)
-                .ignoresSafeArea()
-
-            ScrollView {
-                VStack(spacing: 14) {
-                    switch loadState {
-                    case .loading:
-                        ProgressView("Asking \(bridge.name) for its key list…")
-                            .tint(.white)
-                            .foregroundStyle(.white.opacity(0.6))
-                            .padding(.top, 60)
-
-                    case .unsupported:
-                        unsupportedCard
-
-                    case .failed(let message):
-                        StageCard(icon: "wifi.exclamationmark", title: "Couldn't read the bridge") {
-                            Text(message)
-                                .font(HueFont.stageStatus)
-                                .foregroundStyle(StagePalette.muted)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-
-                    case .loaded(let entries):
-                        StageCard(icon: "key.fill", title: "\(entries.count) keys on \(bridge.name)") {
-                            Text("Every app ever paired with this bridge holds one. Yours are named chromaglow; a guest's reads chromaglow#g-….")
-                                .font(HueFont.stageStatus)
-                                .foregroundStyle(StagePalette.muted)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        ForEach(entries) { entry in
-                            keyRow(entry)
-                        }
-                    }
+        LuminousPage(title: "Keys on this Bridge",
+                     eyebrow: bridge.name,
+                     eyebrowSymbol: "key.fill",
+                     tint: LuminousPalette.amber,
+                     subtitle: "Every app ever paired with this bridge holds one.",
+                     ambience: [LuminousPalette.amber, LuminousPalette.violet]) {
+            switch loadState {
+            case .loading:
+                HStack(spacing: 12) {
+                    ProgressView().tint(LuminousPalette.amber)
+                    Text("Asking \(bridge.name) for its key list…")
+                        .font(.subheadline)
+                        .foregroundStyle(LuminousPalette.inkSecondary)
+                    Spacer(minLength: 0)
                 }
                 .padding(16)
+                .luminousGlass()
+
+            case .unsupported:
+                unsupportedCard
+
+            case .failed(let message):
+                LuminousEmptyState(symbol: "wifi.exclamationmark", title: "Couldn't read the bridge", message: message)
+
+            case .loaded(let entries):
+                LuminousNotice(text: "\(entries.count) keys on \(bridge.name). Yours are named chromaglow; a guest's reads chromaglow#g-….",
+                               symbol: "key.fill", tint: LuminousPalette.amber)
+                LuminousGroup {
+                    ForEach(Array(entries.enumerated()), id: \.element.id) { idx, entry in
+                        keyRow(entry)
+                        if idx < entries.count - 1 { LuminousRowDivider() }
+                    }
+                }
             }
         }
-        .navigationTitle("Keys on this Bridge")
-        .navigationBarTitleDisplayMode(.inline)
-        .preferredColorScheme(.dark)
         .task { await load() }
         .alert("Key Removal", isPresented: Binding(
             get: { outcomeMessage != nil },
@@ -115,62 +107,80 @@ struct BridgeKeysView: View {
     // ──────────────────────────────────────────────
 
     private var unsupportedCard: some View {
-        StageCard(icon: "lock.shield", title: "Not available on this bridge") {
-            Text("This bridge's software doesn't share its key list locally. Keys can be viewed and revoked from the official Philips Hue app (or by resetting app keys on the bridge).")
-                .font(HueFont.stageStatus)
-                .foregroundStyle(StagePalette.muted)
-                .fixedSize(horizontal: false, vertical: true)
-        }
+        LuminousEmptyState(symbol: "lock.shield",
+                           title: "Not available on this bridge",
+                           message: "This bridge's software doesn't share its key list locally. Keys can be viewed and revoked from the official Philips Hue app (or by resetting app keys on the bridge).")
     }
 
+    /// One key. Only the truncated id is ever shown (H-03); this phone's own
+    /// key and a guest-held bridge's keys are never offered for removal.
     private func keyRow(_ entry: HueV1Client.WhitelistEntry) -> some View {
-        StageCard(icon: "key.horizontal", title: entry.name) {
-            VStack(alignment: .leading, spacing: HueSpacing.sm) {
-                HStack(spacing: 10) {
-                    Text(entry.displayID)
-                        .font(.system(size: 12, weight: .medium, design: .monospaced))
-                        .foregroundStyle(StagePalette.muted)
-                    if let lastUse = entry.lastUseDate {
-                        Text("· last used \(lastUse)")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.white.opacity(0.3))
-                    }
-                    Spacer()
-                }
-
-                if entry.element == ownKey {
-                    Text("This phone's key — remove the bridge in Bridge Manager instead.")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.white.opacity(0.4))
-                } else if isGuestBridge {
-                    Text("Shared with you — only the bridge's owner can remove keys.")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.white.opacity(0.4))
-                } else {
-                    Button {
-                        pendingRemoval = entry   // confirm first — this is destructive
-                    } label: {
-                        if removingElement == entry.element {
-                            ProgressView()
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 10)
-                        } else {
-                            Label("Try Remove", systemImage: "trash")
-                                .font(HueFont.stageChip)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 10)
-                                .background(
-                                    RoundedRectangle(cornerRadius: HueRadius.lg)
-                                        .fill(Color.red.opacity(0.12))
-                                )
+        let isOwn = entry.element == ownKey
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 14) {
+                LuminousIconBadge(symbol: "key.horizontal.fill",
+                                  tint: isOwn ? LuminousPalette.cyan : LuminousPalette.amber, size: 36)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(entry.name)
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(LuminousPalette.ink)
+                        .lineLimit(1)
+                    HStack(spacing: 6) {
+                        Text(entry.displayID)
+                            .font(.system(.caption, design: .monospaced).weight(.medium))
+                            .foregroundStyle(LuminousPalette.inkSecondary)
+                        if let lastUse = entry.lastUseDate {
+                            Text("· last used \(lastUse)")
+                                .font(.caption)
+                                .foregroundStyle(LuminousPalette.inkTertiary)
+                                .lineLimit(1)
                         }
                     }
-                    .buttonStyle(.plain)
-                    .tint(.red)
-                    .disabled(removingElement != nil)
+                }
+                Spacer(minLength: 0)
+                if isOwn {
+                    LuminousTextBadge(text: "This phone", tint: LuminousPalette.cyan)
                 }
             }
+
+            if isOwn {
+                Text("This phone's key — remove the bridge in Bridge Manager instead.")
+                    .font(.footnote)
+                    .foregroundStyle(LuminousPalette.inkSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if isGuestBridge {
+                Text("Shared with you — only the bridge's owner can remove keys.")
+                    .font(.footnote)
+                    .foregroundStyle(LuminousPalette.inkSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Button {
+                    pendingRemoval = entry   // confirm first — this is destructive
+                } label: {
+                    HStack(spacing: 8) {
+                        if removingElement == entry.element {
+                            ProgressView().tint(LuminousPalette.danger)
+                        } else {
+                            Image(systemName: "trash").font(.system(size: 13, weight: .semibold))
+                            Text("Try Remove").font(.system(.subheadline, design: .rounded).weight(.bold))
+                        }
+                    }
+                    .foregroundStyle(LuminousPalette.danger)
+                    .frame(maxWidth: .infinity)
+                    .frame(minHeight: 44)
+                    .background(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(LuminousPalette.danger.opacity(0.1)))
+                    .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .strokeBorder(LuminousPalette.danger.opacity(0.3), lineWidth: 1))
+                    .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+                .buttonStyle(LuminousPressStyle())
+                .disabled(removingElement != nil)
+                .accessibilityLabel("Try to remove \(entry.name)")
+            }
         }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
     }
 
     // ──────────────────────────────────────────────

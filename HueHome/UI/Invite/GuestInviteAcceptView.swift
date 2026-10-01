@@ -34,7 +34,12 @@ struct GuestInviteAcceptView: View {
     }
 
     var body: some View {
-        StageSheetScaffold(title: "Join \(payload.homeName)") {
+        LuminousSheetScaffold(title: "Join \(payload.homeName)",
+                              eyebrow: "You're invited",
+                              eyebrowSymbol: "person.badge.key.fill",
+                              tint: LuminousPalette.magenta,
+                              subtitle: "A key was made just for you — no button to press.",
+                              ambience: [LuminousPalette.magenta, LuminousPalette.cyan]) {
             if payload.isExpired() {
                 expiredCard
             } else {
@@ -64,90 +69,66 @@ struct GuestInviteAcceptView: View {
     // ──────────────────────────────────────────────
 
     private var introCard: some View {
-        StageCard(icon: "person.badge.key.fill", title: "You're invited") {
-            Text("You're in as \"\(payload.profileName)\". No button press needed — this invite carries a key minted just for you. Tap Connect on each bridge below.")
-                .font(HueFont.stageStatus)
-                .foregroundStyle(StagePalette.muted)
-                .fixedSize(horizontal: false, vertical: true)
-        }
+        LuminousNotice(text: "You're in as \"\(payload.profileName)\". No button press needed — this invite carries a key minted just for you. Tap Connect on each bridge below.",
+                       symbol: "person.badge.key.fill", tint: LuminousPalette.cyan)
     }
 
     private var expiredCard: some View {
-        StageCard(icon: "clock.badge.exclamationmark", title: "This code has expired") {
-            Text("Invite codes stop working after a short window. Ask the person who invited you to open the invite again and show you a fresh code — your access doesn't change, only the code does.")
-                .font(HueFont.stageStatus)
-                .foregroundStyle(StagePalette.muted)
-                .fixedSize(horizontal: false, vertical: true)
-        }
+        LuminousEmptyState(symbol: "clock.badge.exclamationmark", title: "This code has expired",
+                           message: "Invite codes stop working after a short window. Ask the person who invited you to open the invite again and show you a fresh code — your access doesn't change, only the code does.")
     }
 
     private func bridgeCard(_ grant: SharedBridgeInviteGrant) -> some View {
         let state = states[grant.bid] ?? .idle
-        return StageCard(
-            icon: state == .joined ? "checkmark.seal.fill" : "wifi.router",
+        let joined = state == .joined
+        return LuminousTitledCard(
+            symbol: joined ? "checkmark.seal.fill" : "wifi.router",
             title: grant.name,
-            subtitle: "\(grant.allowedGroups.count) room\(grant.allowedGroups.count == 1 ? "" : "s") shared with you"
+            subtitle: "\(grant.allowedGroups.count) room\(grant.allowedGroups.count == 1 ? "" : "s") shared with you",
+            tint: joined ? LuminousPalette.live : LuminousPalette.cyan,
+            glow: joined ? LuminousPalette.live : nil
         ) {
-            VStack(alignment: .leading, spacing: HueSpacing.sm) {
+            VStack(alignment: .leading, spacing: 10) {
                 switch state {
                 case .joined:
                     Label("Connected", systemImage: "checkmark.circle.fill")
-                        .font(HueFont.stageChip)
-                        .foregroundStyle(.green)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(LuminousPalette.live)
                 case .connecting:
-                    HStack(spacing: HueSpacing.sm) {
-                        ProgressView()
+                    HStack(spacing: 10) {
+                        ProgressView().tint(LuminousPalette.cyan)
                         Text("Verifying the bridge and your key…")
-                            .font(HueFont.stageStatus)
-                            .foregroundStyle(StagePalette.muted)
+                            .font(.footnote)
+                            .foregroundStyle(LuminousPalette.inkSecondary)
                     }
                 case .idle, .failed:
                     if case .failed(let message) = state {
                         Text(message)
-                            .font(HueFont.stageStatus)
-                            .foregroundStyle(.orange)
+                            .font(.footnote.weight(.medium))
+                            .foregroundStyle(LuminousPalette.amber)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    Button {
+                    LuminousPrimaryButton(title: "Connect", symbol: "link") {
                         connect(grant)
-                    } label: {
-                        Label("Connect", systemImage: "link")
-                            .font(HueFont.stageChip)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 12)
-                            .background(
-                                RoundedRectangle(cornerRadius: HueRadius.lg)
-                                    .fill(HuePalette.amber.opacity(0.15))
-                            )
                     }
-                    .buttonStyle(.plain)
-                    .tint(HuePalette.amber)
                 }
             }
         }
     }
 
     private var doneButton: some View {
-        Button {
+        LuminousPrimaryButton(title: "All set", symbol: "checkmark", live: true) {
             dismiss()
             if !isAddingAdditional { onFirstPairingComplete?() }
-        } label: {
-            Label("All set", systemImage: "checkmark")
-                .font(HueFont.stageChip)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 14)
-                .background(RoundedRectangle(cornerRadius: HueRadius.lg)
-                    .fill(HuePalette.amber.opacity(0.2)))
         }
-        .buttonStyle(.plain)
-        .tint(HuePalette.amber)
+        .padding(.top, 4)
     }
 
     private var limitsFootnote: some View {
-        StageCard(icon: "info.circle", title: "About your access") {
+        LuminousTitledCard(symbol: "info.circle", title: "About your access", tint: LuminousPalette.inkSecondary) {
             Text("Room limits apply inside ChromaGlow on this phone. The key itself can control the whole bridge from any Hue app — a Philips Hue limitation. To change what you can access, ask the owner for a new invite and scan it again.")
-                .font(HueFont.stageStatus)
-                .foregroundStyle(StagePalette.muted)
+                .font(.footnote)
+                .foregroundStyle(LuminousPalette.inkSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }

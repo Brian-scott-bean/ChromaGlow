@@ -33,13 +33,14 @@ struct JoinSharedHomeView: View {
     }
 
     var body: some View {
-        StageSheetScaffold(title: "Join \(payload.homeName)") {
-            StageCard(icon: "person.2.fill", title: "You're invited") {
-                Text("Connect to \(payload.bridges.count == 1 ? "the bridge below" : "each bridge below"). You'll press the round button on the Hue Bridge once — that's how Hue grants this phone its own key. The invite carries no passwords.")
-                    .font(HueFont.stageStatus)
-                    .foregroundStyle(StagePalette.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+        LuminousSheetScaffold(title: "Join \(payload.homeName)",
+                              eyebrow: "You're invited",
+                              eyebrowSymbol: "person.2.fill",
+                              tint: LuminousPalette.magenta,
+                              subtitle: "Connect this phone to the home you were invited to.",
+                              ambience: [LuminousPalette.magenta, LuminousPalette.cyan]) {
+            LuminousNotice(text: "Connect to \(payload.bridges.count == 1 ? "the bridge below" : "each bridge below"). You'll press the round button on the Hue Bridge once — that's how Hue grants this phone its own key. The invite carries no passwords.",
+                           symbol: "person.2.fill", tint: LuminousPalette.cyan)
 
             ForEach(payload.bridges, id: \.bid) { bridge in
                 bridgeCard(bridge)
@@ -64,50 +65,28 @@ struct JoinSharedHomeView: View {
 
     private func bridgeCard(_ bridge: SharedBridgeJoin) -> some View {
         let joined = joinedBridgeIDs.contains(bridge.bid)
-        return StageCard(icon: joined ? "checkmark.seal.fill" : "wifi.router",
-                         title: bridge.name) {
-            VStack(alignment: .leading, spacing: HueSpacing.sm) {
-                Text(bridge.host)
-                    .font(.system(size: 12, weight: .medium, design: .monospaced))
-                    .foregroundStyle(StagePalette.muted)
-
-                if joined {
-                    Label("Connected", systemImage: "checkmark.circle.fill")
-                        .font(HueFont.stageChip)
-                        .foregroundStyle(.green)
-                } else {
-                    Button {
-                        startConnect(bridge)
-                    } label: {
-                        Label("Connect", systemImage: "link")
-                            .font(HueFont.stageChip)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 12)
-                            .background(
-                                RoundedRectangle(cornerRadius: HueRadius.lg)
-                                    .fill(HuePalette.amber.opacity(0.15))
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .tint(HuePalette.amber)
+        return LuminousTitledCard(symbol: joined ? "checkmark.seal.fill" : "wifi.router",
+                                  title: bridge.name,
+                                  subtitle: bridge.host,
+                                  tint: joined ? LuminousPalette.live : LuminousPalette.cyan,
+                                  glow: joined ? LuminousPalette.live : nil) {
+            if joined {
+                Label("Connected", systemImage: "checkmark.circle.fill")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(LuminousPalette.live)
+            } else {
+                LuminousPrimaryButton(title: "Connect", symbol: "link") {
+                    startConnect(bridge)
                 }
             }
         }
     }
 
     private var doneButton: some View {
-        Button {
+        LuminousPrimaryButton(title: "All set", symbol: "checkmark", live: true) {
             dismiss()
-        } label: {
-            Label("All set", systemImage: "checkmark")
-                .font(HueFont.stageChip)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 14)
-                .background(RoundedRectangle(cornerRadius: HueRadius.lg)
-                    .fill(HuePalette.amber.opacity(0.2)))
         }
-        .buttonStyle(.plain)
-        .tint(HuePalette.amber)
+        .padding(.top, 4)
     }
 
     // MARK: - Seeded pairing
@@ -145,16 +124,10 @@ struct JoinSharedHomeView: View {
                 },
                 vm: target.vm
             )
-            Button {
+            LuminousRoundButton(symbol: "xmark", label: "Cancel joining") {
                 connecting = nil
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 26))
-                    .foregroundStyle(.white.opacity(0.4))
-                    .padding(16)
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Cancel joining")
+            .padding(12)
         }
     }
 

@@ -4,7 +4,8 @@
 // Name, icon, color, features, rooms. Feature rows carry the honest
 // one-liners (scenes = recall only; guests can never create or delete).
 // The rooms row pushes RoomAccessPicker inside the scaffold's own
-// NavigationStack. Nothing persists until Save.
+// NavigationStack. Nothing persists until Save. Luminous sheet: the
+// background leans to the colour chosen for the person.
 
 import SwiftUI
 import SwiftData
@@ -33,94 +34,101 @@ struct GuestProfileEditorView: View {
     ]
 
     var body: some View {
-        StageSheetScaffold(title: profile == nil ? "New Profile" : "Edit Profile") {
-            StageCard(icon: "textformat", title: "Name") {
-                TextField("Family member or guest", text: $name)
-                    .font(HueFont.stageControl)
-                    .foregroundStyle(StagePalette.ink)
-                    .textInputAutocapitalization(.words)
-                    .padding(.vertical, 6)
-            }
+        LuminousSheetScaffold(title: profile == nil ? "New Profile" : "Edit Profile",
+                              eyebrow: "Profiles & Access",
+                              eyebrowSymbol: "person.2.fill",
+                              tint: Color(hex: colorHex),
+                              subtitle: "Who they are, what they may change, and which rooms they see.",
+                              ambience: [Color(hex: colorHex), LuminousPalette.violet],
+                              detents: [.large]) {
+            LuminousTextField(caption: "Name", placeholder: "Family member or guest", text: $name)
 
-            StageCard(icon: "face.smiling", title: "Icon & color") {
-                VStack(spacing: HueSpacing.md) {
-                    HStack(spacing: HueSpacing.sm) {
+            LuminousTitledCard(symbol: icon, title: "Icon & color", tint: Color(hex: colorHex)) {
+                VStack(alignment: .leading, spacing: 14) {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
                         ForEach(Self.icons, id: \.self) { symbol in
+                            let selected = icon == symbol
                             Button {
+                                HapticManager.shared.selection()
                                 icon = symbol
                             } label: {
                                 Image(systemName: symbol)
-                                    .font(.system(size: 15, weight: .medium))
-                                    .foregroundStyle(icon == symbol ? Color(hex: colorHex) : StagePalette.muted)
-                                    .frame(width: 34, height: 34)
-                                    .background(
-                                        Circle().fill(icon == symbol
-                                            ? Color(hex: colorHex).opacity(0.2)
-                                            : Color.white.opacity(0.05))
-                                    )
+                                    .font(.system(size: 17, weight: .semibold))
+                                    .foregroundStyle(selected ? Color(hex: colorHex) : LuminousPalette.inkSecondary)
+                                    .frame(width: 44, height: 44)
+                                    .background(Circle().fill(selected ? Color(hex: colorHex).opacity(0.22) : Color.white.opacity(0.05)))
+                                    .overlay(Circle().strokeBorder(selected ? Color(hex: colorHex).opacity(0.7) : Color.white.opacity(0.08),
+                                                                   lineWidth: 1))
+                                    .shadow(color: selected ? Color(hex: colorHex).opacity(0.5) : .clear, radius: 8)
+                                    .frame(maxWidth: .infinity)
+                                    .contentShape(Rectangle())
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(LuminousPressStyle(scale: 0.9))
+                            .accessibilityLabel(symbol.replacingOccurrences(of: ".fill", with: "").replacingOccurrences(of: ".", with: " "))
+                            .accessibilityAddTraits(selected ? [.isButton, .isSelected] : [.isButton])
                         }
                     }
-                    HStack(spacing: HueSpacing.sm) {
+                    HStack(spacing: 10) {
                         ForEach(Self.colors, id: \.self) { hex in
+                            let selected = colorHex == hex
                             Button {
+                                HapticManager.shared.selection()
                                 colorHex = hex
                             } label: {
                                 Circle()
-                                    .fill(Color(hex: hex))
-                                    .frame(width: 26, height: 26)
-                                    .overlay {
-                                        if colorHex == hex {
-                                            Circle().strokeBorder(.white, lineWidth: 2)
-                                        }
-                                    }
+                                    .fill(RadialGradient(colors: [Color.white.opacity(0.6), Color(hex: hex)],
+                                                         center: .topLeading, startRadius: 0, endRadius: 26))
+                                    .frame(width: 30, height: 30)
+                                    .overlay(Circle().strokeBorder(Color.white.opacity(selected ? 0.9 : 0.2), lineWidth: selected ? 2 : 1))
+                                    .shadow(color: Color(hex: hex).opacity(selected ? 0.8 : 0.3), radius: selected ? 10 : 4)
+                                    .frame(width: 44, height: 44)
+                                    .contentShape(Circle())
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(LuminousPressStyle(scale: 0.88))
+                            .accessibilityLabel("Color \(hex)")
+                            .accessibilityAddTraits(selected ? [.isButton, .isSelected] : [.isButton])
                         }
-                        Spacer()
+                        Spacer(minLength: 0)
                     }
                 }
             }
 
-            StageCard(icon: "checklist", title: "What they can do") {
-                VStack(spacing: HueSpacing.sm) {
-                    featureToggle(
-                        GuestFeature.onOff,
-                        title: "Lights on / off",
-                        detail: "Room and light power, plus All Off."
-                    )
-                    featureToggle(
-                        GuestFeature.brightness,
-                        title: "Brightness & color",
-                        detail: "Dim and recolor the lights they can see."
-                    )
-                    featureToggle(
-                        GuestFeature.scenes,
-                        title: "Scenes",
-                        detail: "Recall existing scenes only — guests can never create or delete."
-                    )
-                }
+            LuminousGroup(title: "What they can do") {
+                featureToggle(
+                    GuestFeature.onOff,
+                    symbol: "power",
+                    title: "Lights on / off",
+                    detail: "Room and light power, plus All Off."
+                )
+                LuminousRowDivider()
+                featureToggle(
+                    GuestFeature.brightness,
+                    symbol: "sun.max.fill",
+                    title: "Brightness & color",
+                    detail: "Dim and recolor the lights they can see."
+                )
+                LuminousRowDivider()
+                featureToggle(
+                    GuestFeature.scenes,
+                    symbol: "swatchpalette.fill",
+                    title: "Scenes",
+                    detail: "Recall existing scenes only — guests can never create or delete."
+                )
             }
 
-            StageCard(icon: "square.grid.2x2", title: "Rooms") {
+            LuminousGroup(title: "Rooms") {
                 NavigationLink {
                     RoomAccessPicker(selection: $allowedGroupIDs)
                 } label: {
-                    HStack {
-                        Text(allowedGroupIDs.isEmpty
-                             ? "No rooms selected yet"
-                             : "\(allowedGroupIDs.count) room\(allowedGroupIDs.count == 1 ? "" : "s") selected")
-                            .font(HueFont.stageControl)
-                            .foregroundStyle(allowedGroupIDs.isEmpty ? .orange : StagePalette.ink)
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(StagePalette.muted)
-                    }
-                    .contentShape(Rectangle())
+                    LuminousRow(symbol: "square.grid.2x2.fill",
+                                tint: allowedGroupIDs.isEmpty ? LuminousPalette.amber : LuminousPalette.cyan,
+                                title: allowedGroupIDs.isEmpty
+                                    ? "No rooms selected yet"
+                                    : "\(allowedGroupIDs.count) room\(allowedGroupIDs.count == 1 ? "" : "s") selected",
+                                subtitle: allowedGroupIDs.isEmpty ? "Pick at least one room before inviting." : "Only these appear on their phone.",
+                                subtitleTint: allowedGroupIDs.isEmpty ? LuminousPalette.amber : LuminousPalette.inkSecondary)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(LuminousRowButtonStyle())
             }
 
             saveButton
@@ -128,43 +136,22 @@ struct GuestProfileEditorView: View {
         .task { loadOnce() }
     }
 
-    private func featureToggle(_ feature: String, title: String, detail: String) -> some View {
-        Toggle(isOn: Binding(
-            get: { features.contains(feature) },
-            set: { on in
-                if on { features.insert(feature) } else { features.remove(feature) }
-            }
-        )) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(HueFont.stageControl)
-                    .foregroundStyle(StagePalette.ink)
-                Text(detail)
-                    .font(HueFont.stageStatus)
-                    .foregroundStyle(StagePalette.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .tint(HuePalette.amber)
+    private func featureToggle(_ feature: String, symbol: String, title: String, detail: String) -> some View {
+        LuminousToggleRow(symbol: symbol, tint: Color(hex: colorHex), title: title, subtitle: detail,
+                          isOn: Binding(
+                            get: { features.contains(feature) },
+                            set: { on in
+                                if on { features.insert(feature) } else { features.remove(feature) }
+                            }
+                          ))
     }
 
     private var saveButton: some View {
-        Button {
+        LuminousPrimaryButton(title: profile == nil ? "Create Profile" : "Save Changes", symbol: "checkmark") {
             save()
-        } label: {
-            Label(profile == nil ? "Create Profile" : "Save Changes",
-                  systemImage: "checkmark")
-                .font(HueFont.stageChip)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 14)
-                .background(
-                    RoundedRectangle(cornerRadius: HueRadius.lg)
-                        .fill(HuePalette.amber.opacity(canSave ? 0.2 : 0.06))
-                )
         }
-        .buttonStyle(.plain)
-        .tint(canSave ? HuePalette.amber : .gray)
         .disabled(!canSave)
+        .padding(.top, 4)
     }
 
     private var canSave: Bool {

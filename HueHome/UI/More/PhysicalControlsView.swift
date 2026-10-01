@@ -1,9 +1,10 @@
 // PhysicalControlsView.swift
-// ChromaGlow — Round 3 Phase G (Tap Dial as DJ controller)
+// ChromaGlow — Physical Controls (Luminous).
 //
 // One-tap "DJ Mode" template: the Hue Tap Dial becomes a physical
 // performance controller. Events arrive over the SSE stream the app
-// already holds open — no pairing, no extra connection.
+// already holds open — no pairing, no extra connection. "Hue Tap Dial" is
+// the only trademark form used on this screen.
 
 import SwiftUI
 
@@ -11,109 +12,58 @@ struct PhysicalControlsView: View {
 
     @Environment(UnifiedOrchestrator.self) private var orchestrator
 
+    private let blue = Color(hex: "#668AFF")
+
     var body: some View {
-        ZStack {
-            Color(red: 0.055, green: 0.055, blue: 0.08).ignoresSafeArea()
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    header
+        LuminousPage(title: "Physical Controls",
+                     eyebrow: "Tap Dial · DJ Mode",
+                     eyebrowSymbol: "dial.medium.fill",
+                     tint: blue,
+                     subtitle: "Hands-free tempo and punches while you perform",
+                     ambience: [blue, LuminousPalette.violet]) {
+            djModeCard
 
-                    djModeCard
-
-                    if orchestrator.djModeEnabled {
-                        mappingCard
-                    }
-
-                    Text("Works with any Hue Tap Dial paired to your bridge. Rotations and presses arrive over the bridge's live event stream — nothing extra to set up.")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.white.opacity(0.4))
-                        .padding(.horizontal, 4)
-                }
-                .padding(20)
+            if orchestrator.djModeEnabled {
+                mappingCard
+                    .transition(.opacity.combined(with: .move(edge: .top)))
             }
+
+            Text("Works with any Hue Tap Dial paired to your bridge. Rotations and presses arrive over the bridge's live event stream — nothing extra to set up.")
+                .font(.footnote)
+                .foregroundStyle(LuminousPalette.inkSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 6)
         }
-        .navigationTitle("Physical Controls")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbarColorScheme(.dark, for: .navigationBar)
-        .preferredColorScheme(.dark)
-    }
-
-    private var header: some View {
-        HStack(spacing: 12) {
-            ZStack {
-                Circle().fill(HuePalette.amber.opacity(0.18)).frame(width: 44, height: 44)
-                Image(systemName: "dial.medium.fill")
-                    .font(.system(size: 20))
-                    .foregroundStyle(HuePalette.amber)
-            }
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Tap Dial · DJ Mode")
-                    .font(.system(size: 17, weight: .bold))
-                    .foregroundStyle(.white)
-                Text("Hands-free tempo and punches while you perform")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.white.opacity(0.5))
-            }
-        }
+        .animation(.spring(response: 0.35, dampingFraction: 0.85), value: orchestrator.djModeEnabled)
     }
 
     private var djModeCard: some View {
         @Bindable var orchestrator = orchestrator
-        return Toggle(isOn: $orchestrator.djModeEnabled) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("DJ Mode")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.white)
-                Text(orchestrator.djModeEnabled ? "Listening for dial events" : "Off")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.white.opacity(0.5))
-            }
+        return LuminousGroup {
+            LuminousToggleRow(symbol: "dial.medium.fill", tint: blue, title: "DJ Mode",
+                              subtitle: orchestrator.djModeEnabled ? "Listening for dial events" : "Off",
+                              isOn: $orchestrator.djModeEnabled)
         }
-        .tint(HuePalette.amber)
-        .padding(16)
-        .background(RoundedRectangle(cornerRadius: 14).fill(Color.white.opacity(0.06)))
     }
 
     private var mappingCard: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        LuminousGroup(title: "What the dial does") {
             mappingRow(icon: "dial.medium", control: "Rotate the dial",
                        action: "Nudge BPM up / down (pins the clock)")
-            divider
+            LuminousRowDivider()
             mappingRow(icon: "1.circle.fill", control: "Button 1 · press",
                        action: "Tap tempo — press on the beat")
-            divider
+            LuminousRowDivider()
             mappingRow(icon: "1.circle", control: "Button 1 · hold",
                        action: "Resync the downbeat to now")
-            divider
+            LuminousRowDivider()
             mappingRow(icon: "2.circle.fill", control: "Buttons 2 – 4",
                        action: "Punch flashes on the playing room")
         }
-        .padding(.vertical, 4)
-        .background(RoundedRectangle(cornerRadius: 14).fill(Color.white.opacity(0.06)))
     }
 
     private func mappingRow(icon: String, control: String, action: String) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon)
-                .font(.system(size: 16))
-                .foregroundStyle(HuePalette.amber)
-                .frame(width: 26)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(control)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.white)
-                Text(action)
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(.white.opacity(0.5))
-            }
-            Spacer()
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-    }
-
-    private var divider: some View {
-        Rectangle().fill(Color.white.opacity(0.06)).frame(height: 0.5)
-            .padding(.leading, 54)
+        LuminousRow(symbol: icon, tint: blue, title: control, subtitle: action) { EmptyView() }
+            .accessibilityElement(children: .combine)
     }
 }
