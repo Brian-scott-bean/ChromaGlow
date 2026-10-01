@@ -17,7 +17,8 @@
   Composer · More; the Composer is a tab (its library is the front page); Studio stays mounted as **Studio Classic**
   (reached from the Composer) because it still owns Siri/QR drains, bulb effects, Perform and its stop hooks. Every
   screen — Home, Room, Light, Scenes, More, Settings, setup, onboarding, the tour — rebuilt on one kit
-  (`LuminousKit`/`LuminousStage`). Full suite **2451/2451**, guards green. **Hardware NOT verified.** Entry below;
+  (`LuminousKit`/`LuminousStage`). Full suite **2451/2451**, guards green. **Uploaded to TestFlight as build 60**
+  (build 59 still installable; tags `testflight/build-59`/`-60`). **Hardware NOT verified.** Entry below;
   design record `docs/ios/luminous-app-redesign/README.md`.
 - **DEVICE ROUND ON THE REAL BRIDGE → BUILD 58 (fixes) / 59 (this redesign branch), NOT MERGED (2026-09-30).**
   Claude drove build 57 on Brian's iPhone (iPhone Mirroring + live console + bridge replies) and fixed 7 bugs (paced
@@ -754,7 +755,12 @@ and its reasons are in `docs/ios/luminous-app-redesign/README.md`; in short:
 - **Installed on Brian's iPhone 17 Pro Max** (2026-10-01 01:15, Debug, `devicectl device info apps` → 1.0.0 / **60**).
   ChromaGlow was NOT on the phone beforehand (fresh install — no app data to keep), so it opens on pairing. Live
   console: first frame +200 ms, unpaired → setup at +922 ms, no errors; Brian started a scan; mDNS saw both bridges
-  but resolution timed out at 12 s (pre-existing) and cloud discovery found 192.168.40.117. After the dead-code removal: build + StudioScrollStability/HueTokens/Composer2LabGuard/TutorialCatalog
+  but resolution timed out at 12 s (pre-existing) and cloud discovery found 192.168.40.117.
+- **Uploaded to App Store Connect / TestFlight** (2026-10-01 01:36, Release archive of `bc58e70`, "Upload succeeded",
+  processing). The first attempt was refused (`403 FORBIDDEN_ERROR.CONTRACT_NOT_VALID`) until Brian accepted Apple's
+  updated agreement. Archive kept in Xcode Organizer: `~/Library/Developer/Xcode/Archives/2026-10-01/ChromaGlow
+  1.0.0 (60) Luminous.xcarchive`. **Revert paths:** TestFlight → Previous Builds → build 59 (or expire 60 in ASC);
+  code tags `testflight/build-59` (`5a9bc76`) and `testflight/build-60` (`bc58e70`), local only, not pushed. After the dead-code removal: build + StudioScrollStability/HueTokens/Composer2LabGuard/TutorialCatalog
   53/53.
 
 ### Gotchas
