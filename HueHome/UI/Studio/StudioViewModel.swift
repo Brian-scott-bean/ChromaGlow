@@ -311,6 +311,8 @@ private struct AICompositionGenerator {
             - Palette saturation 0...100, hueShift -180...180, temperature 153...500
             Use valid enums exactly matching app model raw values.
             Palette must include mode, color1, and color2 keys (no "colors" array).
+            For a still look use motion pattern "static" and envelope shape "steady":
+            motion speed 0 is the SLOWEST movement, not still.
             """)
 
             let promptPayload = """
@@ -400,6 +402,16 @@ private struct AICompositionGenerator {
         envelope.minBrightness = min(50, max(0, envelope.minBrightness))
         envelope.maxBrightness = min(100, max(50, envelope.maxBrightness))
 
+        // A look asked to hold still must not move. Speed 0 is the SLOWEST
+        // motion (a 20 s cycle), not "off": "Static Warm Sunset" came back
+        // as a speed-0 cascade, crept forever and kept the bridge busy at
+        // ~9 commands/s (build-60 regression M-8).
+        if Self.asksForStillLight(prompt: prompt, name: finalName) {
+            motion.pattern = .static
+            envelope.shape = .steady
+            envelope.depth = 0
+        }
+
         var reaction = draft.reaction
         reaction.sensitivity = min(100, max(0, reaction.sensitivity))
         reaction.smoothing = min(100, max(0, reaction.smoothing))
@@ -418,8 +430,16 @@ private struct AICompositionGenerator {
         )
     }
 
+    /// The prompt or the name asks for light that holds still.
+    static func asksForStillLight(prompt: String, name: String) -> Bool {
+        let text = (prompt + " " + name).lowercased()
+        let words = ["static", "still", "steady", "solid", "constant", "no motion", "not moving"]
+        return words.contains { text.contains($0) }
+    }
+
     private func fallbackDraft(from prompt: String, providerModel: String) -> AICompositionDraft {
         let lower = prompt.lowercased()
+        let isStill = Self.asksForStillLight(prompt: prompt, name: "")
         let isForest = lower.contains("forest") || lower.contains("woods") || lower.contains("nature")
         let isSmooth = lower.contains("smooth") || lower.contains("calm") || lower.contains("soft")
         let isNight = lower.contains("night") || lower.contains("moon") || lower.contains("dark")
@@ -443,7 +463,7 @@ private struct AICompositionGenerator {
         )
 
         let motion = MotionConfig(
-            pattern: isSmooth ? .wave : .cascade,
+            pattern: isStill ? .static : (isSmooth ? .wave : .cascade),
             speed: isSmooth ? 28 : 44,
             forward: true,
             spread: 68,
@@ -452,9 +472,9 @@ private struct AICompositionGenerator {
         )
 
         let envelope = EnvelopeConfig(
-            shape: isSmooth ? .breathe : .swell,
+            shape: isStill ? .steady : (isSmooth ? .breathe : .swell),
             bpm: isSmooth ? 36 : 52,
-            depth: isSmooth ? 28 : 45,
+            depth: isStill ? 0 : (isSmooth ? 28 : 45),
             attack: 55,
             decay: 48,
             dutyCycle: 50,
