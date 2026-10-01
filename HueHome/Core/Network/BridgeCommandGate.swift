@@ -20,7 +20,21 @@ actor BridgeCommandGate {
     /// One retry after this backoff — transient 429/503 bursts clear quickly.
     static let retryBackoff: Duration = .milliseconds(400)
 
-    private var lastSend: ContinuousClock.Instant?
+    /// When the bridge's budget is next free: the previous booking's start
+    /// plus `minInterval` for every command it booked.
+    private var nextFree: ContinuousClock.Instant?
+
+    /// Waits for the bridge's budget, then books `cost` command slots for a
+    /// caller that sends those commands itself — a Composer REST sweep that
+    /// dispatches a room in concurrent batches. The caller goes at once; the
+    /// NEXT booking on this bridge waits `cost × minInterval`, so a sweep
+    /// loop shares the ~10 cmd/sec budget with every other writer on the
+    /// bridge instead of running as fast as the bridge answers (which on a
+    /// real bridge queued commands up to ~670 ms deep). No retry: a sweep's
+    /// next frame supersedes a failed one.
+    func reserve(cost: Int) async {
+        await pace(cost: max(1, cost))
+    }
 
     /// Runs `op` after enforcing the per-bridge spacing. On error, retries
     /// once after a backoff (unless `retry` is false — effect loops pass
@@ -52,17 +66,17 @@ actor BridgeCommandGate {
         }
     }
 
-    /// Sleeps until at least `minInterval` has passed since the previous
-    /// command START on this bridge. Actor reentrancy makes concurrent
-    /// callers queue up in ~minInterval steps. Exits early on cancellation
-    /// (Task.sleep throws immediately on a cancelled task — looping on it
-    /// would busy-spin the actor).
-    private func pace() async {
-        while let last = lastSend, !Task.isCancelled {
-            let elapsed = last.duration(to: .now)
-            if elapsed >= Self.minInterval { break }
-            try? await Task.sleep(for: Self.minInterval - elapsed)
+    /// Sleeps until the previous booking's slots have elapsed (one command:
+    /// `minInterval` since its START), then books `cost` slots from now.
+    /// Actor reentrancy makes concurrent callers queue up in ~minInterval
+    /// steps. Exits early on cancellation (Task.sleep throws immediately on
+    /// a cancelled task — looping on it would busy-spin the actor).
+    private func pace(cost: Int = 1) async {
+        while let next = nextFree, !Task.isCancelled {
+            let now = ContinuousClock.now
+            if now >= next { break }
+            try? await Task.sleep(for: now.duration(to: next))
         }
-        lastSend = .now
+        nextFree = .now + Self.minInterval * cost
     }
 }
