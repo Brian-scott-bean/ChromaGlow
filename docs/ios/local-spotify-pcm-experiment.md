@@ -29,14 +29,18 @@ Spotify app ──zeroconf (Bonjour _spotify-connect._tcp)──► Rust receive
                                                            librespot dev@939dc5e: Session, Spirc, Player
                                                            ChromaSink: f64→f32, 1024-frame chunks,
                                                            in memory only
-                     ┌──── playback on: bounded SPSC ring (target 0.3 s) ───► SpotifyPlaybackOutput
-                     │     (the ring is the clock)              cg_spotify_read_playback (render thread)
-                     │                                          AVAudioEngine → speaker / BT / AirPlay
+                     ┌──── playback on: bounded SPSC ring (target 0.25 s, hand-off only)
+                     │     SpotifyPlaybackFeeder (serial queue, 10 ms tick + requestMediaDataWhenReady)
+                     │       cg_spotify_read_playback → CMSampleBuffer (≤4096 frames, contiguous PTS)
+                     │       → AVSampleBufferAudioRenderer ⇄ AVSampleBufferRenderSynchronizer
+                     │       session .playback + routeSharingPolicy .longFormAudio → speaker / BT /
+                     │       one or more AirPlay 2 speakers
                      │     playback off: paced to wall clock
             C callback (player thread, queued_frames = ring depth ahead of this chunk)
                                                              ▼
 SpotifyPCMRouter (NSLock per chunk; receiver-generation gate) → InterleavedPCMHopper (stereo→mono, 1024 hops)
-   presentation time = now + ring depth + route latency + light offset
+   presentation time = host time the synchronizer plays frame (nextFrame + queued) + light offset
+   (playback off: now + light offset)
                                                              ▼
 AudioPCMSink (activation-generation gate) → AudioFeatureExtractor → delay line → latestFeatures()
                                                              ▼
@@ -48,16 +52,39 @@ AudioPCMSink (activation-generation gate) → AudioFeatureExtractor → delay li
   kept — A2DP, capture-time stamping, configuration-change rebuild via `onSystemStop`, no
   background recovery, capture-failed notice); `SpotifyPCMSource` (flag-only).
   `AudioAnalysisEngine.selectSource(_:)` switches; demand/lifecycle unchanged.
-- **Playback** (`SpotifyPlaybackOutput.swift`): `AVAudioSession` `.playback`; one
-  `AVAudioSourceNode` whose render block pulls interleaved stereo from the Rust ring into a scratch
-  buffer allocated once per engine and deinterleaves it — no locks, allocation or main-actor hop on
-  the render thread. Interruptions resume only when iOS says `.shouldResume` (otherwise a *Resume*
-  row); an engine configuration change (switching to AirPlay/Bluetooth) or a media-services reset
-  rebuilds the engine. Runs only while the receiver runs; the receiver only while Spotify is the
-  source (picking Microphone stops both).
-- **Latency**: the route's `outputLatency + ioBufferDuration` is re-read on every route change and
-  once a second (AirPlay settles late) and charged to the lights only while music plays.
-  **Light timing** (−500…+3000 ms, persisted) adds on top; total delay never goes below 0.
+- **Playback** (`SpotifyPlaybackOutput.swift`, AirPlay 2 lane): `AVAudioSession` `.playback` /
+  `.default` / `routeSharingPolicy: .longFormAudio` (no options — long-form allows none) — the
+  route policy that gives the system picker its multi-speaker AirPlay 2 UI. Long-form apps are
+  expected to publish Now Playing + remote commands (`SpotifyNowPlaying.swift`, other lane).
+  `AVSampleBufferAudioRenderer` + `AVSampleBufferRenderSynchronizer` fed by
+  `SpotifyPlaybackFeeder` on one serial queue: a 10 ms timer pulls only what the ring HAS (status
+  `playback_queued_frames`; whole 4096-frame chunks unless the renderer runs low) up to a bounded
+  lookahead, builds one CMSampleBuffer per chunk with contiguous timeline PTS, and waits on
+  `requestMediaDataWhenReady` when the renderer is full. No silence is ever enqueued.
+  - **Start**: the first audio schedules the timeline (`setRate(1, time:, atHostTime: now +
+    startDelay)`, `delaysRateChangeUntilHasSufficientMediaData = false` — AirPlay's "sufficient"
+    threshold can exceed what a live stream ever queues).
+  - **Lookahead / preroll**: local 1.0 s / 0.2 s; AirPlay 3.0 s / 1.0 s (follows route changes).
+    The lookahead bounds how late a Spotify **skip or seek** is heard (≤ lookahead + 0.25 s ring);
+    track changes are not flushed, so gapless transitions stay intact.
+  - **Underrun**: ring dry and < 30 ms enqueued → the timeline is *parked* (rate 0) where it is
+    and rescheduled when audio returns — it never runs ahead of real data.
+  - **Pause** (status Paused/Idle): renderer flushed + timeline parked → silence at once; light
+    hops already scheduled are dropped. Play continues the same timeline.
+  - **Keep-alive**: Rust counts its consumer dead after 300 ms without a pull, so an empty ring is
+    still pulled every 100 ms.
+  - **Route change** (AirPlay, Bluetooth): no rebuild; when the renderer auto-flushes
+    (`WasFlushedAutomatically`) the feeder re-enqueues from a bounded in-memory history (4 s) at
+    the flush time. Media-services reset / renderer failure / interruption-resume rebuild the
+    renderer + synchronizer; interruptions resume only on `.shouldResume` (else a *Resume* row).
+    Stop is synchronous: timer cancelled, request block removed, rate 0, renderer flushed.
+- **Light timing**: `SpotifyPlaybackClock` (shared with the router) maps a chunk with
+  `queued_frames` ahead of it to timeline frame `nextFrame + queued` (`nextFrame` is published
+  right after each ring pop) and converts it to host time through the synchronizer's timebase
+  (or the scheduled start while parked). Per WWDC17 509 the synchronizer's timeline is the HEARD
+  one — a local video layer on it stays in sync with audio on an AirPlay speaker — so the route's
+  reported latency is no longer added (it is display-only in the *… ms behind* row). **Light
+  timing** (−500…+3000 ms, persisted) adds on top; total delay never goes below 0.
 - **Background**: `UIBackgroundModes audio` is injected into the *built* Info.plist only in
   `Debug-SpotifyExperimental`, so the music keeps playing with the screen locked or Spotify in
   front, and the Spotify hand-off no longer has a 30 s window while playback is on. The analyzer
@@ -124,11 +151,12 @@ covers the test room. For AirPlay: an AirPlay speaker or Apple TV on the same ne
    **Play**. With playback on, ChromaGlow keeps running in the background — no 30 s rush.
 4. **You should now HEAR the song from the phone.** Back in the sheet: *Connected · Playing*,
    track/artist, **PCM 44.1 kHz · 2 ch → mono analysis**, moving **All / Bass / Mid / High** bars,
-   and in Diagnostics `queue ~300 ms · lights +3xx ms`. Spotify's own volume slider controls the
-   loudness.
-5. **AirPlay / Bluetooth**: tap the speaker icon on the *Playing on* row → pick a speaker. The
-   music moves there; the row shows the speaker name and "… ms behind" (AirPlay is typically
-   1–2 s, Bluetooth ~0.2 s), and `lights +…` grows to match.
+   and in Diagnostics `queue ~250 ms · lights +~1.2 s` (renderer lookahead + ring). Spotify's own
+   volume slider controls the loudness.
+5. **AirPlay / Bluetooth**: tap the speaker icon on the *Playing on* row → pick one speaker, or
+   tick **several AirPlay 2 speakers** (long-form routing shows the multi-speaker list). The music
+   moves there (a brief gap while the renderer re-routes is expected); `lights +…` grows to
+   ~3–4 s on AirPlay. "… ms behind" is iOS's reported route latency, now display-only.
 6. Close the sheet → **Composer** → **Party** → open a look that dances to music → **Go Live**.
    The sheet's hint changes to "A Live look is listening". Lights should hit with the beats you
    hear — on the AirPlay speaker too.
@@ -169,8 +197,10 @@ sanitised report on the clipboard.
 
 - Unofficial client: librespot is not a Spotify-sanctioned receiver; Spotify can break or block it
   at any time and its terms don't allow this. Local personal experiment only.
-- AirPlay through `AVAudioEngine` is ordinary (single-speaker) AirPlay; multi-room AirPlay 2
-  groups are not attempted. Echo/Alexa speakers aren't AirPlay targets (one Echo works over
+- AirPlay 2 multi-room through the long-form renderer is **unverified on hardware**: whether a
+  3 s lookahead / 1 s preroll is enough for a group (Apple: on AirPlay 2 the renderer "asks for
+  minutes"), and how closely the synchronizer's time matches what the speakers play — the Light
+  timing slider absorbs the rest. Echo/Alexa speakers aren't AirPlay targets (one Echo works over
   Bluetooth); joining an Alexa multi-room group is out of scope by design.
 - With playback on, ChromaGlow stays alive in the background while the receiver is on (it is an
   active audio app). Press **Stop** when done.
