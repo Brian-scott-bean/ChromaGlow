@@ -1,8 +1,13 @@
 # Local Spotify PCM Sync — experiment record (LOCAL-ONLY)
 
-> Never part of App Store / TestFlight builds. Branch `experiment/local-spotify-pcm-sync`
-> (worktree `~/Developer/huehome-spotify-pcm`), based on `main` @ `c2368c8`, rollback tag
-> `checkpoint/pre-local-spotify-pcm-sync`. Not merged, not pushed.
+> Never part of App Store / TestFlight builds. Not merged, not pushed.
+>
+> - **Current: Luminous + Phase 2** — branch `experiment/luminous-spotify-pcm` (worktree
+>   `~/Developer/huehome-luminous-spotify`), based on `experiment/luminous-app-redesign` @ `b5f466d`
+>   (build 62), rollback tag `checkpoint/pre-luminous-spotify-pcm`. Device build **902**.
+> - Phase 1 on the old UI: branch `experiment/local-spotify-pcm-sync` (worktree
+>   `~/Developer/huehome-spotify-pcm`), based on `main` @ `c2368c8`, tag
+>   `checkpoint/pre-local-spotify-pcm-sync`, device builds 900/901. Superseded; kept for reference.
 
 ## What it is
 
@@ -11,10 +16,11 @@ Spotify plays to it, a pinned librespot (Rust) decodes the stream; the decoded P
 into ChromaGlow's existing audio analyzer (the same one the microphone feeds), and every Live
 look drives the lights from it exactly as it would from the mic — no microphone involved.
 
-Phase 1 (this branch): Spotify Connect → librespot → PCM → analyzer → Hue. **Nothing plays out
-of the phone** — the music is silent while the lights react. Phase 2 (playback through the phone
-/ AirPlay + a lighting offset) is not started; the Rust side already has a dormant pull API and
-the Swift router already has the delay/offset plumbing.
+- **Phase 1** — Spotify Connect → librespot → PCM → analyzer → Hue. Silent: nothing plays out of
+  the phone. Proven on Brian's iPhone (build 901: Spotify connects to "ChromaGlow Sync").
+- **Phase 2** (this branch) — the phone also **plays the music**: on its speaker, Bluetooth, or an
+  AirPlay speaker picked with the system route picker. The lights are delayed to match what is
+  heard (playback queue + the route's output latency), with a **Light timing** slider for the rest.
 
 ## Architecture
 
@@ -22,28 +28,49 @@ the Swift router already has the delay/offset plumbing.
 Spotify app ──zeroconf (Bonjour _spotify-connect._tcp)──► Rust receiver (libchromaglow_spotify.a)
                                                            librespot dev@939dc5e: Session, Spirc, Player
                                                            ChromaSink: f64→f32, 1024-frame chunks,
-                                                           paced to real time, in memory only
-                                  C callback (player thread) │
+                                                           in memory only
+                     ┌──── playback on: bounded SPSC ring (target 0.3 s) ───► SpotifyPlaybackOutput
+                     │     (the ring is the clock)              cg_spotify_read_playback (render thread)
+                     │                                          AVAudioEngine → speaker / BT / AirPlay
+                     │     playback off: paced to wall clock
+            C callback (player thread, queued_frames = ring depth ahead of this chunk)
                                                              ▼
 SpotifyPCMRouter (NSLock per chunk; receiver-generation gate) → InterleavedPCMHopper (stereo→mono, 1024 hops)
+   presentation time = now + ring depth + route latency + light offset
                                                              ▼
-AudioPCMSink (activation-generation gate) → AudioFeatureExtractor → AudioAnalysisEngine.latestFeatures()
+AudioPCMSink (activation-generation gate) → AudioFeatureExtractor → delay line → latestFeatures()
                                                              ▼
-              unchanged: BeatClock / tempo, Studio Live looks, Composer reactions, Entertainment + room output
+              unchanged: BeatClock / tempo, Composer Live looks, Entertainment + room output
 ```
 
 - **Audio-source boundary** (`HueHome/Core/Audio/AudioAnalysisSource.swift`): `AudioAnalysisSource`
-  protocol; `MicrophoneAudioSource` (the shipped capture moved verbatim); `SpotifyPCMSource`
-  (flag-only). `AudioAnalysisEngine.selectSource(_:)` switches; demand/lifecycle unchanged.
+  protocol; `MicrophoneAudioSource` (Luminous's capture moved out of the engine, every Luminous fix
+  kept — A2DP, capture-time stamping, configuration-change rebuild via `onSystemStop`, no
+  background recovery, capture-failed notice); `SpotifyPCMSource` (flag-only).
+  `AudioAnalysisEngine.selectSource(_:)` switches; demand/lifecycle unchanged.
+- **Playback** (`SpotifyPlaybackOutput.swift`): `AVAudioSession` `.playback`; one
+  `AVAudioSourceNode` whose render block pulls interleaved stereo from the Rust ring into a scratch
+  buffer allocated once per engine and deinterleaves it — no locks, allocation or main-actor hop on
+  the render thread. Interruptions resume only when iOS says `.shouldResume` (otherwise a *Resume*
+  row); an engine configuration change (switching to AirPlay/Bluetooth) or a media-services reset
+  rebuilds the engine. Runs only while the receiver runs; the receiver only while Spotify is the
+  source (picking Microphone stops both).
+- **Latency**: the route's `outputLatency + ioBufferDuration` is re-read on every route change and
+  once a second (AirPlay settles late) and charged to the lights only while music plays.
+  **Light timing** (−500…+3000 ms, persisted) adds on top; total delay never goes below 0.
+- **Background**: `UIBackgroundModes audio` is injected into the *built* Info.plist only in
+  `Debug-SpotifyExperimental`, so the music keeps playing with the screen locked or Spotify in
+  front, and the Spotify hand-off no longer has a 30 s window while playback is on. The analyzer
+  (and so the lights) still pauses while ChromaGlow is in the background, exactly as the mic does.
 - **Real-time rules**: no MainActor hop or Task per buffer, no allocation once warm, bounded
   everything (fixed SPSC ring in Rust, fixed 512-slot delay line in Swift). Stop closes two gates
   synchronously (receiver generation, activation generation) before the blocking Rust stop runs.
 - **Credentials**: only Spotify Connect's zeroconf hand-off. No username/password/token is
   entered, configured, stored or logged; librespot runs with no cache directory; the Rust logger
-  is capped at Info (librespot TRACE prints client tokens) and redacts the account name.
+  redacts the account name, the zeroconf request params and access tokens.
 - **Storage**: decoded PCM is never written. librespot streams the *encrypted* compressed file
   through an unlinked-on-drop temp file in `tmp/ChromaGlowSpotifyStream/`, which the app purges on
-  every Start and Stop.
+  every Start and Stop. Nothing is recorded, exported or saved.
 
 ## librespot pin
 
@@ -51,12 +78,11 @@ AudioPCMSink (activation-generation gate) → AudioFeatureExtractor → AudioAna
 core/discovery/connect/playback/metadata, `default-features = false`, `native-tls`,
 discovery `with-dns-sd`. Pinned by `rev` in `Experimental/SpotifyReceiver/Cargo.toml` and
 `Cargo.lock` (committed). Why not v0.8.0: it doesn't build from crates.io (vergen, upstream
-#1760) and lacks the CDN-fallback fix (#1722). Upstream state checked 2026-10-01: #1771 (login5
-503) was a Spotify outage on 2026-09-29 that recovered the same day; #1737 (INVALID_CREDENTIALS)
-affects externally supplied access tokens only, not zeroconf. On iOS librespot announces
-`PLATFORM_IPHONE_ARM64` + the iOS client id. `dns-sd` 0.1.3 is vendored under
-`Experimental/SpotifyReceiver/patches/` with a one-line `build.rs` fix (it treated only
-"darwin" as Apple).
+#1760) and lacks the CDN-fallback fix (#1722). Two vendored patches under
+`Experimental/SpotifyReceiver/patches/`: `dns-sd` 0.1.3 (one-line `build.rs` fix — it treated only
+"darwin" as Apple) and `librespot-core` at the same rev (a runtime platform persona: by default the
+receiver introduces itself as librespot's desktop-Linux speaker, the identity every Raspberry Pi
+install uses; "iPhone app" is librespot's native iOS identity).
 
 ## Build & install
 
@@ -71,82 +97,92 @@ affects externally supplied access tokens only, not zeroconf. On iOS librespot a
    `ruby add_spotify_experiment.rb` (idempotent) re-applies the wiring if needed.
 4. **Flag**: pick the scheme **HueHome Spotify Experimental** (Run/Test/Analyze use
    `Debug-SpotifyExperimental`, which alone defines `CHROMAGLOW_EXPERIMENTAL_SPOTIFY`).
-5. **Install**: Xcode → open `~/Developer/huehome-spotify-pcm/HueHome.xcodeproj` → scheme
+5. **Install**: Xcode → open `~/Developer/huehome-luminous-spotify/HueHome.xcodeproj` → scheme
    *HueHome Spotify Experimental* → your iPhone → Run. CLI:
    `xcodebuild -project HueHome.xcodeproj -scheme "HueHome Spotify Experimental" -configuration Debug-SpotifyExperimental -destination 'platform=iOS,id=<udid>' -allowProvisioningUpdates build`
    then `xcrun devicectl device install app --device <id> <…>/Debug-SpotifyExperimental-iphoneos/HueHome.app`.
-   Build number on this branch: **900** (never uploaded). The branch has **18**
+   Build number on this branch: **902** (never uploaded). The branch has **18**
    `CURRENT_PROJECT_VERSION` entries (12 + the new configuration on 6 targets).
-6–8. See the test procedure below.
 
 Console-only check (no UI): launch with
 `xcrun devicectl device process launch --console --terminate-existing --device <id> -- com.huehome.pro -ChromaGlowSpotifyAutoStart`
-— it selects the Spotify source, starts the receiver, holds an analysis demand, and prints a
-1 Hz `[SpotifyPCM] state=… frames=… level=… bass=… mid=… treble=…` line.
+— it selects the Spotify source, starts the receiver (and the playback output), holds an analysis
+demand, and prints a 1 Hz `[SpotifyPCM] state=… out=… route=… lat=… queue=… level=…` line.
 
 ## Device test procedure (Brian)
 
 Prereqs: Spotify **Premium**, phone and bridge on the same Wi-Fi, an Entertainment area that
-covers the test room.
+covers the test room. For AirPlay: an AirPlay speaker or Apple TV on the same network.
 
-1. Open ChromaGlow → **Studio** → tap the music bar at the bottom ("Nothing playing") → the
-   **Music Source** sheet → section **LIGHT-SYNC AUDIO · EXPERIMENT**.
-2. Tap **Spotify Connect — Experimental**, then **Start**. Expect: amber dot, *Waiting for Spotify*,
-   diagnostics line shows a port.
-3. Open the **Spotify** app → device picker (speaker icon on the mini-player) → **ChromaGlow
-   Sync** (the list reorders while devices appear — check the name before tapping) → press
-   **Play**. **Return to ChromaGlow within ~30 s** — iOS suspends it after that while it's in the
-   background (Phase 1 has no background audio). If the hand-off times out, reopen ChromaGlow
-   and pick the device again.
-4. Back in the sheet expect: green dot, *Connected · Playing*, track/artist, "from <your phone>",
-   **PCM 44.1 kHz · 2 ch → mono analysis** with a moving peak meter, and moving
-   **All / Bass / Mid / High** bars. The phone is silent (Phase 1).
-5. Close the sheet → pick a room → **Deck 1 (Live modes)** → start a Live card. The hint in the
-   sheet changes to "A Live look is listening". Lights should follow the song (bass hits, drops,
-   pauses), not the room's noise.
-6. Pause in Spotify → bars and lights settle within ~0.4 s. Play → they come back.
-7. Teardown checks: **Stop** (state *Receiver stopped*; *ChromaGlow Sync* disappears from Spotify's
-   list within a few seconds); Start again; switch the sheet back to **Microphone** (receiver
-   stops, mic path resumes); stop the Live card (Entertainment session ends as before).
-8. Optional: toggle Wi-Fi off/on while connected (expect *Connection dropped — reconnecting*,
-   then Connected again), and background/foreground ChromaGlow.
-9. Afterwards pick **This iPhone** in Spotify's device list to get audio back.
+1. ChromaGlow → **Composer** tab → the **Music** strip under the header ("Nothing playing") →
+   the **Music Source** sheet → scroll to **LIGHT-SYNC AUDIO · EXPERIMENT**. (Home shows the same
+   strip once a music session exists.)
+2. Tap **Spotify Connect — Experimental**, then **Start**. Expect *Waiting for Spotify*, a port in
+   Diagnostics, and under **Sound**: *Play the music on this iPhone* on, *Playing on: iPhone
+   Speaker* (or your headphones).
+3. Open **Spotify** (on this phone or another device) → speaker icon → **ChromaGlow Sync** →
+   **Play**. With playback on, ChromaGlow keeps running in the background — no 30 s rush.
+4. **You should now HEAR the song from the phone.** Back in the sheet: *Connected · Playing*,
+   track/artist, **PCM 44.1 kHz · 2 ch → mono analysis**, moving **All / Bass / Mid / High** bars,
+   and in Diagnostics `queue ~300 ms · lights +3xx ms`. Spotify's own volume slider controls the
+   loudness.
+5. **AirPlay / Bluetooth**: tap the speaker icon on the *Playing on* row → pick a speaker. The
+   music moves there; the row shows the speaker name and "… ms behind" (AirPlay is typically
+   1–2 s, Bluetooth ~0.2 s), and `lights +…` grows to match.
+6. Close the sheet → **Composer** → **Party** → open a look that dances to music → **Go Live**.
+   The sheet's hint changes to "A Live look is listening". Lights should hit with the beats you
+   hear — on the AirPlay speaker too.
+7. If the lights lead or trail the beat, move **Light timing** (later if the lights flash before
+   the beat you hear, earlier if after) — try ±50–100 ms steps; it applies instantly and is
+   remembered.
+8. Pause in Spotify → music stops, lights settle. Play → both come back. Lock the phone → the
+   music continues (the lights pause until ChromaGlow is back in front, as with the mic).
+9. Interruptions: take a call / trigger Siri → music pauses; after a call it resumes on its own,
+   otherwise tap *Audio was interrupted — Tap to resume*.
+10. Teardown: **Stop** (music stops, *ChromaGlow Sync* disappears from Spotify within a few
+    seconds); switch back to **Microphone** (receiver + music stop, mic path resumes). Afterwards
+    pick **This iPhone** in Spotify's device list.
 
-Report: the state text at each step, the bottom diagnostics line (frames, hops, `play→PCM … ms`),
-any red message verbatim (e.g. *Spotify refused the session: …*), and whether the lights tracked
-the music.
+Report: the state text at each step, whether you heard the music (phone / AirPlay / Bluetooth),
+the *Playing on* subtitle, the Diagnostics line (`queue`, `underruns`, `lights +…`), the Light
+timing value that looked right, and any red message verbatim. **Copy diagnostics** puts a
+sanitised report on the clipboard.
 
 ## Verification status (2026-10-01)
 
 | Check | Result |
 | --- | --- |
 | Rust crate builds (macOS, iOS device, iOS simulator) | PASS — LTO static lib ≈ 28 MB |
-| Rust unit tests | PASS 10/10 |
-| macOS harness: Bonjour Add/Rmv, getInfo 101 OK, 3 start/stop cycles, no temp files | PASS |
-| iOS simulator: real receiver start→Waiting→stop ×3, controller start/stop | PASS |
-| **Physical iPhone (build 900): receiver advertises "ChromaGlow Sync"** — Mac `dns-sd` resolves `brians-iPhone.local.:54345`, `getInfo` → status 101 OK, Speaker | **PASS** |
-| **Physical iPhone: "ChromaGlow Sync" listed in the Spotify app's device picker** | **PASS** (seen on the phone) |
-| Spotify credential hand-off → Connected on iPhone | **NOT YET RUN** (driving it over iPhone Mirroring hit the 30 s background window) |
-| PCM reaches ChromaGlow from Spotify / analyzer responds / Hue reacts | **UNVERIFIED on hardware** (pipeline proven with synthetic PCM through the real router + sink) |
-| End-to-end latency | **UNMEASURED.** Designed budget: chunk pacing lead 30 ms + 1024-frame hop 23 ms + render tick + Entertainment ≈ 100–150 ms (estimate, not a measurement). The panel reports play→first-PCM. |
-| Phase 2 (playback / AirPlay / offset) | NOT STARTED (gated on Phase 1) |
-| Mic sync unchanged with the experiment off | PASS — full suite 2088/2088 (Debug), bit-identical parity test |
-| Release + normal Debug device builds free of the experiment | PASS — `Scripts/verify_spotify_experiment_absent.sh` (9 markers + Bonjour key) |
+| Rust unit tests | PASS 14/14 |
+| Physical iPhone, Phase 1 (build 901): advertised, listed in Spotify, **Spotify connects** | **PASS** (Brian, 2026-10-01) |
+| Simulator: real receiver start→Waiting→stop ×3, controller start/stop **with the playback output** (`.playback` session, AVAudioEngine running) | PASS |
+| Simulator: render pull deinterleaves + zero-fills across a >4096-frame request; playback toggle live; light offset clamp/persist; route latency counted on an empty queue | PASS |
+| Audio-source boundary on Luminous's engine (16 tests, incl. configuration-change rebuild without a session bounce, background-deferred recovery, route-change rebuild) | PASS |
+| Experimental build carries the experiment + `UIBackgroundModes audio` | PASS (`verify_spotify_experiment_absent.sh --expect-present`) |
+| **Phase 2 on hardware: music audible on phone / Bluetooth / AirPlay, lights in step** | **NOT YET RUN** — Brian's device round |
+| End-to-end latency | **UNMEASURED.** Lights are scheduled at ring depth + reported route latency + offset; how well iOS's reported AirPlay latency matches reality is exactly what step 5–7 measure. |
+| Mic sync unchanged with the experiment off | see DEVLOG entry (full Debug suite) |
+| Release + normal Debug builds free of the experiment | see DEVLOG entry (`verify_spotify_experiment_absent.sh`, now also checks background audio) |
 | Flag without DEBUG | PASS — `#error` |
 
 ## Known risks
 
-- Unofficial client: librespot impersonates an iPhone Spotify client; Spotify can break or block
-  it at any time and its terms don't allow this. Local personal experiment only.
-- Phase 1 is silent and needs ChromaGlow in the foreground; the hand-off has a ~30 s window.
+- Unofficial client: librespot is not a Spotify-sanctioned receiver; Spotify can break or block it
+  at any time and its terms don't allow this. Local personal experiment only.
+- AirPlay through `AVAudioEngine` is ordinary (single-speaker) AirPlay; multi-room AirPlay 2
+  groups are not attempted. Echo/Alexa speakers aren't AirPlay targets (one Echo works over
+  Bluetooth); joining an Alexa multi-room group is out of scope by design.
+- With playback on, ChromaGlow stays alive in the background while the receiver is on (it is an
+  active audio app). Press **Stop** when done.
+- The lights still need ChromaGlow in the foreground (the analyzer pauses in the background, as it
+  does for the mic).
 - The encrypted stream temp file is librespot-internal (purged by the app, deleted on drop).
-- Analysis runs at full scale regardless of Spotify volume (by design); volume 0 in Spotify
-  still drives lights.
-- Built on `main` (pre-Luminous UI). Porting to `experiment/luminous-app-redesign` needs only the
-  Music Source sheet mount point re-placed; everything else is self-contained.
+- Analysis runs at full scale regardless of Spotify volume (by design); volume 0 in Spotify still
+  drives the lights.
 
 ## Rollback
 
-- Drop the experiment: `git worktree remove ~/Developer/huehome-spotify-pcm && git branch -D experiment/local-spotify-pcm-sync` (main and every other branch are untouched; tag `checkpoint/pre-local-spotify-pcm-sync` = `c2368c8`).
+- Drop the Luminous experiment: `git worktree remove ~/Developer/huehome-luminous-spotify && git branch -D experiment/luminous-spotify-pcm` (Luminous and every other branch are untouched; tag `checkpoint/pre-luminous-spotify-pcm` = `b5f466d`).
+- Drop Phase 1: `git worktree remove ~/Developer/huehome-spotify-pcm && git branch -D experiment/local-spotify-pcm-sync` (tag `checkpoint/pre-local-spotify-pcm-sync` = `c2368c8`).
 - Phone: reinstall Luminous build 62 from TestFlight, or Run from `~/Developer/huehome-luminous-app`.
 - Rust toolchain: `~/.cargo/bin/rustup self uninstall`.
