@@ -40,11 +40,7 @@ struct MusicNowPlayingBar: View {
         // The bar itself opens the source picker (buttons win hit-testing);
         // a dedicated picker button starved the title of width.
         .onTapGesture { onOpenPicker?() }
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(StagePalette.raised.opacity(0.92))
-                .overlay(RoundedRectangle(cornerRadius: 16).stroke(StagePalette.line, lineWidth: 1))
-        )
+        .luminousGlass(radius: 18, raised: true)
         .accessibilityElement(children: .contain)
         .accessibilityHint(onOpenPicker != nil ? "Double-tap to change the music source" : "")
     }
@@ -102,12 +98,12 @@ struct MusicNowPlayingBar: View {
     private var titleBlock: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(music.nowPlaying?.title ?? "Nothing playing")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(StagePalette.ink)
+                .font(.system(.subheadline, design: .rounded).weight(.bold))
+                .foregroundStyle(LuminousPalette.ink)
                 .lineLimit(1)
             Text(subtitleText)
-                .font(.system(size: 11))
-                .foregroundStyle(StagePalette.muted)
+                .font(.caption)
+                .foregroundStyle(LuminousPalette.inkSecondary)
                 .lineLimit(1)
         }
     }
@@ -144,7 +140,7 @@ struct MusicNowPlayingBar: View {
         Button(action: action) {
             Image(systemName: systemName)
                 .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(StagePalette.ink)
+                .foregroundStyle(LuminousPalette.ink)
                 .frame(width: 44, height: 44)
                 .contentShape(Rectangle())
         }

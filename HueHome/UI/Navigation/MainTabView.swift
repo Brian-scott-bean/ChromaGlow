@@ -1,7 +1,11 @@
 // MainTabView.swift
-// CastChroma — Navigation Shell
-// v0.15.0: Replaced Effects + Sync tabs with unified Studio tab and More hub.
-// iPhone: custom floating capsule tab bar (ZStack opacity switcher).
+// ChromaGlow — Navigation Shell (Luminous).
+// Four jobs, four tabs, in order of how often people do them: Home (control),
+// Scenes (a still mood), Composer (light that moves), More (setup).
+// Studio Classic is mounted like a tab but kept off the bar — it still owns
+// Siri/QR drains and the stop hooks for what it starts — and is reached from
+// the Composer library.
+// iPhone: custom floating glass tab bar (ZStack opacity switcher).
 // iPad: NavigationSplitView (sidebar + detail).
 
 import SwiftUI
@@ -11,26 +15,36 @@ import UIKit
 // MARK: - Tab Definition
 
 enum HueTab: Int, CaseIterable {
-    case home    = 0
-    case scenes  = 1
-    case studio  = 2
-    case more    = 3
+    case home     = 0
+    case scenes   = 1
+    case composer = 2
+    case more     = 3
+    /// Studio Classic — mounted, never on the bar.
+    case studio   = 4
+
+    /// The tabs the bar shows, in order.
+    static let barOrder: [HueTab] = [.home, .scenes, .composer, .more]
+
+    /// The bar item that lights up while this tab is on screen.
+    var barTab: HueTab { self == .studio ? .composer : self }
 
     var icon: String {
         switch self {
-        case .home:   return "house.fill"
-        case .scenes: return "sparkles"
-        case .studio: return "paintpalette.fill"
-        case .more:   return "ellipsis.circle.fill"
+        case .home:     return "house.fill"
+        case .scenes:   return "swatchpalette.fill"
+        case .composer: return "sparkles"
+        case .more:     return "ellipsis.circle.fill"
+        case .studio:   return "slider.horizontal.3"
         }
     }
 
     var label: String {
         switch self {
-        case .home:   return "Home"
-        case .scenes: return "Scenes"
-        case .studio: return "Studio"
-        case .more:   return "More"
+        case .home:     return "Home"
+        case .scenes:   return "Scenes"
+        case .composer: return "Composer"
+        case .more:     return "More"
+        case .studio:   return "Studio Classic"
         }
     }
 }
@@ -77,15 +91,28 @@ struct MainTabView: View {
     }
 
     /// Family Sharing: a guest-only device (every live bridge grant-limited)
-    /// has no Studio — its engines need per-light writes and entertainment
-    /// streaming that a guest key deliberately can't stream (no clientkey),
-    /// and its creations couldn't be saved to anything the guest owns.
-    /// Mixed-role devices (own bridge + a granted one) keep the full shell.
+    /// has no Composer and no Studio Classic — their engines need per-light
+    /// writes and entertainment streaming that a guest key deliberately can't
+    /// stream (no clientkey), and their creations couldn't be saved to
+    /// anything the guest owns. Mixed-role devices (own bridge + a granted
+    /// one) keep the full shell.
     private var visibleTabs: [HueTab] {
         guard orchestrator.guestAccessInfo.isGuestOnly, !orchestrator.isDemoMode else {
             return HueTab.allCases
         }
-        return HueTab.allCases.filter { $0 != .studio }
+        return HueTab.allCases.filter { $0 != .studio && $0 != .composer }
+    }
+
+    /// The tabs on the bar (Studio Classic is mounted, never shown there).
+    private var barTabs: [HueTab] {
+        HueTab.barOrder.filter { visibleTabs.contains($0) }
+    }
+
+    private func openStudioClassic() {
+        guard visibleTabs.contains(.studio) else { return }
+        realizedTabs.insert(.studio)
+        withAnimation(HueAnimation.toggle) { selectedTab = .studio }
+        HapticManager.shared.light()
     }
 
     var body: some View {
@@ -184,7 +211,7 @@ struct MainTabView: View {
         .alert("Not available with guest access", isPresented: $showGuestBlockedAlert) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text("Studio isn't part of shared access — creating and importing lighting compositions needs the home owner's own connection.")
+            Text("The Composer isn't part of shared access — creating and importing lighting looks needs the home owner's own connection.")
         }
         // Family Sharing Phase 4: explicit bridge refusals (401/403 on the
         // pinned data plane). Granted bridge → cooperative wipe; owned
@@ -372,9 +399,17 @@ struct MainTabView: View {
         )
         try? await Task.sleep(for: .milliseconds(250))          // settle gap: cache write / widget publish
         guard !Task.isCancelled else { return }
+        // Studio Classic stays prewarmed exactly as before: it installs the
+        // stop/recovery hooks for effects it owns and drains Siri/QR links.
         if visibleTabs.contains(.studio) {
             realizedTabs.insert(.studio)
             StartupTimeline.mark("prewarm.studio")
+        }
+        await Task.yield()
+        try? await Task.sleep(for: .milliseconds(200))
+        if visibleTabs.contains(.composer) {
+            realizedTabs.insert(.composer)
+            StartupTimeline.mark("prewarm.composer")
         }
         await Task.yield()
         try? await Task.sleep(for: .milliseconds(200))
@@ -412,7 +447,7 @@ struct MainTabView: View {
                     // Pause off-screen tabs' animation clocks (kept mounted for state).
                     .environment(\.isTabActive, selectedTab == tab)
             }
-            HueTabBar(tabs: visibleTabs, selectedTab: $selectedTab,
+            HueTabBar(tabs: barTabs, selectedTab: $selectedTab,
                       realizedTabs: $realizedTabs, navRegistry: navRegistry)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -440,10 +475,11 @@ struct MainTabView: View {
                 // Require a decisive, predominantly horizontal swipe.
                 guard abs(dx) > abs(dy) * 1.3,
                       abs(dx) > 60 || abs(predictedX) > 120 else { return }
-                // Index into visibleTabs, not rawValue arithmetic — a hidden
-                // Studio tab must not be a swipe stop (guest-only shell).
-                let tabs = visibleTabs
-                guard let current = tabs.firstIndex(of: selectedTab) else { return }
+                // Index into the bar's tabs, not rawValue arithmetic — a hidden
+                // tab must never be a swipe stop (Studio Classic, guest-only
+                // shell); Studio Classic swipes as the Composer it hangs off.
+                let tabs = barTabs
+                guard let current = tabs.firstIndex(of: selectedTab.barTab) else { return }
                 let target = current + (dx < 0 ? 1 : -1)
                 guard tabs.indices.contains(target) else { return }
                 let next = tabs[target]
@@ -459,28 +495,20 @@ struct MainTabView: View {
     private var iPadLayout: some View {
         NavigationSplitView {
             List {
-                ForEach(visibleTabs, id: \.self) { tab in
+                ForEach(barTabs, id: \.self) { tab in
                     Button {
                         realizedTabs.insert(tab)
                         selectedTab = tab
                     } label: {
                         Label(tab.label, systemImage: tab.icon)
-                            .foregroundStyle(
-                                selectedTab == tab
-                                    ? (colorScheme == .dark ? HuePalette.amber : HuePalette.amberLight)
-                                    : (colorScheme == .dark ? HuePalette.Noir.textSecondary : HuePalette.Estate.textSecondary)
-                            )
+                            .foregroundStyle(selectedTab.barTab == tab ? LuminousPalette.cyan : LuminousPalette.inkSecondary)
                     }
-                    .listRowBackground(
-                        selectedTab == tab
-                            ? (colorScheme == .dark ? HuePalette.amber.opacity(0.12) : HuePalette.amberLight.opacity(0.10))
-                            : Color.clear
-                    )
+                    .listRowBackground(selectedTab.barTab == tab ? LuminousPalette.cyan.opacity(0.12) : Color.clear)
                 }
             }
             .navigationTitle("ChromaGlow")
             .scrollContentBackground(.hidden)
-            .background(colorScheme == .dark ? HuePalette.Noir.background : HuePalette.Estate.background)
+            .background(LuminousPalette.void)
         } detail: {
             tabContent(for: selectedTab)
         }
@@ -518,12 +546,39 @@ struct MainTabView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        case .composer:
+            Group {
+                if realizedTabs.contains(.composer) {
+                    NavigationStack {
+                        ComposerLibraryHome(onOpenStudioClassic: openStudioClassic)
+                            .background(NavControllerResolver { navRegistry.register(.composer, $0) })
+                    }
+                } else {
+                    Color.clear
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         case .studio:
             Group {
                 if realizedTabs.contains(.studio) {
                     NavigationStack {
                         StudioView()
                             .background(NavControllerResolver { navRegistry.register(.studio, $0) })
+                            // Studio Classic hangs off the Composer: its way
+                            // back sits where a back button would.
+                            .toolbar {
+                                ToolbarItem(placement: .topBarLeading) {
+                                    Button {
+                                        realizedTabs.insert(.composer)
+                                        withAnimation(HueAnimation.toggle) { selectedTab = .composer }
+                                        HapticManager.shared.light()
+                                    } label: {
+                                        Label("Composer", systemImage: "chevron.backward")
+                                            .labelStyle(.titleAndIcon)
+                                    }
+                                    .accessibilityLabel("Back to the Composer")
+                                }
+                            }
                     }
                 } else {
                     Color.clear
@@ -546,14 +601,16 @@ struct MainTabView: View {
     }
 }
 
-// MARK: - Custom Glassmorphic Tab Bar
+// MARK: - Luminous Tab Bar
 
+/// The Composer's dock language for the whole app: deep glass floating over
+/// the room, a label under every icon, and the signal glow gliding to the
+/// selected tab. Studio Classic lights the Composer item it hangs off.
 struct HueTabBar: View {
-    @Environment(\.colorScheme) var colorScheme
-    /// The tabs to render — MainTabView passes visibleTabs (guest-only
-    /// devices drop Studio). Defaulted so previews/other callers keep the
-    /// full set.
-    var tabs: [HueTab] = HueTab.allCases
+    /// The tabs to render — MainTabView passes the bar's tabs (guest-only
+    /// devices drop the Composer). Defaulted so previews/other callers keep
+    /// the full bar.
+    var tabs: [HueTab] = HueTab.barOrder
     @Binding var selectedTab: HueTab
     @Binding var realizedTabs: Set<HueTab>
     let navRegistry: TabNavRegistry
@@ -564,7 +621,7 @@ struct HueTabBar: View {
             ForEach(tabs, id: \.self) { tab in
                 HueTabItem(
                     tab: tab,
-                    isSelected: selectedTab == tab,
+                    isSelected: selectedTab.barTab == tab,
                     namespace: animation
                 ) {
                     if selectedTab == tab {
@@ -582,38 +639,30 @@ struct HueTabBar: View {
                 }
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 7)
         .background {
             Capsule()
                 .fill(.ultraThinMaterial)
+                .overlay { Capsule().fill(LuminousPalette.void.opacity(0.6)) }
                 .overlay {
-                    Capsule().fill(
-                        colorScheme == .dark
-                            ? LuminousPalette.void.opacity(0.62)
-                            : HuePalette.Estate.tabBar.opacity(0.7))
+                    Capsule().strokeBorder(
+                        LinearGradient(colors: [Color.white.opacity(0.22), Color.white.opacity(0.04)],
+                                       startPoint: .top, endPoint: .bottom),
+                        lineWidth: 1)
                 }
-                .overlay {
-                    Capsule()
-                        .strokeBorder(
-                            LinearGradient(colors: colorScheme == .dark
-                                               ? [Color.white.opacity(0.22), Color.white.opacity(0.05)]
-                                               : [Color.black.opacity(0.08), Color.black.opacity(0.03)],
-                                           startPoint: .top, endPoint: .bottom),
-                            lineWidth: 1)
-                }
-                .shadow(color: .black.opacity(colorScheme == .dark ? 0.5 : 0.14), radius: 24, x: 0, y: 10)
+                .shadow(color: .black.opacity(0.5), radius: 24, x: 0, y: 10)
         }
         .padding(.horizontal, HueSpacing.xl)
         .padding(.bottom, 8)           // closer to home indicator — less overlap with cards
         .contentShape(Rectangle())     // entire bar frame absorbs taps; nothing bleeds through
+        .environment(\.colorScheme, .dark)
     }
 }
 
 // MARK: - Tab Item
 
 struct HueTabItem: View {
-    @Environment(\.colorScheme) var colorScheme
     let tab: HueTab
     let isSelected: Bool
     let namespace: Namespace.ID
@@ -626,22 +675,19 @@ struct HueTabItem: View {
                     .font(.system(size: 19, weight: isSelected ? .bold : .medium))
                     .symbolEffect(.bounce, value: isSelected)
                 Text(tab.label)
-                    .font(.system(size: 10, weight: isSelected ? .bold : .semibold, design: .rounded))
+                    .font(.system(size: 10, weight: isSelected ? .heavy : .semibold, design: .rounded))
                     .lineLimit(1)
+                    .minimumScaleFactor(0.8)
             }
-            .foregroundStyle(
-                isSelected
-                    ? (colorScheme == .dark ? LuminousPalette.void : Color.black)
-                    : (colorScheme == .dark ? HuePalette.Noir.tabInactive : HuePalette.Estate.tabInactive)
-            )
+            .foregroundStyle(isSelected ? LuminousPalette.void : LuminousPalette.ink.opacity(0.55))
             .frame(maxWidth: .infinity)
-            .frame(height: 48)
+            .frame(height: 50)
             .background {
                 if isSelected {
                     Capsule()
-                        .fill(colorScheme == .dark ? AnyShapeStyle(LuminousPalette.amberGradient)
-                                                   : AnyShapeStyle(HuePalette.amberLight))
-                        .shadow(color: HuePalette.amber.opacity(colorScheme == .dark ? 0.55 : 0.3), radius: 12)
+                        .fill(LuminousPalette.signalGradient)
+                        .overlay(Capsule().strokeBorder(Color.white.opacity(0.35), lineWidth: 1))
+                        .shadow(color: LuminousPalette.cyan.opacity(0.5), radius: 12)
                         .matchedGeometryEffect(id: "tabIndicator", in: namespace)
                 }
             }

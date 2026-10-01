@@ -110,6 +110,12 @@ final class AppGallerySnapshotTests: XCTestCase {
         try await render(NavigationStack { MoreView() }, named: "gallery-more")
     }
 
+    /// The Composer tab's front page: the live library.
+    func testComposerLibrary() async throws {
+        try await render(NavigationStack { ComposerLibraryHome(onOpenStudioClassic: {}) },
+                         named: "gallery-composer-library", settle: 1.5)
+    }
+
     func testRoomDetail() async throws {
         let orchestrator = await demoOrchestrator()
         let room = try XCTUnwrap(orchestrator.allRooms.first)
