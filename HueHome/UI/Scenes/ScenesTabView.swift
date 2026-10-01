@@ -1,15 +1,26 @@
 // ScenesTabView.swift
-// CastChroma — Stage 2B / Scenes Browser (reorganized in the 2026-07 overhaul)
+// ChromaGlow — Scenes (Luminous).
 //
-// Full cross-bridge scene browser:
-//   • Fetches all scenes from all active bridges in parallel
-//   • Grouped-by-room collapsible sections (default) with a pinned
-//     ★ Favorites shelf, or flat sort modes (A–Z; Recent/Most Used follow
-//     with SceneUsageStore) with room filter chips
-//   • Full-text search by scene name or room name — flattens to one grid
-//   • Active scene indicator + optimistic activate on tap
-//   • Shimmer skeleton while loading
-//   • Demo mode aware (uses DemoDataProvider.globalScenes)
+// Every saved mood in the house, drawn as the light it makes. A tab root in
+// the Composer's language: its own glass header (what's on now, sort, new
+// scene), the title block, an always-there search field, and a background
+// that glows in the colours of the scenes that are on. Then: On now · your
+// favorites · each room's scenes (collapsible), or one flat grid in the
+// A–Z / Recent / Most Used modes with room chips that double as drop
+// targets · Studio Classic looks that can be saved to a room.
+//
+// Behaviour is unchanged from the 2026-07 overhaul:
+//   • Tap activates (orchestrator.activateGlobalScene); dynamic scenes have
+//     a Speed sheet that activates the CURRENT globalScenes item.
+//   • Favorites/usage key on the RAW bridgeSceneID; a move carries both to
+//     the new id, its undo carries them back (or scrubs on failure).
+//   • Delete scrubs provenance, ★ and usage only after the bridge confirms.
+//   • Drag a card onto a room section / chip → a pre-targeted copy sheet,
+//     never a blind copy.
+//   • Granted (guest) bridges never offer rename/copy/move/delete/create.
+//   • The tab never holds a live CompositionStore — Studio scenes come from
+//     a read-only snapshot of the compositions file.
+//   • Demo mode: local-only activate/rename/delete, no copy/move/drop.
 
 import SwiftUI
 
@@ -21,15 +32,15 @@ struct ScenesTabView: View {
 
     @Environment(UnifiedOrchestrator.self) private var orchestrator
     @Environment(\.isTabActive) private var isTabActive
-    @State private var searchText:     String            = ""
+    @State private var searchText:     String
     @State private var selectedRoomID: String?           = nil
     @State private var speedSheetScene: GlobalSceneItem? = nil   // non-nil = sheet open
+    @FocusState private var searchFocused: Bool
 
     // Scene CRUD
     @State private var sceneToDelete:  GlobalSceneItem? = nil
     @State private var showDeleteAlert = false
     @State private var sceneToRename:  GlobalSceneItem? = nil
-    @State private var renameText:     String           = ""
     @State private var showCreateScene = false
     @State private var showBuildScene  = false
 
@@ -44,7 +55,7 @@ struct ScenesTabView: View {
     @State private var copyUndo: SceneCopyUndo? = nil
     @State private var copyUndoDismissTask: Task<Void, Never>? = nil
 
-    // ── Studio scenes shelf (scene-like Composer creations) ──
+    // ── Studio scenes shelf (scene-like Studio Classic creations) ──
     /// Read-only snapshot of the compositions file, filtered to presets whose
     /// layers make them scenes (static look, no reaction). Studio owns the only
     /// live CompositionStore; this tab re-reads the file per appearance instead
@@ -62,14 +73,19 @@ struct ScenesTabView: View {
         SceneGrouping.SortMode.byRoom.rawValue
     /// Collapsed room-section ids — same CSV helper family as favorites.
     @AppStorage("castchroma.collapsedSceneRoomIDs") private var collapsedRoomIDsRaw = ""
-    /// Card density: false = 2-up grid, true = full-width bars. Separate key
-    /// from the Dashboard's castchroma.useWideCards so the screens stay
-    /// independently configurable.
+    /// Card density: false = 2-up grid, true = full-width cards. Separate key
+    /// from the Dashboard's so the screens stay independently configurable.
     @AppStorage("castchroma.sceneWideCards") private var sceneWideCards = false
     // Shared favorites contract: RAW bridge scene UUIDs (bridgeSceneID),
-    // the same CSV RoomDetail writes and the Dashboard pills read.
+    // the same CSV RoomDetail writes and Home's mood row reads.
     @AppStorage("favoriteSceneIDs") private var favoriteSceneIDsRaw: String = ""
     private var provenance: SceneProvenanceStore { SceneProvenanceStore.shared }
+
+    /// - Parameter initialSearchText: opens the tab already filtered (the
+    ///   gallery renders a search; the tab itself always starts empty).
+    init(initialSearchText: String = "") {
+        _searchText = State(initialValue: initialSearchText)
+    }
 
     private var sortMode: SceneGrouping.SortMode {
         SceneGrouping.SortMode(rawValue: sortModeRaw) ?? .byRoom
@@ -87,20 +103,18 @@ struct ScenesTabView: View {
     }
 
     private var gridColumns: [GridItem] {
-        // SceneMoodCard is already a full-width bar internally (maxWidth
-        // .infinity) — one column IS the full-bar layout. Every grid on the
-        // page (grouped sections, favorites shelf, flat/search, skeleton)
-        // routes through this property.
+        // Every grid on the page (sections, flat/search, skeleton) routes
+        // through this property; one column IS the full-width layout.
         if sceneWideCards {
-            return [GridItem(.flexible(), spacing: 14)]
+            return [GridItem(.flexible(), spacing: 12)]
         }
-        return [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
+        return [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
     }
 
     // ── Derived data ──────────────────────────────────────
 
-    /// Name/archetype lookup across rooms AND zones — zone scenes previously
-    /// resolved as "Other" because only allRooms was searched.
+    /// Name/archetype lookup across rooms AND zones — zone scenes resolve
+    /// as "Other" if only allRooms is searched.
     private var roomIndex: [String: SceneGrouping.RoomInfo] {
         SceneGrouping.roomIndex(groups: orchestrator.allRooms + orchestrator.allZones)
     }
@@ -131,7 +145,7 @@ struct ScenesTabView: View {
         }
     }
 
-    /// Scenes the current mode actually displays (drives the count badges).
+    /// Scenes the current mode actually displays (drives the counts).
     private var displayedScenes: [GlobalSceneItem] {
         (sortMode.isGrouped && !isSearching) ? orchestrator.globalScenes : filteredScenes
     }
@@ -140,34 +154,55 @@ struct ScenesTabView: View {
         displayedScenes.filter { $0.isActive }.count
     }
 
+    private var activeScenes: [GlobalSceneItem] {
+        orchestrator.globalScenes.filter(\.isActive)
+    }
+
+    private var favoriteScenes: [GlobalSceneItem] {
+        SceneGrouping.favorites(scenes: orchestrator.globalScenes, favoriteIDsCSV: favoriteSceneIDsRaw)
+    }
+
+    /// The background glows in what's on, else in your favorites.
+    private var ambienceColors: [Color] {
+        let source = activeScenes.isEmpty ? favoriteScenes : activeScenes
+        let colors = source.prefix(3).map { LuminousScenePalette.accent(for: $0) }
+        return colors.isEmpty ? [LuminousPalette.violet] : Array(colors)
+    }
+
     // ── Body ──────────────────────────────────────────────
 
     var body: some View {
-        ZStack {
-            ambientBackground
-
-            Group {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                header
+                titleBlock
                 if orchestrator.isLoadingScenes && orchestrator.globalScenes.isEmpty {
                     loadingGrid
                 } else if orchestrator.globalScenes.isEmpty {
-                    emptyState
+                    LuminousEmptyState(symbol: "swatchpalette",
+                                       title: "No scenes yet",
+                                       message: "Scenes saved on your bridge appear here. Connect a bridge that has scenes, or capture one from a room with the + button.",
+                                       actionTitle: "Refresh") {
+                        Task { await orchestrator.loadAllScenes() }
+                    }
                 } else {
-                    contentView
+                    searchField
+                    contentSections
                 }
             }
+            .padding(.horizontal, HueSpacing.screenH)
+            .padding(.top, 8)
+            .padding(.bottom, 28)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .scrollIndicators(.hidden)
+        .scrollDismissesKeyboard(.interactively)
+        .refreshable {
+            await orchestrator.loadAllScenes()
+        }
+        .background { LuminousAmbience(colors: ambienceColors) }
+        .toolbar(.hidden, for: .navigationBar)
         .navigationTitle("Scenes")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbarColorScheme(.dark, for: .navigationBar)
-        .toolbarBackground(.hidden, for: .navigationBar)
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                Text("SCENES")
-                    .font(.system(size: 14, weight: .bold))
-                    .tracking(1.4)
-                    .foregroundStyle(StagePalette.ink)
-            }
-        }
         .sheet(isPresented: $showCreateScene) {
             CreateGlobalSceneView()
         }
@@ -177,8 +212,8 @@ struct ScenesTabView: View {
         .sheet(item: $studioSceneToAdd) { preset in
             studioSceneRoomPicker(preset: preset)
         }
-        // Fresh read-only snapshot each visit — Studio may have saved new
-        // creations since the last one.
+        // Fresh read-only snapshot each visit — Studio Classic may have saved
+        // new creations since the last one.
         .task { refreshStudioScenePresets() }
         .onChange(of: isTabActive) { _, active in
             if active { refreshStudioScenePresets() }
@@ -249,8 +284,6 @@ struct ScenesTabView: View {
         } message: { scene in
             Text("\"\(scene.name)\" will be permanently removed from your bridge.")
         }
-        .toolbar { toolbarItems }
-        .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search scenes or rooms")
         .preferredColorScheme(.dark)
         .sheet(item: $speedSheetScene) { scene in
             SceneSpeedSheet(
@@ -275,249 +308,200 @@ struct ScenesTabView: View {
         }
     }
 
+    // ── Header ────────────────────────────────────────────
+
+    private var header: some View {
+        HStack(spacing: 10) {
+            stateChip
+            Spacer(minLength: 0)
+            if orchestrator.isLoadingScenes && !orchestrator.globalScenes.isEmpty {
+                ProgressView().tint(LuminousPalette.ink).scaleEffect(0.85)
+                    .accessibilityLabel("Refreshing scenes")
+            }
+            sortMenu
+            // Unified creation entry: capture the room's current look, or
+            // build per-light colors — both existing flows, one door.
+            // Guest-only devices have no bridge they may create scenes on.
+            if !orchestrator.guestAccessInfo.isGuestOnly {
+                createMenu
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var stateChip: some View {
+        if orchestrator.isLoadingScenes && orchestrator.globalScenes.isEmpty {
+            LuminousStateChip(text: "Finding scenes…", dot: LuminousPalette.cyan, glowing: true)
+        } else if orchestrator.globalScenes.isEmpty {
+            LuminousStateChip(text: "No scenes")
+        } else if activeCount > 0 {
+            LuminousStateChip(text: "\(activeCount) on now", dot: LuminousPalette.live, glowing: true)
+        } else {
+            let n = displayedScenes.count
+            LuminousStateChip(text: "\(n) scene\(n == 1 ? "" : "s")", dot: LuminousPalette.violet)
+        }
+    }
+
+    private var sortMenu: some View {
+        Menu {
+            Picker("Sort", selection: Binding(
+                get: { sortMode },
+                set: { newMode in
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                        sortModeRaw = newMode.rawValue
+                        // Chips are hidden in grouped mode — drop any
+                        // invisible filter so nothing is silently hidden.
+                        if newMode.isGrouped { selectedRoomID = nil }
+                    }
+                    HapticManager.shared.light()
+                }
+            )) {
+                ForEach(availableSortModes) { mode in
+                    Label(mode.label, systemImage: mode.icon).tag(mode)
+                }
+            }
+            Section {
+                Toggle(isOn: Binding(
+                    get: { sceneWideCards },
+                    set: { wide in
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { sceneWideCards = wide }
+                        HapticManager.shared.light()
+                    }
+                )) {
+                    Label("Full-Width Cards", systemImage: "rectangle.grid.1x2")
+                }
+            }
+        } label: {
+            LuminousRoundGlyph(symbol: "arrow.up.arrow.down")
+        }
+        .accessibilityLabel("Sort scenes")
+    }
+
+    private var createMenu: some View {
+        Menu {
+            Button {
+                showCreateScene = true
+                HapticManager.shared.light()
+            } label: {
+                Label("Capture Room Look", systemImage: "camera.viewfinder")
+            }
+            Button {
+                showBuildScene = true
+                HapticManager.shared.light()
+            } label: {
+                Label("Build Colors…", systemImage: "paintpalette")
+            }
+        } label: {
+            LuminousRoundGlyph(symbol: "plus")
+        }
+        .accessibilityLabel("New scene")
+    }
+
+    private var titleBlock: some View {
+        let total = orchestrator.globalScenes.count
+        let rooms = uniqueRooms.count
+        let subtitle = total == 0
+            ? "Saved moods from your bridge, one tap away."
+            : "\(total) scene\(total == 1 ? "" : "s") across \(rooms) room\(rooms == 1 ? "" : "s"). Tap one to bring it back."
+        return LuminousScreenTitle(title: "Scenes",
+                                   eyebrow: "Still moods",
+                                   eyebrowSymbol: "swatchpalette.fill",
+                                   eyebrowTint: LuminousPalette.magenta,
+                                   subtitle: subtitle)
+    }
+
+    // ── Search ────────────────────────────────────────────
+
+    private var searchField: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(searchFocused || isSearching ? LuminousPalette.cyan : LuminousPalette.inkSecondary)
+            TextField("Search scenes or rooms", text: $searchText)
+                .font(.body)
+                .foregroundStyle(LuminousPalette.ink)
+                .tint(LuminousPalette.cyan)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .submitLabel(.search)
+                .focused($searchFocused)
+            if isSearching {
+                Button {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { searchText = "" }
+                    HapticManager.shared.light()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 16))
+                        .foregroundStyle(LuminousPalette.inkSecondary)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Clear search")
+            }
+        }
+        .padding(.leading, 14)
+        .padding(.trailing, isSearching ? 0 : 14)
+        .frame(minHeight: 48)
+        .luminousGlass(radius: 16, accent: LuminousPalette.cyan, selected: searchFocused)
+        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: searchFocused)
+    }
+
     // ── Content ───────────────────────────────────────────
 
-    private var contentView: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-
-                // Room filter chips — flat modes only (sections replace them
-                // in grouped mode, and later double as drag-drop targets).
-                if !sortMode.isGrouped {
-                    chipRow
-                }
-
-                // Scene count + active badge
-                HStack(spacing: 8) {
-                    StageBadge(text: "\(displayedScenes.count) SCENE\(displayedScenes.count == 1 ? "" : "S")",
-                               style: .muted)
-                    if activeCount > 0 {
-                        StageBadge(text: "\(activeCount) ACTIVE", style: .live)
-                    }
-                    Spacer()
-                }
-                .padding(.horizontal, 20)
-                .padding(.top, sortMode.isGrouped ? 12 : 0)
-                .padding(.bottom, 8)
-
-                // Studio scenes — Composer creations whose layers make them
-                // scenes. Tapping one creates a REAL bridge scene in a room
-                // you pick, so it joins that room's list right here.
-                if !studioScenePresets.isEmpty && !studioSceneTargetRooms.isEmpty {
-                    studioScenesShelf
-                        .padding(.bottom, 8)
-                }
-
-                if sortMode.isGrouped && !isSearching {
-                    groupedContent
-                } else {
-                    flatGrid
-                }
+    private var contentSections: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            // Room filter chips — flat modes only (sections replace them in
+            // grouped mode). They double as drag-drop targets.
+            if !sortMode.isGrouped {
+                chipRow
             }
-        }
-        .scrollIndicators(.hidden)
-        .scrollDismissesKeyboard(.interactively)
-        .refreshable {
-            await orchestrator.loadAllScenes()
-        }
-    }
 
-    // ── Studio scenes shelf ───────────────────────────────
-
-    /// Rooms/zones a Studio scene may be added to. Adding one POSTs a new
-    /// bridge scene, so a granted (guest) bridge's rooms are never offered —
-    /// on a guest-only phone that empties the list and hides the shelf.
-    private var studioSceneTargetRooms: [RoomDisplayItem] {
-        (orchestrator.allRooms + orchestrator.allZones)
-            .filter { !orchestrator.isGuestGrantedBridge($0.bridgeID) }
-    }
-
-    /// Fresh read-only snapshot of scene-like Composer creations. Off-main
-    /// read, filtered by the same classifier the Studio decks use; the hidden
-    /// starter draft never shows.
-    private func refreshStudioScenePresets() {
-        Task.detached(priority: .userInitiated) {
-            let presets = CompositionStore.readPresets(from: CompositionStore.defaultFileURL).presets
-                .filter {
-                    $0.id != StudioViewModel.composerStarterDraftPresetID
-                        && PresetSurfaceClassifier.surface(for: $0) == .scene
+            if sortMode.isGrouped && !isSearching {
+                if !activeScenes.isEmpty {
+                    shelf(title: "On now", subtitle: "What your rooms are showing.",
+                          symbol: "light.max", tint: LuminousPalette.live, scenes: activeScenes)
                 }
-                .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-            await MainActor.run { studioScenePresets = presets }
-        }
-    }
-
-    private var studioScenesShelf: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Button {
-                withAnimation(HueAnimation.fast) { studioShelfCollapsed.toggle() }
-                HapticManager.shared.selection()
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "wand.and.stars")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(HuePalette.amber.opacity(0.8))
-                    Text("STUDIO SCENES")
-                        .font(HueFont.stageTag)
-                        .tracking(1.2)
-                        .foregroundStyle(.white.opacity(0.55))
-                    Text("\(studioScenePresets.count)")
-                        .font(HueFont.stageTag)
-                        .foregroundStyle(.white.opacity(0.30))
-                    Spacer()
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(.white.opacity(0.4))
-                        .rotationEffect(.degrees(studioShelfCollapsed ? -90 : 0))
+                if !favoriteScenes.isEmpty {
+                    shelf(title: "Favorites", subtitle: "Your starred scenes, from every room.",
+                          symbol: "star.fill", tint: LuminousPalette.amber, scenes: favoriteScenes)
                 }
-                .contentShape(Rectangle())
+                roomSections
+            } else {
+                flatGrid
             }
-            .buttonStyle(.plain)
-            .padding(.horizontal, 20)
-            .accessibilityLabel("Studio scenes, \(studioScenePresets.count), \(studioShelfCollapsed ? "collapsed" : "expanded")")
 
-            if !studioShelfCollapsed {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 10) {
-                        ForEach(studioScenePresets) { preset in
-                            Button {
-                                studioSceneToAdd = preset
-                                HapticManager.shared.light()
-                            } label: {
-                                HStack(spacing: 6) {
-                                    Image(systemName: preset.icon)
-                                        .font(.system(size: 11, weight: .semibold))
-                                    Text(preset.name)
-                                        .font(.system(size: 13, weight: .semibold))
-                                        .lineLimit(1)
-                                    // Static real-palette swatch strip — no
-                                    // clock in a horizontal scroller.
-                                    LookPreviewStrip(spec: LookPreviewSpec(preset: preset),
-                                                     animated: false,
-                                                     height: 6)
-                                        .frame(width: 40)
-                                    Image(systemName: "plus.circle.fill")
-                                        .font(.system(size: 11))
-                                        .opacity(0.6)
-                                }
-                                .foregroundStyle(Color(hex: preset.accentColorHex))
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 8)
-                                .background(Capsule().fill(Color(hex: preset.accentColorHex).opacity(0.13)))
-                                .overlay(Capsule().strokeBorder(Color(hex: preset.accentColorHex).opacity(0.3), lineWidth: 1))
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("Add \(preset.name) to a room as a scene")
-                        }
-                    }
-                    .padding(.horizontal, 20)
-                }
+            // Studio Classic looks that save as real bridge scenes. Tapping
+            // one creates a scene in a room you pick, so it joins that
+            // room's list right here.
+            if !studioScenePresets.isEmpty && !studioSceneTargetRooms.isEmpty {
+                studioScenesShelf
             }
         }
     }
 
-    /// Pick the room the Studio scene lands in — it becomes a real bridge
-    /// scene there, provenance-badged STUDIO like the Composer's own export.
-    private func studioSceneRoomPicker(preset: CompositionPreset) -> some View {
-        NavigationStack {
-            List {
-                Section {
-                    ForEach(studioSceneTargetRooms) { room in
-                        Button {
-                            guard !studioAddBusy else { return }
-                            studioAddBusy = true
-                            Task {
-                                let sceneID = await orchestrator.addStudioSceneToRoom(preset: preset, room: room)
-                                studioAddBusy = false
-                                studioSceneToAdd = nil
-                                if sceneID != nil { HapticManager.shared.medium() }
-                            }
-                        } label: {
-                            HStack {
-                                Text(room.name).foregroundStyle(.white)
-                                if room.kind == .zone {
-                                    Text("Zone")
-                                        .font(.caption2)
-                                        .foregroundStyle(.white.opacity(0.4))
-                                }
-                                Spacer()
-                                if studioAddBusy { ProgressView() }
-                            }
-                        }
-                        .disabled(studioAddBusy)
+    /// A horizontal shelf of cross-room cards (room label kept on each).
+    private func shelf(title: String, subtitle: String, symbol: String, tint: Color,
+                       scenes: [GlobalSceneItem]) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            LuminousSectionHeader(title: title, subtitle: subtitle, symbol: symbol, tint: tint)
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: 12) {
+                    ForEach(scenes) { scene in
+                        sceneCard(scene, showsRoomLabel: true)
+                            .frame(width: 168)
                     }
-                } header: {
-                    Text("Add \"\(preset.name)\" to…")
-                } footer: {
-                    Text("Creates a real Hue scene in that room — it runs from the bridge like any other scene.")
                 }
+                .padding(.vertical, 6)
             }
-            .navigationTitle(preset.name)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { studioSceneToAdd = nil }
-                }
-            }
+            .scrollClipDisabled()
         }
-        .presentationDetents([.medium, .large])
-        .preferredColorScheme(.dark)
     }
 
-    private var chipRow: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                SceneFilterChip(
-                    title: "All",
-                    icon: "sparkles",
-                    isSelected: selectedRoomID == nil,
-                    accentColor: HuePalette.amber
-                ) {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                        selectedRoomID = nil
-                    }
-                }
-                ForEach(uniqueRooms, id: \.id) { room in
-                    SceneFilterChip(
-                        title: room.name,
-                        icon: archetypeIcon(for: roomIndex[room.id]?.archetype),
-                        isSelected: selectedRoomID == room.id || dropTargetRoomID == room.id,
-                        accentColor: HuePalette.amber
-                    ) {
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                            selectedRoomID = (selectedRoomID == room.id) ? nil : room.id
-                        }
-                    }
-                    // Flat modes: the chips double as scene-drop targets.
-                    .dropDestination(for: SceneDragPayload.self) { items, _ in
-                        handleSceneDrop(items, targetRoomID: room.id)
-                    } isTargeted: { targeting in
-                        if targeting {
-                            dropTargetRoomID = room.id
-                        } else if dropTargetRoomID == room.id {
-                            dropTargetRoomID = nil
-                        }
-                    }
-                }
-            }
-            .padding(.horizontal, 20)
-        }
-        .padding(.top, 12)
-        .padding(.bottom, 10)
-    }
+    // ── Grouped mode: room sections ───────────────────────
 
-    // ── Grouped mode: Favorites shelf + room sections ─────
-
-    private var groupedContent: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            let favorites = SceneGrouping.favorites(
-                scenes: orchestrator.globalScenes,
-                favoriteIDsCSV: favoriteSceneIDsRaw
-            )
-            if !favorites.isEmpty {
-                favoritesShelf(favorites)
-            }
-
+    private var roomSections: some View {
+        VStack(alignment: .leading, spacing: 18) {
             ForEach(SceneGrouping.sections(
                 scenes: orchestrator.globalScenes,
                 index: roomIndex
@@ -538,9 +522,10 @@ struct ScenesTabView: View {
                 // dropping opens the copy sheet pre-targeted to that room.
                 .overlay {
                     if dropTargetRoomID == section.id {
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .stroke(HuePalette.amber, lineWidth: 2)
-                            .padding(-6)
+                        RoundedRectangle(cornerRadius: LuminousPalette.panelRadius, style: .continuous)
+                            .strokeBorder(LuminousPalette.signalGradient, lineWidth: 2)
+                            .shadow(color: LuminousPalette.cyan.opacity(0.5), radius: 10)
+                            .padding(-8)
                             .allowsHitTesting(false)
                     }
                 }
@@ -556,51 +541,80 @@ struct ScenesTabView: View {
                 }
             }
         }
-        .padding(.horizontal, 20)
-        .padding(.bottom, 108)   // clear custom tab bar
-    }
-
-    private func favoritesShelf(_ favorites: [GlobalSceneItem]) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 8) {
-                Image(systemName: "star.fill")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(HuePalette.amber)
-                Text("FAVORITES")
-                    .font(.system(size: 13, weight: .bold))
-                    .tracking(1.4)
-                    .foregroundStyle(StagePalette.ink)
-                Spacer()
-            }
-            .padding(.vertical, 10)
-
-            // Cross-room shelf — keep the room label on each card.
-            sceneGrid(favorites, showsRoomLabel: true)
-                .padding(.bottom, 6)
-        }
     }
 
     // ── Flat modes + search results ───────────────────────
 
+    private var chipRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                LuminousChip(title: "All", symbol: "sparkles", selected: selectedRoomID == nil) {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                        selectedRoomID = nil
+                    }
+                }
+                ForEach(uniqueRooms, id: \.id) { room in
+                    LuminousChip(title: room.name,
+                                 symbol: archetypeIcon(for: roomIndex[room.id]?.archetype),
+                                 selected: selectedRoomID == room.id || dropTargetRoomID == room.id) {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                            selectedRoomID = (selectedRoomID == room.id) ? nil : room.id
+                        }
+                    }
+                    // Flat modes: the chips double as scene-drop targets.
+                    .dropDestination(for: SceneDragPayload.self) { items, _ in
+                        handleSceneDrop(items, targetRoomID: room.id)
+                    } isTargeted: { targeting in
+                        if targeting {
+                            dropTargetRoomID = room.id
+                        } else if dropTargetRoomID == room.id {
+                            dropTargetRoomID = nil
+                        }
+                    }
+                }
+            }
+            .padding(.vertical, 2)
+        }
+        .scrollClipDisabled()
+    }
+
     private var flatGrid: some View {
         let usage = SceneUsageStore.shared
-        return sceneGrid(
-            SceneGrouping.flatSorted(
-                scenes: filteredScenes,
-                mode: sortMode,
-                lastUsed: { usage.lastUsed(bridgeSceneID: $0.bridgeSceneID) },
-                useCount: { usage.useCount(bridgeSceneID: $0.bridgeSceneID) }
-            ),
-            showsRoomLabel: true
+        let scenes = SceneGrouping.flatSorted(
+            scenes: filteredScenes,
+            mode: sortMode,
+            lastUsed: { usage.lastUsed(bridgeSceneID: $0.bridgeSceneID) },
+            useCount: { usage.useCount(bridgeSceneID: $0.bridgeSceneID) }
         )
-        .padding(.horizontal, 20)
-        .padding(.bottom, 108)   // clear custom tab bar
+        return VStack(alignment: .leading, spacing: 12) {
+            LuminousSectionHeader(title: flatTitle,
+                                  subtitle: "\(scenes.count) scene\(scenes.count == 1 ? "" : "s")")
+            if scenes.isEmpty {
+                Text(isSearching ? "Nothing matches “\(searchText)”." : "No scenes in this room yet.")
+                    .font(.subheadline)
+                    .foregroundStyle(LuminousPalette.inkSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 8)
+            } else {
+                sceneGrid(scenes, showsRoomLabel: true)
+            }
+        }
+    }
+
+    private var flatTitle: String {
+        if isSearching { return "Results" }
+        switch sortMode {
+        case .byRoom:       return "Scenes"
+        case .alphabetical: return "All scenes"
+        case .recent:       return "Recently used"
+        case .mostUsed:     return "Most used"
+        }
     }
 
     // ── Shared card grid ──────────────────────────────────
 
     private func sceneGrid(_ scenes: [GlobalSceneItem], showsRoomLabel: Bool) -> some View {
-        LazyVGrid(columns: gridColumns, spacing: 14) {
+        LazyVGrid(columns: gridColumns, spacing: 12) {
             ForEach(scenes) { scene in
                 sceneCard(scene, showsRoomLabel: showsRoomLabel)
             }
@@ -609,24 +623,20 @@ struct ScenesTabView: View {
     }
 
     private func sceneCard(_ scene: GlobalSceneItem, showsRoomLabel: Bool) -> some View {
-        SceneMoodCard(
+        LuminousSceneCard(
             scene: scene,
             roomName: roomName(for: scene),
             showsRoomLabel: showsRoomLabel,
             isFavorite: isFavorite(scene),
             isStudio: provenance.isStudioScene(key: scene.id)
         ) {
-            // Tap: activate immediately
+            // Tap: activate immediately.
             HapticManager.shared.medium()
             orchestrator.activateGlobalScene(scene)
-        } onLongPress: {
-            // Long-press: open speed sheet (dynamic) or activate with haptic
+        } onSpeed: {
+            // The Speed button exists only on dynamic scenes.
             HapticManager.shared.heavy()
-            if scene.isDynamic {
-                speedSheetScene = scene
-            } else {
-                orchestrator.activateGlobalScene(scene)
-            }
+            speedSheetScene = scene
         }
         .contextMenu {
             Button {
@@ -639,7 +649,6 @@ struct ScenesTabView: View {
             // guests recall, favorites stay local-only (design §5).
             if !orchestrator.isGuestGrantedBridge(scene.bridgeID) {
                 Button {
-                    renameText    = scene.name
                     sceneToRename = scene
                 } label: {
                     Label("Rename", systemImage: "pencil")
@@ -685,6 +694,158 @@ struct ScenesTabView: View {
             scene: scene, mode: .copy, preselectedTargetID: targetRoomID
         )
         return true
+    }
+
+    // ── Studio scenes shelf ───────────────────────────────
+
+    /// Rooms/zones a Studio scene may be added to. Adding one POSTs a new
+    /// bridge scene, so a granted (guest) bridge's rooms are never offered —
+    /// on a guest-only phone that empties the list and hides the shelf.
+    private var studioSceneTargetRooms: [RoomDisplayItem] {
+        (orchestrator.allRooms + orchestrator.allZones)
+            .filter { !orchestrator.isGuestGrantedBridge($0.bridgeID) }
+    }
+
+    /// Fresh read-only snapshot of scene-like Studio creations. Off-main
+    /// read, filtered by the same classifier the Studio decks use; the hidden
+    /// starter draft never shows.
+    private func refreshStudioScenePresets() {
+        Task.detached(priority: .userInitiated) {
+            let presets = CompositionStore.readPresets(from: CompositionStore.defaultFileURL).presets
+                .filter {
+                    $0.id != StudioViewModel.composerStarterDraftPresetID
+                        && PresetSurfaceClassifier.surface(for: $0) == .scene
+                }
+                .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            await MainActor.run { studioScenePresets = presets }
+        }
+    }
+
+    private var studioScenesShelf: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Button {
+                withAnimation(HueAnimation.fast) { studioShelfCollapsed.toggle() }
+                HapticManager.shared.selection()
+            } label: {
+                LuminousSectionHeader(title: "From Studio Classic",
+                                      subtitle: "Still looks you made there. Add one to a room and it becomes a real scene.",
+                                      symbol: "wand.and.stars",
+                                      tint: LuminousPalette.lime) {
+                    HStack(spacing: 8) {
+                        Text("\(studioScenePresets.count)")
+                            .font(LuminousType.value)
+                            .foregroundStyle(LuminousPalette.inkSecondary)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(LuminousPalette.inkSecondary)
+                            .rotationEffect(.degrees(studioShelfCollapsed ? -90 : 0))
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Studio scenes, \(studioScenePresets.count), \(studioShelfCollapsed ? "collapsed" : "expanded")")
+
+            if !studioShelfCollapsed {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(studioScenePresets) { preset in
+                            studioPresetTile(preset)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+                .scrollClipDisabled()
+            }
+        }
+    }
+
+    private func studioPresetTile(_ preset: CompositionPreset) -> some View {
+        let accent = Color(hex: preset.accentColorHex)
+        return Button {
+            studioSceneToAdd = preset
+            HapticManager.shared.light()
+        } label: {
+            VStack(alignment: .leading, spacing: 10) {
+                // Static real-palette strip — no clock in a horizontal scroller.
+                LookPreviewStrip(spec: LookPreviewSpec(preset: preset), animated: false, height: 8)
+                HStack(spacing: 6) {
+                    Image(systemName: preset.icon)
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(accent)
+                    Text(preset.name)
+                        .font(LuminousType.cardTitleSmall)
+                        .foregroundStyle(LuminousPalette.ink)
+                        .lineLimit(1)
+                }
+                HStack(spacing: 4) {
+                    Image(systemName: "plus.circle.fill").font(.system(size: 11, weight: .bold))
+                    Text("Add to a room").font(.caption.weight(.semibold))
+                }
+                .foregroundStyle(LuminousPalette.cyan)
+            }
+            .padding(12)
+            .frame(width: 168, alignment: .leading)
+            .luminousPanel(radius: 18, glow: accent, glowStrength: 0.45)
+        }
+        .buttonStyle(LuminousPressStyle(scale: 0.95))
+        .accessibilityLabel("Add \(preset.name) to a room as a scene")
+    }
+
+    /// Pick the room the Studio scene lands in — it becomes a real bridge
+    /// scene there, provenance-badged like the Composer's own export.
+    private func studioSceneRoomPicker(preset: CompositionPreset) -> some View {
+        NavigationStack {
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 18) {
+                    LuminousScreenTitle(title: preset.name,
+                                        eyebrow: "Add to a room",
+                                        eyebrowSymbol: "plus.circle.fill",
+                                        eyebrowTint: LuminousPalette.cyan,
+                                        subtitle: "Creates a real Hue scene in that room — it runs from the bridge like any other scene.")
+                    LuminousGroup {
+                        ForEach(Array(studioSceneTargetRooms.enumerated()), id: \.element.id) { index, room in
+                            Button {
+                                guard !studioAddBusy else { return }
+                                studioAddBusy = true
+                                Task {
+                                    let sceneID = await orchestrator.addStudioSceneToRoom(preset: preset, room: room)
+                                    studioAddBusy = false
+                                    studioSceneToAdd = nil
+                                    if sceneID != nil { HapticManager.shared.medium() }
+                                }
+                            } label: {
+                                LuminousRow(symbol: room.kind == .zone ? "square.stack.3d.up" : archetypeIcon(for: room.archetype),
+                                            tint: LuminousPalette.cyan,
+                                            title: room.name,
+                                            subtitle: room.kind == .zone ? "Zone" : "\(room.lightCount) light\(room.lightCount == 1 ? "" : "s")") {
+                                    if studioAddBusy {
+                                        ProgressView().tint(LuminousPalette.ink)
+                                    } else {
+                                        LuminousChevron()
+                                    }
+                                }
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(studioAddBusy)
+                            if index < studioSceneTargetRooms.count - 1 { LuminousRowDivider() }
+                        }
+                    }
+                }
+                .padding(.horizontal, HueSpacing.screenH)
+                .padding(.vertical, 16)
+            }
+            .background { LuminousAmbience(colors: [Color(hex: preset.accentColorHex)]) }
+            .luminousNavigationChrome()
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { studioSceneToAdd = nil }
+                        .foregroundStyle(LuminousPalette.ink.opacity(0.75))
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .luminousSheet()
     }
 
     // ── Copy/Move undo toast ──────────────────────────────
@@ -737,197 +898,12 @@ struct ScenesTabView: View {
     // ── Loading ───────────────────────────────────────────
 
     private var loadingGrid: some View {
-        ScrollView {
-            LazyVGrid(columns: gridColumns, spacing: 14) {
-                ForEach(0..<8, id: \.self) { _ in
-                    SceneShimmerCard()
-                }
-            }
-            .padding(20)
-        }
-        .scrollIndicators(.hidden)
-    }
-
-    // ── Empty ─────────────────────────────────────────────
-
-    private var emptyState: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "sparkles")
-                .font(.system(size: 48))
-                .foregroundStyle(.white.opacity(0.22))
-                .symbolEffect(.pulse)
-
-            Text("No Scenes Found")
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(.white.opacity(0.7))
-
-            Text("Connect to a bridge with scenes\nconfigured to see them here.")
-                .font(.subheadline)
-                .foregroundStyle(.white.opacity(0.35))
-                .multilineTextAlignment(.center)
-
-            Button {
-                Task { await orchestrator.loadAllScenes() }
-            } label: {
-                Label("Refresh", systemImage: "arrow.clockwise")
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.white.opacity(0.7))
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 10)
-                    .background(
-                        Capsule().fill(Color.white.opacity(0.08))
-                            .overlay(Capsule().stroke(Color.white.opacity(0.15), lineWidth: 1))
-                    )
-            }
-            .buttonStyle(.plain)
-            .padding(.top, 8)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(40)
-    }
-
-    // ── Background ────────────────────────────────────────
-
-    private var ambientBackground: some View {
-        ZStack {
-            StagePalette.stage.ignoresSafeArea()
-            // One subdued amber glow — the stage language's single warm accent.
-            Circle()
-                .fill(RadialGradient(
-                    colors: [HuePalette.amber.opacity(0.10), .clear],
-                    center: .center, startRadius: 0, endRadius: 170
-                ))
-                .frame(width: 340)
-                .offset(x: 90, y: -170)
-                .blur(radius: 30)
-                .allowsHitTesting(false)
-        }
-        .clipped()          // prevents the glow from pushing ZStack wider than screen
-        .ignoresSafeArea()
-    }
-
-    // ── Toolbar ───────────────────────────────────────────
-
-    @ToolbarContentBuilder
-    private var toolbarItems: some ToolbarContent {
-        ToolbarItem(placement: .navigationBarLeading) {
-            // Unified creation entry (R4): capture the room's current look,
-            // or build per-light colors — both existing flows, one door.
-            // Guest-only devices have no bridge they may create scenes on.
-            if !orchestrator.guestAccessInfo.isGuestOnly {
-                Menu {
-                    Button {
-                        showCreateScene = true
-                        HapticManager.shared.light()
-                    } label: {
-                        Label("Capture Room Look", systemImage: "camera.viewfinder")
-                    }
-                    Button {
-                        showBuildScene = true
-                        HapticManager.shared.light()
-                    } label: {
-                        Label("Build Colors…", systemImage: "paintpalette")
-                    }
-                } label: {
-                    Image(systemName: "plus")
-                        .foregroundStyle(.white.opacity(0.8))
-                }
-                .accessibilityLabel("New scene")
+        LazyVGrid(columns: gridColumns, spacing: 12) {
+            ForEach(0..<6, id: \.self) { _ in
+                LuminousSceneSkeleton()
             }
         }
-        ToolbarItem(placement: .navigationBarTrailing) {
-            // Grid ↔ full-bar density toggle (Dashboard useWideCards precedent).
-            Button {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                    sceneWideCards.toggle()
-                }
-                HapticManager.shared.light()
-            } label: {
-                Image(systemName: sceneWideCards ? "rectangle.grid.1x2.fill" : "square.grid.2x2")
-                    .foregroundStyle(.white.opacity(0.7))
-            }
-            .accessibilityLabel(sceneWideCards ? "Switch to grid layout" : "Switch to full-width layout")
-        }
-        ToolbarItem(placement: .navigationBarTrailing) {
-            Menu {
-                Picker("Sort", selection: Binding(
-                    get: { sortMode },
-                    set: { newMode in
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                            sortModeRaw = newMode.rawValue
-                            // Chips are hidden in grouped mode — drop any
-                            // invisible filter so nothing is silently hidden.
-                            if newMode.isGrouped { selectedRoomID = nil }
-                        }
-                        HapticManager.shared.light()
-                    }
-                )) {
-                    ForEach(availableSortModes) { mode in
-                        Label(mode.label, systemImage: mode.icon).tag(mode)
-                    }
-                }
-            } label: {
-                Image(systemName: "arrow.up.arrow.down")
-                    .foregroundStyle(.white.opacity(0.7))
-            }
-            .accessibilityLabel("Sort scenes")
-        }
-        ToolbarItem(placement: .navigationBarTrailing) {
-            Button {
-                Task { await orchestrator.loadAllScenes() }
-            } label: {
-                Image(systemName: "arrow.clockwise")
-                    .foregroundStyle(.white.opacity(orchestrator.isLoadingScenes ? 0.4 : 0.8))
-                    .rotationEffect(.degrees(orchestrator.isLoadingScenes ? 360 : 0))
-                    .animation(
-                        orchestrator.isLoadingScenes
-                            ? .linear(duration: 1).repeatForever(autoreverses: false)
-                            : .default,
-                        value: orchestrator.isLoadingScenes
-                    )
-            }
-            .disabled(orchestrator.isLoadingScenes)
-        }
-    }
-}
-
-// ══════════════════════════════════════════════════════════
-// MARK: - SceneFilterChip
-// ══════════════════════════════════════════════════════════
-
-struct SceneFilterChip: View {
-
-    let title:       String
-    let icon:        String
-    let isSelected:  Bool
-    let accentColor: Color
-    let action:      () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 5) {
-                Image(systemName: icon)
-                    .font(.system(size: 11, weight: .medium))
-                Text(title)
-                    .font(.system(size: 12, weight: .medium))
-                    .lineLimit(1)
-            }
-            .foregroundStyle(isSelected ? accentColor : StagePalette.muted)
-            .padding(.horizontal, 13)
-            .padding(.vertical, 8)
-            .background(
-                Capsule()
-                    .fill(isSelected ? accentColor.opacity(0.16) : Color.white.opacity(0.06))
-                    .overlay(
-                        Capsule()
-                            .stroke(
-                                isSelected ? accentColor.opacity(0.55) : StagePalette.line,
-                                lineWidth: 1
-                            )
-                    )
-            )
-        }
-        .buttonStyle(.plain)
-        .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isSelected)
+        .accessibilityElement()
+        .accessibilityLabel("Loading scenes")
     }
 }

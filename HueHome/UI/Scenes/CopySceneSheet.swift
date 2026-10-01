@@ -52,47 +52,47 @@ struct CopySceneSheet: View {
 
     var body: some View {
         NavigationStack {
-            ZStack {
-                StagePalette.stage.ignoresSafeArea()
-
+            Group {
                 if isLoadingDetail {
-                    ProgressView("Reading scene…")
-                        .tint(HuePalette.amber)
-                        .foregroundStyle(.white.opacity(0.6))
+                    VStack(spacing: 14) {
+                        ProgressView().tint(LuminousPalette.ink)
+                        Text("Reading scene…")
+                            .font(.subheadline)
+                            .foregroundStyle(LuminousPalette.inkSecondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if detail == nil {
                     errorState
                 } else {
                     content
                 }
             }
-            .navigationTitle(mode.title)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarColorScheme(.dark, for: .navigationBar)
+            .background { LuminousAmbience(colors: LuminousScenePalette.colors(for: scene)) }
+            .luminousNavigationChrome()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
-                        .foregroundStyle(.white.opacity(0.65))
+                        .foregroundStyle(LuminousPalette.ink.opacity(0.75))
                 }
             }
-            .preferredColorScheme(.dark)
         }
+        .luminousSheet()
         .task { await loadDetail() }
     }
 
     // ── Content ───────────────────────────────────────────
 
     private var content: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 12) {
             ScrollView(showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 22) {
                     sourceHeader
 
-                    Text(mode == .copy ? "COPY TO" : "MOVE TO")
-                        .font(.system(size: 10, weight: .bold))
-                        .tracking(1.2)
-                        .foregroundStyle(.white.opacity(0.38))
-
-                    roomList
+                    VStack(alignment: .leading, spacing: 10) {
+                        LuminousEyebrow(text: mode == .copy ? "Copy to" : "Move to")
+                            .padding(.horizontal, 6)
+                        roomList
+                    }
 
                     if targetRoom != nil {
                         previewSection
@@ -100,46 +100,43 @@ struct CopySceneSheet: View {
                     }
 
                     if let errorMessage {
-                        Text(errorMessage)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(HuePalette.Noir.destructive)
+                        LuminousNotice(text: errorMessage, symbol: "exclamationmark.triangle.fill",
+                                       tint: LuminousPalette.amber)
                     }
                 }
                 .padding(.top, 8)
+                .padding(.bottom, 12)
             }
 
-            confirmButton
+            LuminousPrimaryButton(title: "\(mode.verb) to \(targetRoom?.name ?? "Room")",
+                                  symbol: mode == .copy ? "doc.on.doc.fill" : "arrow.turn.up.right",
+                                  busy: isWorking) {
+                Task { await confirm() }
+            }
+            .disabled(!canConfirm)
         }
-        .padding(.horizontal, 20)
+        .padding(.horizontal, HueSpacing.screenH)
         .padding(.bottom, 16)
     }
 
     private var sourceHeader: some View {
-        HStack(spacing: 10) {
-            ZStack {
-                Circle()
-                    .fill(scene.accentColor.opacity(0.2))
-                    .frame(width: 36, height: 36)
-                Image(systemName: scene.icon)
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(scene.accentColor)
-            }
-            VStack(alignment: .leading, spacing: 2) {
-                Text(scene.name)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.white)
-                if scene.isDynamic {
-                    StageBadge(text: "DYNAMIC", style: .amber)
-                }
-            }
-            Spacer()
+        VStack(alignment: .leading, spacing: 8) {
+            LuminousSceneArt(colors: LuminousScenePalette.colors(for: scene), isActive: true, lamps: 7, height: 64)
+            LuminousScreenTitle(title: mode.title,
+                                eyebrow: scene.name,
+                                eyebrowSymbol: scene.icon,
+                                eyebrowTint: LuminousScenePalette.accent(for: scene),
+                                subtitle: scene.isDynamic
+                                    ? "A dynamic scene — its palette copies as it is."
+                                    : "Each light's color is matched to the lights in the room you pick.")
         }
     }
 
     private var roomList: some View {
-        VStack(spacing: 8) {
-            ForEach(groups) { room in
+        LuminousGroup {
+            ForEach(Array(groups.enumerated()), id: \.element.id) { index, room in
                 roomChip(room)
+                if index < groups.count - 1 { LuminousRowDivider() }
             }
         }
     }
@@ -147,6 +144,10 @@ struct CopySceneSheet: View {
     private func roomChip(_ room: RoomDisplayItem) -> some View {
         let isSelected = targetRoom?.id == room.id
         let isSource = room.id == scene.roomID
+        var detail = "\(room.lightCount) light\(room.lightCount == 1 ? "" : "s")"
+        if multiBridge, let bridgeID = room.bridgeID, let bridge = orchestrator.bridgeName(for: bridgeID) {
+            detail += " · \(bridge)"
+        }
         return Button {
             guard targetRoom?.id != room.id else { return }
             targetRoom = room
@@ -154,43 +155,11 @@ struct CopySceneSheet: View {
             HapticManager.shared.selection()
             Task { await loadPreview(for: room) }
         } label: {
-            HStack(spacing: 10) {
-                Image(systemName: room.kind == .zone ? "square.split.bottomrightquarter" : "lamp.floor")
-                    .font(.system(size: 13))
-                    .foregroundStyle(isSelected ? HuePalette.amber : StagePalette.muted)
-                Text(room.name)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(isSelected ? .white : .white.opacity(0.75))
-                if isSource {
-                    StageBadge(text: "DUPLICATE", style: .muted)
-                }
-                if multiBridge, let bridgeID = room.bridgeID {
-                    Text(orchestrator.bridgeName(for: bridgeID) ?? "")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(StagePalette.muted)
-                        .lineLimit(1)
-                }
-                Spacer()
-                Text("\(room.lightCount)")
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundStyle(StagePalette.muted)
-                if isSelected {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 15))
-                        .foregroundStyle(HuePalette.amber)
-                }
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(isSelected ? HuePalette.amber.opacity(0.12) : Color.white.opacity(0.06))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .strokeBorder(isSelected ? HuePalette.amber.opacity(0.5) : StagePalette.line,
-                                          lineWidth: 1)
-                    )
-            )
+            LuminousChoiceRow(symbol: room.kind == .zone ? "square.stack.3d.up" : archetypeIcon(for: room.archetype),
+                              title: room.name,
+                              subtitle: detail,
+                              tag: isSource ? "Duplicate" : nil,
+                              selected: isSelected)
         }
         .buttonStyle(.plain)
     }
@@ -199,77 +168,78 @@ struct CopySceneSheet: View {
 
     private var previewSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("PREVIEW")
-                .font(.system(size: 10, weight: .bold))
-                .tracking(1.2)
-                .foregroundStyle(.white.opacity(0.38))
+            LuminousEyebrow(text: "How it lands")
+                .padding(.horizontal, 6)
 
-            if isLoadingPreview {
-                ProgressView()
-                    .tint(HuePalette.amber)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-            } else if scene.isDynamic, let palette = detail?.palette?.color, !palette.isEmpty {
-                // Dynamic scenes: the palette is scene-level and copies
-                // verbatim — preview the palette strip itself.
-                HStack(spacing: 8) {
-                    ForEach(Array(palette.prefix(9).enumerated()), id: \.offset) { _, entry in
-                        Circle()
-                            .fill(previewColor(x: entry.color?.xy?.x,
-                                               y: entry.color?.xy?.y,
-                                               mirek: nil))
-                            .frame(width: 22, height: 22)
+            Group {
+                if isLoadingPreview {
+                    ProgressView()
+                        .tint(LuminousPalette.ink)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 18)
+                } else if scene.isDynamic, let palette = detail?.palette?.color, !palette.isEmpty {
+                    // Dynamic scenes: the palette is scene-level and copies
+                    // verbatim — preview the palette itself.
+                    VStack(alignment: .leading, spacing: 8) {
+                        LuminousPaletteOrbs(colors: palette.prefix(9).map {
+                            previewColor(x: $0.color?.xy?.x, y: $0.color?.xy?.y, mirek: nil)
+                        }, count: min(9, max(3, palette.count)), height: 54)
+                        Text("The palette copies as it is.")
+                            .font(.footnote)
+                            .foregroundStyle(LuminousPalette.inkSecondary)
                     }
-                    Spacer()
-                    StageBadge(text: "PALETTE COPIES AS-IS", style: .muted)
-                }
-                .padding(.vertical, 4)
-            } else if remapped.isEmpty {
-                Text("No lights in this room.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.white.opacity(0.4))
-            } else {
-                VStack(spacing: 6) {
-                    ForEach(remapped, id: \.lightID) { action in
-                        previewRow(action)
+                    .padding(14)
+                } else if remapped.isEmpty {
+                    Text("No lights in this room.")
+                        .font(.subheadline)
+                        .foregroundStyle(LuminousPalette.inkSecondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(16)
+                } else {
+                    VStack(spacing: 0) {
+                        ForEach(Array(remapped.enumerated()), id: \.element.lightID) { index, action in
+                            previewRow(action)
+                            if index < remapped.count - 1 { LuminousRowDivider(inset: 52) }
+                        }
                     }
                 }
             }
+            .luminousGlass()
         }
     }
 
     private func previewRow(_ action: SceneCopyEngine.RemappedAction) -> some View {
-        HStack(spacing: 10) {
+        let color = previewColor(x: action.x, y: action.y, mirek: action.mirek)
+        return HStack(spacing: 12) {
             Circle()
                 .fill(action.on
-                      ? previewColor(x: action.x, y: action.y, mirek: action.mirek)
-                      : Color.white.opacity(0.12))
-                .frame(width: 18, height: 18)
-                .overlay(Circle().stroke(StagePalette.line, lineWidth: 1))
+                      ? AnyShapeStyle(RadialGradient(colors: [.white.opacity(0.85), color], center: .topLeading,
+                                                     startRadius: 0, endRadius: 16))
+                      : AnyShapeStyle(Color.white.opacity(0.06)))
+                .frame(width: 22, height: 22)
+                .overlay(Circle().strokeBorder(Color.white.opacity(0.16), lineWidth: 1))
+                .shadow(color: action.on ? color.opacity(0.7) : .clear, radius: 6)
             Text(action.lightName)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.white.opacity(0.85))
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(LuminousPalette.ink.opacity(0.9))
                 .lineLimit(1)
-            Spacer()
+            Spacer(minLength: 0)
             if !action.on {
-                StageBadge(text: "OFF", style: .muted)
+                LuminousFactBadge(text: "Off")
             } else if action.downgrade == .ctApproximation {
-                StageBadge(text: "WARMTH APPROX", style: .muted)
+                LuminousFactBadge(text: "Warmth approx", symbol: "thermometer.medium")
             } else if action.downgrade == .brightnessOnly {
-                StageBadge(text: "BRIGHTNESS ONLY", style: .muted)
+                LuminousFactBadge(text: "Brightness only", symbol: "sun.max")
             }
             if let brightness = action.brightness, action.on {
                 Text("\(BrightnessDisplay.percent(brightness))%")
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundStyle(StagePalette.muted)
+                    .font(LuminousType.value)
+                    .foregroundStyle(LuminousPalette.inkSecondary)
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.white.opacity(0.04))
-        )
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .accessibilityElement(children: .combine)
     }
 
     private func previewColor(x: Double?, y: Double?, mirek: Int?) -> Color {
@@ -285,26 +255,12 @@ struct CopySceneSheet: View {
     // ── Name + confirm ────────────────────────────────────
 
     private var nameField: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("NAME")
-                .font(.system(size: 10, weight: .bold))
-                .tracking(1.2)
-                .foregroundStyle(.white.opacity(0.38))
-            TextField("Scene name", text: $name)
-                .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(.white)
-                .tint(HuePalette.amber)
-                .padding(12)
-                .background(
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(.white.opacity(0.07))
-                        .overlay(RoundedRectangle(cornerRadius: 12)
-                            .strokeBorder(.white.opacity(0.12), lineWidth: 1))
-                )
-                .onChange(of: name) { _, newValue in
-                    // Bridge caps metadata.name at 32 chars (builder convention).
-                    if newValue.count > 32 { name = String(newValue.prefix(32)) }
-                }
+        VStack(alignment: .leading, spacing: 10) {
+            LuminousEyebrow(text: "Name")
+                .padding(.horizontal, 6)
+            // Bridge caps metadata.name at 32 chars (builder convention).
+            LuminousTextField(placeholder: "Scene name", text: $name, symbol: "textformat",
+                              tint: LuminousPalette.cyan, limit: 32)
         }
     }
 
@@ -314,41 +270,12 @@ struct CopySceneSheet: View {
             && !isLoadingPreview && !isWorking
     }
 
-    private var confirmButton: some View {
-        Button {
-            Task { await confirm() }
-        } label: {
-            HStack {
-                if isWorking {
-                    ProgressView().tint(.black)
-                } else {
-                    Text("\(mode.verb) to \(targetRoom?.name ?? "Room")")
-                        .font(.system(size: 15, weight: .bold))
-                }
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 14)
-            .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(canConfirm ? HuePalette.amber : HuePalette.amber.opacity(0.25))
-            )
-            .foregroundStyle(Color.black.opacity(0.85))
-        }
-        .buttonStyle(.plain)
-        .disabled(!canConfirm)
-    }
-
     private var errorState: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "exclamationmark.triangle")
-                .font(.system(size: 34))
-                .foregroundStyle(.white.opacity(0.3))
-            Text(errorMessage ?? "Couldn't read this scene from the bridge.")
-                .font(.subheadline)
-                .foregroundStyle(.white.opacity(0.6))
-                .multilineTextAlignment(.center)
-        }
-        .padding(32)
+        LuminousEmptyState(symbol: "exclamationmark.triangle",
+                           title: "Couldn't read this scene",
+                           message: errorMessage ?? "Couldn't read this scene from the bridge.")
+            .padding(HueSpacing.screenH)
+            .frame(maxHeight: .infinity, alignment: .top)
     }
 
     // ── Data flow ─────────────────────────────────────────

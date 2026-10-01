@@ -1,9 +1,9 @@
 // SceneColorBuilderView.swift
-// CastChroma — P2 Scene Color Builder
+// ChromaGlow — Scene Color Builder (Luminous)
 //
-// Full-screen scene design studio. Combines the 2D color pad, hue spectrum
-// bar, harmony rule picker, and per-light assignment into a single cohesive
-// experience.
+// Full-screen scene design studio: a stage that shows the room's lights as
+// you paint them, then the 2D color pad, hue spectrum bar, harmony rule
+// picker and per-light assignment — one cohesive instrument.
 //
 // Supports both CREATE and EDIT modes:
 //   • Create: lights arrive with their current state; user designs new palette.
@@ -68,7 +68,8 @@ struct SceneColorBuilderView: View {
     private enum SceneSeed: Equatable { case notNeeded, loading, loaded, failed }
     @State private var sceneSeed: SceneSeed = .notNeeded
 
-    private let amber = Color(red: 1.0, green: 0.76, blue: 0.20)
+    /// The color the pad is on — the builder's own accent.
+    private var padColor: Color { Color(hue: currentHue, saturation: max(0.35, currentSaturation), brightness: 1) }
 
     private var isEditMode: Bool { existingSceneID != nil }
 
@@ -100,63 +101,76 @@ struct SceneColorBuilderView: View {
 
     var body: some View {
         NavigationStack {
-            ZStack {
-                ambientBackground
-
-                ScrollView(showsIndicators: false) {
-                    // While an edit's scene is being read, the controls are
-                    // NOT in the hierarchy: they mount afterwards with the
-                    // seeded values as their initial state, so the pad's
-                    // live-sync onChange handlers never fire for the seed
-                    // (which would paint every light the first light's color).
-                    if sceneSeed == .loading {
-                        ProgressView("Reading scene…")
-                            .tint(amber)
-                            .foregroundStyle(.white.opacity(0.6))
-                            .frame(maxWidth: .infinity)
-                            .padding(.top, 120)
-                    } else {
-                        VStack(spacing: 20) {
-                            nameField
-                                .padding(.top, 12)
-
-                            harmonyPicker
-
-                            lightStrip
-
-                            if selectedSupportsColor {
-                                colorControls
-                                myColorsStrip
-                            }
-
-                            if selectedHasAmbiance {
-                                colorTempSection
-                            }
-
-                            brightnessSection
-
-                            saveButton
-                                .padding(.top, 8)
-                                .padding(.bottom, 48)
-                        }
-                        .padding(.horizontal, 20)
+            ScrollView(showsIndicators: false) {
+                // While an edit's scene is being read, the controls are
+                // NOT in the hierarchy: they mount afterwards with the
+                // seeded values as their initial state, so the pad's
+                // live-sync onChange handlers never fire for the seed
+                // (which would paint every light the first light's color).
+                if sceneSeed == .loading {
+                    VStack(spacing: 14) {
+                        ProgressView().tint(LuminousPalette.ink)
+                        Text("Reading scene…")
+                            .font(.subheadline)
+                            .foregroundStyle(LuminousPalette.inkSecondary)
                     }
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 120)
+                } else {
+                    VStack(alignment: .leading, spacing: 22) {
+                        LuminousScreenTitle(title: isEditMode ? "Edit scene" : "New scene",
+                                            eyebrow: "Build colors",
+                                            eyebrowSymbol: "paintpalette.fill",
+                                            eyebrowTint: padColor,
+                                            subtitle: "Pick a light, paint it. Hold a light to paint several at once.")
+                            .padding(.top, 4)
+
+                        stage
+
+                        nameField
+
+                        harmonyPicker
+
+                        lightStrip
+
+                        if selectedSupportsColor {
+                            colorControls
+                            myColorsStrip
+                        }
+
+                        if selectedHasAmbiance {
+                            colorTempSection
+                        }
+
+                        brightnessSection
+
+                        LuminousPrimaryButton(title: isEditMode
+                                                ? "Update Scene"
+                                                : "Save Scene (\(lights.count) light\(lights.count == 1 ? "" : "s"))",
+                                              symbol: isEditMode ? "pencil" : "sparkles",
+                                              busy: isSaving) {
+                            Task { await save() }
+                        }
+                        .disabled(!canSave || isSaving)
+                        .animation(.spring(response: 0.3), value: canSave)
+                        .padding(.top, 4)
+                        .padding(.bottom, 40)
+                    }
+                    .padding(.horizontal, HueSpacing.screenH)
                 }
             }
-            .navigationTitle(isEditMode ? "Edit Scene" : "New Scene")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarColorScheme(.dark, for: .navigationBar)
-            .toolbarBackground(.hidden, for: .navigationBar)
+            .scrollDismissesKeyboard(.interactively)
+            .background { LuminousAmbience(colors: ambienceColors) }
+            .luminousNavigationChrome()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
                         revertLights()
                         dismiss()
                     }
-                    .foregroundStyle(.white.opacity(0.7))
+                    .foregroundStyle(LuminousPalette.ink.opacity(0.75))
                 }
             }
-            .preferredColorScheme(.dark)
             .onAppear { setupInitialState() }
             .task { await seedFromSceneIfEditing() }
             .alert("Error", isPresented: .constant(errorMessage != nil)) {
@@ -165,29 +179,27 @@ struct SceneColorBuilderView: View {
                 Text(errorMessage ?? "")
             }
         }
+        .luminousSheet()
+    }
+
+    /// The colors the lights are being painted, for the background glow.
+    private var ambienceColors: [Color] {
+        let lit = LuminousLight.palette(of: lights, max: 3)
+        return lit.isEmpty ? [padColor] : lit
     }
 
     // ══════════════════════════════════════════════════════════════
-    // MARK: - Background
+    // MARK: - Stage
     // ══════════════════════════════════════════════════════════════
 
-    private var ambientBackground: some View {
-        ZStack {
-            Color(red: 0.055, green: 0.055, blue: 0.08).ignoresSafeArea()
-            Circle()
-                .fill(RadialGradient(
-                    colors: [
-                        Color(hue: currentHue, saturation: 0.6, brightness: 0.8).opacity(0.18),
-                        .clear
-                    ],
-                    center: .center, startRadius: 0, endRadius: 240
-                ))
-                .frame(width: 440)
-                .offset(y: 100)
-                .blur(radius: 30)
-                .animation(.easeInOut(duration: 0.6), value: currentHue)
-        }
-        .ignoresSafeArea()
+    /// The room as it will look: every light as an orb in the color it is
+    /// being painted, redrawn as the pad moves.
+    private var stage: some View {
+        LuminousMiniRoomStage(lights: lights, height: 104)
+            .padding(.vertical, 6)
+            .luminousStageFrame(radius: 24)
+            .accessibilityElement()
+            .accessibilityLabel("Preview of \(lights.count) light\(lights.count == 1 ? "" : "s")")
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -195,48 +207,11 @@ struct SceneColorBuilderView: View {
     // ══════════════════════════════════════════════════════════════
 
     private var nameField: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("SCENE NAME")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.45))
-
-            GlassmorphicCard(isActive: !sceneName.isEmpty, glowColor: amber) {
-                HStack(spacing: 12) {
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 16))
-                        .foregroundStyle(sceneName.isEmpty ? .white.opacity(0.3) : amber)
-
-                    TextField("e.g. Movie Night, Sunset…", text: $sceneName)
-                        .font(.subheadline)
-                        .foregroundStyle(.white)
-                        .tint(amber)
-                        .submitLabel(.done)
-                        .onChange(of: sceneName) { _, newValue in
-                            // Hue bridge limits scene names to 32 characters
-                            if newValue.count > 32 {
-                                sceneName = String(newValue.prefix(32))
-                            }
-                        }
-
-                    if !sceneName.isEmpty {
-                        Button {
-                            sceneName = ""
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .foregroundStyle(.white.opacity(0.35))
-                                .frame(width: HueHit.min, height: HueHit.min)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-            }
-
-            if sceneName.count > 28 {
-                Text("\(32 - sceneName.count) characters remaining")
-                    .font(.caption2)
-                    .foregroundStyle(sceneName.count >= 32 ? .red.opacity(0.7) : .white.opacity(0.35))
-            }
+        VStack(alignment: .leading, spacing: 10) {
+            LuminousEyebrow(text: "Scene name").padding(.horizontal, 6)
+            // Hue bridge limits scene names to 32 characters.
+            LuminousTextField(placeholder: "e.g. Movie Night, Sunset…", text: $sceneName,
+                              symbol: "sparkles", tint: padColor, limit: 32)
         }
     }
 
@@ -245,49 +220,24 @@ struct SceneColorBuilderView: View {
     // ══════════════════════════════════════════════════════════════
 
     private var harmonyPicker: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("HARMONY")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.45))
-
+        VStack(alignment: .leading, spacing: 10) {
+            LuminousEyebrow(text: "Harmony").padding(.horizontal, 6)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     ForEach(HarmonyRule.allCases) { rule in
-                        harmonyChip(rule)
+                        LuminousChip(title: rule.rawValue, symbol: rule.icon,
+                                     selected: harmonyRule == rule, accent: padColor) {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                harmonyRule = rule
+                            }
+                            applyHarmony()
+                        }
                     }
                 }
+                .padding(.vertical, 2)
             }
+            .scrollClipDisabled()
         }
-    }
-
-    private func harmonyChip(_ rule: HarmonyRule) -> some View {
-        let isSelected = harmonyRule == rule
-        return Button {
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                harmonyRule = rule
-            }
-            HapticManager.shared.medium()
-            applyHarmony()
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: rule.icon)
-                    .font(.system(size: 11, weight: .medium))
-                Text(rule.rawValue)
-                    .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
-            }
-            .foregroundStyle(isSelected ? .black : .white.opacity(0.75))
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(
-                Capsule()
-                    .fill(isSelected ? amber : Color.white.opacity(0.08))
-            )
-            .overlay(
-                Capsule()
-                    .strokeBorder(isSelected ? .clear : .white.opacity(0.08), lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -295,18 +245,13 @@ struct SceneColorBuilderView: View {
     // ══════════════════════════════════════════════════════════════
 
     private var lightStrip: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("LIGHTS")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.45))
-
-                Text("(\(selectedLightIDs.count)/\(lights.count))")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(amber.opacity(0.8))
-
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                LuminousEyebrow(text: "Lights")
+                Text("\(selectedLightIDs.count) of \(lights.count)")
+                    .font(LuminousType.value)
+                    .foregroundStyle(padColor)
                 Spacer()
-
                 Button(selectedLightIDs.count == lights.count ? "Deselect All" : "Select All") {
                     withAnimation(.spring(response: 0.3)) {
                         if selectedLightIDs.count == lights.count {
@@ -315,11 +260,14 @@ struct SceneColorBuilderView: View {
                             selectedLightIDs = Set(lights.map(\.id))
                         }
                     }
+                    HapticManager.shared.selection()
                 }
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(amber)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(LuminousPalette.cyan)
+                .frame(minHeight: 44)
                 .buttonStyle(.plain)
             }
+            .padding(.horizontal, 6)
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
@@ -327,56 +275,44 @@ struct SceneColorBuilderView: View {
                         lightChip(light: light, index: idx)
                     }
                 }
-                .padding(.vertical, 4)
+                .padding(.vertical, 6)
             }
+            .scrollClipDisabled()
         }
     }
 
     private func lightChip(light: LightDisplayItem, index: Int) -> some View {
         let isSelected = selectedLightIDs.contains(light.id)
         let chipColor = lightColor(for: light)
+        let level = light.isOn ? max(0.15, light.brightness / 100) : 0
 
-        return VStack(spacing: 6) {
-            // Color dot
-            ZStack {
-                Circle()
-                    .fill(chipColor.opacity(0.25))
-                    .frame(width: 44, height: 44)
-                Image(systemName: "lightbulb.fill")
-                    .font(.system(size: 18))
-                    .foregroundStyle(chipColor)
-            }
+        return VStack(spacing: 7) {
+            // The light as an orb: its color, glowing at its brightness.
+            Circle()
+                .fill(light.isOn
+                      ? AnyShapeStyle(RadialGradient(colors: [.white.opacity(0.35 + 0.6 * level), chipColor],
+                                                     center: .init(x: 0.38, y: 0.32),
+                                                     startRadius: 0, endRadius: 22))
+                      : AnyShapeStyle(Color.white.opacity(0.06)))
+                .frame(width: 34, height: 34)
+                .overlay(Circle().strokeBorder(Color.white.opacity(light.isOn ? 0.3 : 0.16), lineWidth: 1))
+                .shadow(color: chipColor.opacity(light.isOn ? 0.75 * level : 0), radius: 12)
+                .frame(width: 48, height: 44)
 
-            // Name
             Text(light.name)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.white.opacity(isSelected ? 0.9 : 0.45))
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(LuminousPalette.ink.opacity(isSelected ? 0.95 : 0.55))
                 .lineLimit(1)
-                .frame(width: 65)
+                .frame(width: 70)
 
-            // Brightness
             Text("\(BrightnessDisplay.percent(light.brightness))%")
-                .font(.system(size: 9, weight: .medium))
-                .foregroundStyle(chipColor.opacity(0.8))
+                .font(.caption2.weight(.semibold).monospacedDigit())
+                .foregroundStyle(LuminousPalette.inkSecondary)
         }
         .padding(.vertical, 10)
         .padding(.horizontal, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 14)
-                .fill(isSelected ? chipColor.opacity(0.12) : Color.white.opacity(0.04))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14)
-                        .strokeBorder(
-                            isSelected ? chipColor.opacity(0.5) : .white.opacity(0.06),
-                            lineWidth: isSelected ? 1.5 : 1
-                        )
-                )
-        )
-        .shadow(
-            color: isSelected ? chipColor.opacity(0.35) : .clear,
-            radius: 8, y: 4
-        )
-        .contentShape(RoundedRectangle(cornerRadius: 14))
+        .luminousGlass(radius: 18, accent: chipColor, selected: isSelected)
+        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         // ── Tap: single-select (paint mode) ──
         .onTapGesture {
             withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
@@ -400,6 +336,10 @@ struct SceneColorBuilderView: View {
             HapticManager.shared.medium()
         }
         .animation(.spring(response: 0.25), value: isSelected)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(light.name), \(BrightnessDisplay.percent(light.brightness)) percent")
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : [.isButton])
+        .accessibilityHint("Double tap to paint this light alone. Hold to add it to the lights being painted.")
     }
 
     /// Sync the color pad & brightness slider to a specific light's state.
@@ -455,6 +395,8 @@ struct SceneColorBuilderView: View {
                 }
             }
         }
+        .padding(14)
+        .luminousPanel(glow: padColor, glowStrength: 0.45)
         // Update light chips in real-time during pad drag (not just on commit)
         .onChange(of: currentSaturation) { _, newSat in
             updateLightChipsLive(hue: currentHue, saturation: newSat, brightness: currentBrightness)
@@ -481,12 +423,8 @@ struct SceneColorBuilderView: View {
     /// Saved palette: ＋ captures the pad's current color, a swatch tap
     /// paints the selected lights through the existing preview pipeline.
     private var myColorsStrip: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("MY COLORS")
-                .font(.system(size: 9, weight: .semibold))
-                .tracking(1.0)
-                .foregroundStyle(.white.opacity(0.4))
-                .padding(.leading, 4)
+        VStack(alignment: .leading, spacing: 8) {
+            LuminousEyebrow(text: "My colors").padding(.horizontal, 6)
             SavedColorStrip(
                 onSave: {
                     let (x, y) = HueColorUtils.xyFrom(
@@ -512,6 +450,8 @@ struct SceneColorBuilderView: View {
                     HapticManager.shared.medium()
                 }
             )
+            .padding(.vertical, 4)
+            .luminousGlass(radius: 18)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -521,24 +461,31 @@ struct SceneColorBuilderView: View {
     // ══════════════════════════════════════════════════════════════
 
     private var colorTempSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            let kelvin = HueColorUtils.kelvin(from: currentMirek)
-            Text("WARMTH · \(kelvin)K")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.45))
-
-            GlassmorphicCard(isActive: true, glowColor: HueColorUtils.color(fromMirek: currentMirek)) {
-                ColorTempSlider(
-                    currentMirek: currentMirek,
-                    mirekMin: 153,
-                    mirekMax: 500
-                ) { mirek in
-                    currentMirek = mirek
-                    applyColorTempToSelected(mirek: mirek)
-                }
-                .padding(.vertical, 12)
+        let kelvin = HueColorUtils.kelvin(from: currentMirek)
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "thermometer.medium")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(HueColorUtils.color(fromMirek: currentMirek))
+                Text("Warmth")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(LuminousPalette.ink.opacity(0.9))
+                Spacer(minLength: 0)
+                Text("\(kelvin)K")
+                    .font(LuminousType.value)
+                    .foregroundStyle(LuminousPalette.ink.opacity(0.7))
+            }
+            ColorTempSlider(
+                currentMirek: currentMirek,
+                mirekMin: 153,
+                mirekMax: 500
+            ) { mirek in
+                currentMirek = mirek
+                applyColorTempToSelected(mirek: mirek)
             }
         }
+        .padding(16)
+        .luminousPanel(glow: HueColorUtils.color(fromMirek: currentMirek), glowStrength: 0.5)
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -546,110 +493,26 @@ struct SceneColorBuilderView: View {
     // ══════════════════════════════════════════════════════════════
 
     private var brightnessSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("BRIGHTNESS · \(BrightnessDisplay.percent(displayBrightness))%")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.45))
-
-            builderBrightnessSlider
-        }
-    }
-
-    /// Custom brightness slider themed to match the builder.
-    private var builderBrightnessSlider: some View {
-        GeometryReader { geo in
-            let width = geo.size.width
-            let fillWidth = max(6, width * CGFloat(displayBrightness / 100))
-
-            ZStack(alignment: .leading) {
-                // Track background
-                Capsule()
-                    .fill(Color.white.opacity(0.08))
-                    .frame(height: 12)
-
-                // Filled portion — gradient from dark to bright
-                Capsule()
-                    .fill(LinearGradient(
-                        colors: [.white.opacity(0.15), .white.opacity(0.85)],
-                        startPoint: .leading, endPoint: .trailing
-                    ))
-                    .frame(width: fillWidth, height: 12)
-
-                // Thumb
-                let thumbX = fillWidth
-                Circle()
-                    .fill(.white)
-                    .frame(width: 24, height: 24)
-                    .shadow(color: .white.opacity(0.3), radius: 6)
-                    .position(x: max(12, min(thumbX, width - 12)), y: 16)
-            }
-            .frame(height: 32)
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        let raw = value.location.x / width * 100
-                        displayBrightness = min(100, max(1, raw))
-                    }
-                    .onEnded { _ in
-                        HapticManager.shared.heavy()
-                        // Keep the pad's Y axis in step, or the next pad/hue
-                        // move re-sends the OLD brightness and undoes this.
-                        let padValue = Self.padBrightness(percent: displayBrightness)
-                        if padValue != currentBrightness {
-                            sliderBrightnessEcho = padValue
-                            currentBrightness = padValue
-                        }
-                        applyBrightnessToSelected(percent: displayBrightness)
-                    }
-            )
-        }
-        .frame(height: 32)
-        .padding(.horizontal, 4)
-    }
-
-    // ══════════════════════════════════════════════════════════════
-    // MARK: - Save Button
-    // ══════════════════════════════════════════════════════════════
-
-    private var saveButton: some View {
-        Button {
-            Task { await save() }
-        } label: {
-            ZStack {
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(canSave
-                          ? LinearGradient(
-                                colors: [amber.opacity(0.85), amber],
-                                startPoint: .topLeading, endPoint: .bottomTrailing)
-                          : LinearGradient(
-                                colors: [Color.white.opacity(0.08), Color.white.opacity(0.06)],
-                                startPoint: .topLeading, endPoint: .bottomTrailing))
-                    .frame(height: 54)
-                    .shadow(color: canSave ? amber.opacity(0.45) : .clear, radius: 14)
-
-                if isSaving {
-                    ProgressView()
-                        .progressViewStyle(.circular)
-                        .tint(Color(red: 0.08, green: 0.07, blue: 0.14))
-                } else {
-                    HStack(spacing: 8) {
-                        Image(systemName: isEditMode ? "pencil" : "sparkles")
-                            .font(.system(size: 15, weight: .semibold))
-                        Text(isEditMode
-                             ? "Update Scene"
-                             : "Save Scene (\(lights.count) light\(lights.count == 1 ? "" : "s"))")
-                            .font(.headline)
-                    }
-                    .foregroundStyle(canSave
-                                     ? Color(red: 0.09, green: 0.08, blue: 0.14)
-                                     : .white.opacity(0.25))
-                }
-            }
-        }
-        .buttonStyle(.plain)
-        .disabled(!canSave || isSaving)
-        .animation(.spring(response: 0.3), value: canSave)
+        LuminousGlowSlider(title: "Brightness",
+                           symbol: "sun.max.fill",
+                           value: $displayBrightness,
+                           range: 1...100,
+                           colors: [padColor.opacity(0.35), padColor, .white],
+                           format: { "\(BrightnessDisplay.percent($0))%" },
+                           onEditingChanged: { editing in
+                               guard !editing else { return }
+                               HapticManager.shared.heavy()
+                               // Keep the pad's Y axis in step, or the next pad/hue
+                               // move re-sends the OLD brightness and undoes this.
+                               let padValue = Self.padBrightness(percent: displayBrightness)
+                               if padValue != currentBrightness {
+                                   sliderBrightnessEcho = padValue
+                                   currentBrightness = padValue
+                               }
+                               applyBrightnessToSelected(percent: displayBrightness)
+                           })
+            .padding(16)
+            .luminousGlass()
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -978,6 +841,6 @@ struct SceneColorBuilderView: View {
         if let mirek = light.colorTempMirek {
             return HueColorUtils.color(fromMirek: mirek)
         }
-        return amber
+        return LuminousLight.color(of: light)
     }
 }

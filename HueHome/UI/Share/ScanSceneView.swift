@@ -55,7 +55,7 @@ struct ScanSceneView: View {
                 } else if DataScannerViewController.isSupported && cameraStatus == .notDetermined {
                     // Ask first; the view re-evaluates when the answer lands.
                     ProgressView()
-                        .tint(HuePalette.amber)
+                        .tint(LuminousPalette.ink)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .task {
                             _ = await AVCaptureDevice.requestAccess(for: .video)
@@ -70,22 +70,24 @@ struct ScanSceneView: View {
                     cameraStatus = AVCaptureDevice.authorizationStatus(for: .video)
                 }
             }
-            .background(StagePalette.stage)
+            .background { LuminousAmbience(colors: [LuminousPalette.cyan, LuminousPalette.violet]) }
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     Text(title)
-                        .font(HueFont.stageTag)
-                        .tracking(1.2)
+                        .font(LuminousType.eyebrow)
+                        .tracking(1.4)
                         .lineLimit(1)
                         .minimumScaleFactor(0.65)
-                        .foregroundStyle(StagePalette.muted)
+                        .foregroundStyle(LuminousPalette.ink.opacity(0.85))
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }.tint(HuePalette.amber)
+                    Button("Done") { dismiss() }
+                        .fontWeight(.semibold)
+                        .foregroundStyle(LuminousPalette.cyan)
                 }
             }
-            .toolbarBackground(StagePalette.stage, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
+            .toolbarBackground(.hidden, for: .navigationBar)
+            .toolbarColorScheme(.dark, for: .navigationBar)
         }
         .preferredColorScheme(.dark)
     }
@@ -100,56 +102,40 @@ struct ScanSceneView: View {
     }
 
     private var hintOverlay: some View {
-        Text(hint)
-            .font(HueFont.stageStatus)
-            .foregroundStyle(.white.opacity(0.9))
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            .background(Capsule().fill(.black.opacity(0.55)))
-            .padding(.bottom, HueSpacing.xxl)
+        HStack(spacing: 8) {
+            Image(systemName: "qrcode.viewfinder").font(.system(size: 13, weight: .bold))
+                .foregroundStyle(LuminousPalette.cyan)
+            Text(hint)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(LuminousPalette.ink)
+        }
+        .padding(.horizontal, 16)
+        .frame(minHeight: 44)
+        .background(Capsule().fill(.ultraThinMaterial))
+        .background(Capsule().fill(LuminousPalette.void.opacity(0.4)))
+        .overlay(Capsule().strokeBorder(Color.white.opacity(0.16), lineWidth: 1))
+        .padding(.bottom, HueSpacing.xxl)
     }
 
     private var cameraDenied: some View {
-        VStack(spacing: HueSpacing.md) {
-            Image(systemName: "camera.fill")
-                .font(.system(size: 40, weight: .light))
-                .foregroundStyle(StagePalette.muted)
-            Text("Camera access is off.")
-                .font(HueFont.stageControl)
-                .foregroundStyle(StagePalette.ink)
-            Text("ChromaGlow needs the camera to read QR codes. Turn it on in Settings, then come back — or ask for the link instead.")
-                .font(HueFont.stageStatus)
-                .foregroundStyle(StagePalette.muted)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-            Button("Open Settings") {
-                if let url = URL(string: UIApplication.openSettingsURLString) {
-                    openURL(url)
-                }
+        LuminousEmptyState(symbol: "camera.fill",
+                           title: "Camera access is off.",
+                           message: "ChromaGlow needs the camera to read QR codes. Turn it on in Settings, then come back — or ask for the link instead.",
+                           actionTitle: "Open Settings") {
+            if let url = URL(string: UIApplication.openSettingsURLString) {
+                openURL(url)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(HuePalette.amber)
         }
         .padding(HueSpacing.xl)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var unsupported: some View {
-        VStack(spacing: HueSpacing.md) {
-            Image(systemName: "qrcode.viewfinder")
-                .font(.system(size: 40, weight: .light))
-                .foregroundStyle(StagePalette.muted)
-            Text("This device can't scan QR codes.")
-                .font(HueFont.stageControl)
-                .foregroundStyle(StagePalette.ink)
-            Text("Ask for the scene link instead — tapping it adds the scene.")
-                .font(HueFont.stageStatus)
-                .foregroundStyle(StagePalette.muted)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(HueSpacing.xl)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        LuminousEmptyState(symbol: "qrcode.viewfinder",
+                           title: "This device can't scan QR codes.",
+                           message: "Ask for the link instead — tapping it does the same thing.")
+            .padding(HueSpacing.xl)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 

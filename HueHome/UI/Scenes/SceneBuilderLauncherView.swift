@@ -1,5 +1,5 @@
 // SceneBuilderLauncherView.swift
-// CastChroma — Round 4 Scenes block (unified creation entry).
+// ChromaGlow — Scenes (Luminous): Build Colors… (unified creation entry).
 //
 // A routing step, not a third creation UI: pick a room or zone, then the
 // existing per-light SceneColorBuilderView opens seeded with that group's
@@ -43,113 +43,74 @@ struct SceneBuilderLauncherView: View {
         }
     }
 
-    // ── Phase 1: stage-styled room/zone picker ──
+    // ── Phase 1: the room/zone picker ──
+
+    /// The builder POSTs a new bridge scene — granted (guest) bridges'
+    /// rooms are never offered.
+    private var targets: [RoomDisplayItem] {
+        (orchestrator.allRooms + orchestrator.allZones)
+            .filter { !orchestrator.isGuestGrantedBridge($0.bridgeID) }
+    }
 
     private var roomPicker: some View {
         NavigationStack {
-            ZStack {
-                StagePalette.stage.ignoresSafeArea()
-
-                VStack(alignment: .leading, spacing: 18) {
-                    Text("PICK A ROOM")
-                        .font(.system(size: 10, weight: .bold))
-                        .tracking(1.2)
-                        .foregroundStyle(.white.opacity(0.38))
-                        .padding(.top, 8)
-
-                    ScrollView(showsIndicators: false) {
-                        VStack(spacing: 8) {
-                            // The builder POSTs a new bridge scene — granted
-                            // (guest) bridges' rooms are never offered.
-                            ForEach((orchestrator.allRooms + orchestrator.allZones)
-                                .filter { !orchestrator.isGuestGrantedBridge($0.bridgeID) }) { room in
-                                roomChip(room)
+            VStack(alignment: .leading, spacing: 16) {
+                ScrollView(showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 20) {
+                        LuminousScreenTitle(title: "Build colors",
+                                            eyebrow: "New scene",
+                                            eyebrowSymbol: "paintpalette.fill",
+                                            eyebrowTint: LuminousPalette.magenta,
+                                            subtitle: "Paint each light its own color, watch the room change as you go, then save it as a scene.")
+                        VStack(alignment: .leading, spacing: 10) {
+                            LuminousEyebrow(text: "Pick a room").padding(.horizontal, 6)
+                            LuminousGroup {
+                                ForEach(Array(targets.enumerated()), id: \.element.id) { index, room in
+                                    roomChip(room)
+                                    if index < targets.count - 1 { LuminousRowDivider() }
+                                }
                             }
                         }
-                    }
-
-                    if let errorMessage {
-                        Text(errorMessage)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(HuePalette.Noir.destructive)
-                    }
-
-                    Button {
-                        guard let room = selectedRoom else { return }
-                        Task { await openBuilder(for: room) }
-                    } label: {
-                        HStack {
-                            if isLoading {
-                                ProgressView().tint(.black)
-                            } else {
-                                Text("Continue")
-                                    .font(.system(size: 15, weight: .bold))
-                            }
+                        if let errorMessage {
+                            LuminousNotice(text: errorMessage, symbol: "exclamationmark.triangle.fill",
+                                           tint: LuminousPalette.danger)
                         }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                        .background(
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .fill(selectedRoom == nil
-                                      ? HuePalette.amber.opacity(0.25)
-                                      : HuePalette.amber)
-                        )
-                        .foregroundStyle(Color.black.opacity(0.85))
                     }
-                    .buttonStyle(.plain)
-                    .disabled(selectedRoom == nil || isLoading)
+                    .padding(.top, 8)
+                    .padding(.bottom, 12)
                 }
-                .padding(.horizontal, 20)
-                .padding(.bottom, 16)
+
+                LuminousPrimaryButton(title: "Continue", symbol: "arrow.right", busy: isLoading) {
+                    guard let room = selectedRoom else { return }
+                    Task { await openBuilder(for: room) }
+                }
+                .disabled(selectedRoom == nil || isLoading)
             }
-            .navigationTitle("Build Colors")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarColorScheme(.dark, for: .navigationBar)
+            .padding(.horizontal, HueSpacing.screenH)
+            .padding(.bottom, 16)
+            .background { LuminousAmbience(colors: [LuminousPalette.magenta, LuminousPalette.violet]) }
+            .luminousNavigationChrome()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
-                        .foregroundStyle(.white.opacity(0.65))
+                        .foregroundStyle(LuminousPalette.ink.opacity(0.75))
                 }
             }
-            .preferredColorScheme(.dark)
         }
+        .luminousSheet()
     }
 
     private func roomChip(_ room: RoomDisplayItem) -> some View {
-        let isSelected = selectedRoom?.id == room.id
-        return Button {
+        Button {
             selectedRoom = room
             errorMessage = nil
             HapticManager.shared.selection()
         } label: {
-            HStack(spacing: 10) {
-                Image(systemName: room.kind == .zone ? "square.split.bottomrightquarter" : "lamp.floor")
-                    .font(.system(size: 13))
-                    .foregroundStyle(isSelected ? HuePalette.amber : StagePalette.muted)
-                Text(room.name)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(isSelected ? .white : .white.opacity(0.75))
-                Spacer()
-                Text("\(room.lightCount)")
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundStyle(StagePalette.muted)
-                if isSelected {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 15))
-                        .foregroundStyle(HuePalette.amber)
-                }
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(isSelected ? HuePalette.amber.opacity(0.12) : Color.white.opacity(0.06))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .strokeBorder(isSelected ? HuePalette.amber.opacity(0.5) : StagePalette.line,
-                                          lineWidth: 1)
-                    )
-            )
+            LuminousChoiceRow(symbol: room.kind == .zone ? "square.stack.3d.up" : archetypeIcon(for: room.archetype),
+                              title: room.name,
+                              subtitle: "\(room.lightCount) light\(room.lightCount == 1 ? "" : "s")",
+                              selected: selectedRoom?.id == room.id,
+                              tint: LuminousPalette.magenta)
         }
         .buttonStyle(.plain)
     }
