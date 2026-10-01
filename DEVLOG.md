@@ -4,13 +4,18 @@
 
 ---
 
-## Current Status Snapshot (updated 2026-09-22)
+## Current Status Snapshot (updated 2026-09-30)
 
 ### Pointers
 - Canonical agent context: `AGENTS.md`. Claude Code entry point: `CLAUDE.md` points there.
 - Live shared handoff: append-only entries in this `DEVLOG.md`. Git is the shared memory between tools.
 
 ### iOS — where we are RIGHT NOW
+- **DEVICE ROUND ON THE REAL BRIDGE → BUILD 58 (fixes) / 59 (this redesign branch), NOT MERGED (2026-09-30).**
+  Claude drove build 57 on Brian's iPhone (iPhone Mirroring + live console + bridge replies) and fixed 7 bugs (paced
+  Room-mode Composer, unreachable-bulb notice, 8-light stage, honest header, restore on Stop, brightness rounding,
+  leftover "Composer 2" copy). Energize/Sleep verified end to end on all 28 lights. Full suites: fixes 2402/2402,
+  redesign 2418/2418. **The fixes themselves are not yet verified on hardware.** Entry below.
 - **v2.2 BUG-FIX SWEEP — BUILD 55, ISOLATED EXPERIMENT, NOT MERGED (2026-09-22).** Branch
   `experiment/composer-2-v2.2-bugfixes` (on the v2.1 tip `582440a`; rollback tag `checkpoint/pre-composer2-v2.2`):
   ~120 defects fixed across the whole app — Composer 2, Studio, Home/Room/Scenes, guest access, network, Siri/watch/
@@ -689,6 +694,58 @@
 ```
 
 ---
+
+## 2026-09-30 - [Claude] Device round on Brian's real bridge (build 57) → 7 bugs fixed (builds 58 / 59)
+
+**Branches:** `experiment/composer-2-v2.2-bugfixes` (build 58) and `experiment/composer-2-v2.2-ui-ux` (build 59,
+the same fixes cherry-picked + redesign-only ones). **Experiments — no PR, no merge, `main` untouched, not pushed.**
+**Rollback:** tags `checkpoint/pre-device-round-fixes-bugfix` (`fc624aa`) and `checkpoint/pre-device-round-fixes-ui`
+(`dcb23a3`).
+
+### How it was tested
+Claude drove the real app on Brian's iPhone through macOS iPhone Mirroring (synthetic clicks + window screenshots)
+while reading the app's live console via `xcrun devicectl device process launch --console`, and cross-checked every
+action against the bridge's own replies (`[HueAPIClient] PUT …` status/latency, and full `GET /light` bodies parsed
+per room). Recipe in Claude's memory `device-drive-via-mirroring`.
+
+### Verified on hardware (build 57)
+- Navigation, new tab bar, Composer entry card, Looks browsing, preview-only playback (no bridge writes).
+- Go Live "Classic C9 String" on Main bathroom (8 lights, Room mode): clean 200s; live swap to Thunderstorm without a
+  restart; Stop tears down with no writes after it.
+- Room slider writes exactly what it shows (bridge got 50).
+- **Energize from Home:** 8 room commands, all 200; bridge read back all 28 lights ON / 100 % / mirek 156 — matches
+  every card. **Sleep:** 8 commands, all 200; bridge read back 28 lights ON / 5.93 % / mirek 490 — correct
+  (254-step quantisation of 6 %), but every card said 5 % (bug 6).
+
+### Found → fixed (one commit each)
+1. **Room-mode Composer flooded the bridge** — ~14 light cmds/sec; bridge replies slowed from ~50 ms to ~270 ms avg
+   (667 ms peak). `BridgeCommandGate.reserve(cost:)`; the three Composer work builders book their sweep on the
+   room's bridge gate BEFORE the flash-safety admit (every safety stamp unchanged; sweeps just start when the bridge
+   has room). Characterization test rewritten to the new behaviour.
+2. **LIVE with a dead bulb** — the Laundry bulb was off at the wall; every PUT came back 207 `communication_error`
+   but counted as delivered. HueAPIClient records per-light reachability from PUT replies; Composer sweeps count it
+   as not delivered (flash model reads the lamp as unknown/dark); the dock names the light ("… isn't responding —
+   check it's switched on").
+3. **8-light preview fused into one white blob** — ceiling-family estimates now spread (wide arc for 4–6, two
+   staggered rows for 7+; left-to-right order kept, so chases still step down the line). Redesign only: the
+   painter's additive washes/pools now scale by √(3/n) (8-bulb render attached in `Composer2LabSnapshotTests`).
+4. **Header said "streaming ready" when Go Live would play Room mode** (several Entertainment Areas cover the room).
+5. **Stop left the room on the look's last frame** — the room is read fresh before Go Live and put back (paced, 400 ms
+   transitions) when OUR look stops; a replaced/lost look never restores.
+6. **Brightness percentages truncated** (5.93 → "5 %", slider 49.6 → "49 %" while the bridge set 50) —
+   `BrightnessDisplay.percent` rounds, everywhere: app, widget, watch (24 sites).
+7. **Redesign copy** still said "Your Composer 2 looks" / "Open in Composer 2" — now "Your looks" / "Open in Composer".
+   Also: Campfire's one-light flicker tuned under the flash-limiter budget (full-suite finding on build 56).
+
+### Validation
+- Hardening guards: pass (both branches).
+- Bugfix branch full suite (2 workers): **2402/2402** (0 failures).
+- UI branch full suite (2 workers): **2418/2418** (0 failures).
+
+### Still NOT verified on hardware
+Everything in this round's fixes until build 58/59 is on the phone: the paced Room-mode rate and bridge latency,
+the unreachable-bulb notice, restore-on-stop, the new 8-light layout on real bulbs. Thunderstorm's actual colours on
+bulbs were not observed (the log does not carry per-frame colour).
 
 ## 2026-09-22 - [Claude] v2.2 bug-fix sweep — ~120 defects fixed across the whole app (build 55)
 
