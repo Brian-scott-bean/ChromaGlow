@@ -5,12 +5,14 @@
 // Covers source switching, the receiver→analysis router gates, playout delay,
 // stall silence, no-persistence, the C ABI layout, real start/stop cycles of
 // the Rust receiver (it advertises "… (test)" on the LAN for ~a second), and
-// Phase 2 playback: the output's lifecycle, the render pull, light offset.
+// Phase 2 playback: the output's lifecycle, the renderer feeder (pull policy,
+// stall / pause / stop, sample buffers), the timeline clock, light offset.
 
 #if CHROMAGLOW_EXPERIMENTAL_SPOTIFY
 
 import AVFoundation
 import ChromaGlowSpotifyFFI
+import CoreMedia
 import QuartzCore
 import XCTest
 @testable import HueHome
@@ -417,23 +419,238 @@ final class SpotifyPCMExperimentTests: XCTestCase {
         XCTAssertEqual(UserDefaults.standard.integer(forKey: SpotifyConnectReceiver.lightOffsetKey), 120)
     }
 
-    /// The render pull deinterleaves what the ring has and zero-fills the
-    /// rest — here the ring is empty, and the request is bigger than one C
-    /// call's scratch, so the loop runs twice.
-    func testRenderPullZeroFillsAnEmptyRing() throws {
-        cg_spotify_set_playback(false, 0)
-        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 2))
-        let frames = AVAudioFrameCount(PlaybackScratch.capacityFrames + 904)
-        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames))
-        buffer.frameLength = frames
-        for channel in 0..<2 {
-            buffer.floatChannelData![channel].update(repeating: 1, count: Int(frames))
+    // MARK: - Phase 2: renderer feeder (AVSampleBufferAudioRenderer)
+
+    func testFeedPolicyPrefersWholeChunks() {
+        let chunk = SpotifyFeedPolicy.chunkFrames
+        func pull(_ available: Int, room: Int = 1_000_000, low: Bool = false, keepAlive: Bool = false) -> Int {
+            SpotifyFeedPolicy.framesToPull(available: available, roomFrames: room, lowWater: low, keepAliveDue: keepAlive)
         }
-        PlaybackScratch().render(frameCount: Int(frames), into: buffer.mutableAudioBufferList)
-        for channel in 0..<2 {
-            let samples = UnsafeBufferPointer(start: buffer.floatChannelData![channel], count: Int(frames))
-            XCTAssertTrue(samples.allSatisfy { $0 == 0 }, "channel \(channel) not silent")
-        }
+        XCTAssertEqual(pull(10_000), chunk, "a whole chunk when the ring has one")
+        XCTAssertEqual(pull(1_000), 0, "wait for a whole chunk while the renderer is well fed")
+        XCTAssertEqual(pull(1_000, low: true), 1_000, "take what there is when it runs low")
+        XCTAssertEqual(pull(10_000, room: 100), 0, "never past the lookahead…")
+        XCTAssertEqual(pull(10_000, room: 100, keepAlive: true), 100, "…except to keep the receiver's consumer alive")
+        XCTAssertEqual(pull(500, room: 0, keepAlive: true), 500)
+        XCTAssertEqual(pull(0, low: true, keepAlive: true), 0, "no silence is ever made up")
+    }
+
+    func testTimelineParksOnlyWhenRunningDry() {
+        XCTAssertTrue(SpotifyFeedPolicy.shouldStall(running: true, bufferedSeconds: 0.01, available: 0))
+        XCTAssertFalse(SpotifyFeedPolicy.shouldStall(running: true, bufferedSeconds: 0.01, available: 64))
+        XCTAssertFalse(SpotifyFeedPolicy.shouldStall(running: true, bufferedSeconds: 0.5, available: 0))
+        XCTAssertFalse(SpotifyFeedPolicy.shouldStall(running: false, bufferedSeconds: 0, available: 0))
+    }
+
+    func testClockHostTimeMath() {
+        // Running: heard when the timeline reaches the frame.
+        XCTAssertEqual(SpotifyPlaybackClock.hostTime(
+            framePTS: 12, timelineNow: 10.5, timelineRate: 1, hostNow: 100,
+            scheduledStart: nil, pendingStartDelay: 0.2), 101.5, accuracy: 1e-9)
+        // Parked with a scheduled start: anchored to that start.
+        XCTAssertEqual(SpotifyPlaybackClock.hostTime(
+            framePTS: 5.5, timelineNow: 5, timelineRate: 0, hostNow: 100,
+            scheduledStart: (pts: 5, host: 100.8), pendingStartDelay: 0.2), 101.3, accuracy: 1e-9)
+        // Parked, nothing scheduled: starts pendingStartDelay after arrival.
+        XCTAssertEqual(SpotifyPlaybackClock.hostTime(
+            framePTS: 5.25, timelineNow: 5, timelineRate: 0, hostNow: 100,
+            scheduledStart: nil, pendingStartDelay: 1), 101.25, accuracy: 1e-9)
+    }
+
+    /// The router's clock converts through a real CMTimebase on the host
+    /// clock — the same clock CACurrentMediaTime reads.
+    func testClockFollowsARealTimebase() throws {
+        XCTAssertEqual(CMClockGetTime(CMClockGetHostTimeClock()).seconds, CACurrentMediaTime(), accuracy: 0.002)
+        let clock = try runningClock(at: 10)
+        clock.setNextFrame(Int64(10.5 * 44_100))
+        let now = CACurrentMediaTime()
+        let heard = try XCTUnwrap(clock.presentationHostTime(queuedFrames: 44_100, now: now))
+        XCTAssertEqual(heard - now, 1.5, accuracy: 0.005, "0.5 s ahead in the renderer + 1 s in the ring")
+        clock.deactivate()
+        XCTAssertNil(clock.presentationHostTime(queuedFrames: 0, now: now))
+    }
+
+    func testRouterSchedulesLightsFromThePlaybackClock() async throws {
+        let engine = await spotifyEngine()
+        defer { SpotifyPCMRouter.shared.setPlaybackClock(nil) }
+        SpotifyPCMRouter.shared.setReceiverGeneration(15)
+        SpotifyPCMRouter.shared.setOutputLatency(2)   // reported route latency: ignored
+        let clock = try runningClock(at: 0)
+        SpotifyPCMRouter.shared.setPlaybackClock(clock)
+        route(15, queued: 22_050)
+        XCTAssertEqual(SpotifyPCMRouter.shared.snapshot().presentationDelay, 0.5, accuracy: 0.01)
+        SpotifyPCMRouter.shared.setUserOffset(0.1)
+        route(15, queued: 22_050)
+        XCTAssertEqual(SpotifyPCMRouter.shared.snapshot().presentationDelay, 0.6, accuracy: 0.01)
+        SpotifyPCMRouter.shared.setPlaybackClock(nil)
+        route(15, queued: 0)
+        XCTAssertEqual(SpotifyPCMRouter.shared.snapshot().presentationDelay, 2.1, accuracy: 0.001,
+                       "without the clock: the analysis-only formula")
+        await engine.setDemand(.composerReaction, active: false)
+    }
+
+    /// Spotify paused → the output flushes its audio; lights already
+    /// scheduled for that audio must not flash on afterwards.
+    func testPauseFlushDropsScheduledLights() async throws {
+        let engine = await spotifyEngine()
+        SpotifyPCMRouter.shared.setReceiverGeneration(16)
+        SpotifyPCMRouter.shared.setUserOffset(0.2)
+        route(16)
+        SpotifyPCMRouter.shared.dropScheduledLights()
+        try await Task.sleep(for: .milliseconds(260))
+        XCTAssertEqual(AudioAnalysisEngine.latestFeatures().rawOverall, 0)
+        await engine.setDemand(.composerReaction, active: false)
+    }
+
+    func testHistoryWrapsAndReadsBack() {
+        var history = SpotifyPCMHistory(capacityFrames: 8)
+        let a: [Float] = (0..<12).map(Float.init)          // 6 frames
+        let b: [Float] = (12..<24).map(Float.init)         // 6 more
+        a.withUnsafeBufferPointer { history.append($0.baseAddress!, count: 6, at: 0) }
+        b.withUnsafeBufferPointer { history.append($0.baseAddress!, count: 6, at: 6) }
+        XCTAssertEqual(history.start, 4, "bounded: the oldest frames fall out")
+        XCTAssertEqual(history.end, 12)
+        var out = [Float](repeating: -1, count: 8)
+        XCTAssertEqual(out.withUnsafeMutableBufferPointer { history.read(from: 2, count: 4, into: $0.baseAddress!) }, 0)
+        XCTAssertEqual(out.withUnsafeMutableBufferPointer { history.read(from: 5, count: 4, into: $0.baseAddress!) }, 4)
+        XCTAssertEqual(out, [10, 11, 12, 13, 14, 15, 16, 17])
+        a.withUnsafeBufferPointer { history.append($0.baseAddress!, count: 2, at: 100) }
+        XCTAssertEqual(history.start, 100, "a gap starts over")
+        XCTAssertEqual(history.end, 102)
+    }
+
+    func testSampleBufferCarriesFramesAndTimestamp() throws {
+        let feeder = try SpotifyPlaybackFeeder(sampleRate: 44_100, source: FakeRing().source)
+        let pcm = [Float](repeating: 0.25, count: 2_000)
+        let buffer = try XCTUnwrap(pcm.withUnsafeBufferPointer {
+            feeder.makeSampleBuffer($0.baseAddress!, frames: 1_000, at: 44_100)
+        })
+        XCTAssertEqual(CMSampleBufferGetNumSamples(buffer), 1_000)
+        XCTAssertEqual(CMSampleBufferGetPresentationTimeStamp(buffer).seconds, 1, accuracy: 1e-9)
+        let asbd = try XCTUnwrap(CMSampleBufferGetFormatDescription(buffer)
+            .flatMap(CMAudioFormatDescriptionGetStreamBasicDescription)?.pointee)
+        XCTAssertEqual(asbd.mChannelsPerFrame, 2)
+        XCTAssertEqual(asbd.mSampleRate, 44_100)
+        XCTAssertEqual(CMBlockBufferGetDataLength(try XCTUnwrap(CMSampleBufferGetDataBuffer(buffer))), 8_000)
+    }
+
+    /// Real renderer + synchronizer on a fake ring: audio is enqueued, the
+    /// timeline starts on schedule and stays within the lookahead; a Spotify
+    /// pause flushes and parks it; stop leaves nothing running.
+    func testFeederPlaysPausesAndStops() async throws {
+        let ring = FakeRing()
+        ring.add(frames: 88_200)   // 2 s
+        let feeder = try SpotifyPlaybackFeeder(sampleRate: 44_100, source: ring.source)
+        feeder.start(airPlay: false)
+        try await Task.sleep(for: .milliseconds(700))
+        var s = feeder.snapshot()
+        XCTAssertTrue(s.feeding)
+        XCTAssertTrue(s.running)
+        XCTAssertEqual(s.timelineRate, 1)
+        XCTAssertGreaterThan(s.framesEnqueued, 0)
+        XCTAssertGreaterThan(s.timelineSeconds, 0.1, "started ~0.2 s after the first audio")
+        XCTAssertLessThanOrEqual(s.bufferedSeconds, SpotifyFeedPolicy.Tuning.local.lookahead + 0.1,
+                                 "bounded lookahead: the decoder isn't run arbitrarily far ahead")
+        XCTAssertEqual(s.nextFrame, s.framesEnqueued, "contiguous timeline, nothing made up")
+
+        ring.setPaused(true)
+        try await Task.sleep(for: .milliseconds(80))
+        s = feeder.snapshot()
+        XCTAssertEqual(s.pauseFlushes, 1)
+        XCTAssertFalse(s.running)
+        XCTAssertEqual(s.timelineRate, 0, "pause stops the timeline")
+        let parked = s.timelineSeconds
+        XCTAssertEqual(Double(s.nextFrame) / 44_100, parked, accuracy: 0.001, "resumes where it was heard")
+
+        ring.setPaused(false)
+        try await Task.sleep(for: .milliseconds(500))
+        s = feeder.snapshot()
+        XCTAssertTrue(s.running, "play resumes the same timeline")
+        XCTAssertGreaterThan(s.timelineSeconds, parked)
+
+        feeder.stop()
+        s = feeder.snapshot()
+        XCTAssertFalse(s.feeding)
+        XCTAssertEqual(s.timelineRate, 0)
+        let reads = ring.reads
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(ring.reads, reads, "no timer left pulling")
+    }
+
+    func testFeederParksTheTimelineOnAnUnderrunAndKeepsPulling() async throws {
+        let ring = FakeRing()
+        ring.add(frames: 8_820)    // 0.2 s, then the stream stalls
+        let feeder = try SpotifyPlaybackFeeder(sampleRate: 44_100, source: ring.source)
+        feeder.start(airPlay: false)
+        defer { feeder.stop() }
+        try await Task.sleep(for: .milliseconds(900))
+        var s = feeder.snapshot()
+        XCTAssertGreaterThanOrEqual(s.stalls, 1)
+        XCTAssertFalse(s.running)
+        XCTAssertEqual(s.timelineRate, 0, "parked, not running ahead on silence")
+        XCTAssertEqual(s.framesEnqueued, 8_820)
+        XCTAssertGreaterThanOrEqual(ring.reads, 5, "an empty ring is still pulled (receiver consumer liveness)")
+
+        ring.add(frames: 44_100)
+        try await Task.sleep(for: .milliseconds(400))
+        s = feeder.snapshot()
+        XCTAssertTrue(s.running)
+        XCTAssertEqual(s.timelineRate, 1)
+    }
+
+    func testPlaybackOutputUsesLongFormRouting() {
+        let output = SpotifyPlaybackOutput()
+        output.start()
+        defer { output.stop() }
+        XCTAssertEqual(output.state, .playing)
+        let session = AVAudioSession.sharedInstance()
+        XCTAssertEqual(session.category, .playback)
+        XCTAssertEqual(session.routeSharingPolicy, .longFormAudio, "AirPlay 2 multi-room needs long-form")
+        XCTAssertEqual(output.feedSnapshot()?.feeding, true)
+        output.stop()
+        XCTAssertNil(output.feedSnapshot(), "stop leaves no feeder behind")
+        XCTAssertFalse(cg_spotify_playback_live())
+    }
+
+    private func runningClock(at seconds: Double) throws -> SpotifyPlaybackClock {
+        var timebase: CMTimebase?
+        XCTAssertEqual(CMTimebaseCreateWithSourceClock(allocator: kCFAllocatorDefault,
+                                                       sourceClock: CMClockGetHostTimeClock(),
+                                                       timebaseOut: &timebase), noErr)
+        let tb = try XCTUnwrap(timebase)
+        CMTimebaseSetTime(tb, time: CMTime(seconds: seconds, preferredTimescale: 44_100))
+        CMTimebaseSetRate(tb, rate: 1)
+        return SpotifyPlaybackClock(sampleRate: 44_100, timebase: tb, pendingStartDelay: 0)
+    }
+}
+
+/// A stand-in for the Rust ring: silent frames on demand.
+final class FakeRing: @unchecked Sendable {
+    private let lock = NSLock()
+    private var queued = 0
+    private var paused = false
+    private var readCount = 0
+
+    var reads: Int { lock.lock(); defer { lock.unlock() }; return readCount }
+
+    func add(frames: Int) { lock.lock(); queued += frames; lock.unlock() }
+    func setPaused(_ on: Bool) { lock.lock(); paused = on; lock.unlock() }
+
+    var source: SpotifyPlaybackFeeder.Source {
+        SpotifyPlaybackFeeder.Source(
+            status: { [self] in
+                lock.lock(); defer { lock.unlock() }
+                return (queued, paused)
+            },
+            read: { [self] out, frames in
+                lock.lock(); defer { lock.unlock() }
+                readCount += 1
+                let got = paused ? 0 : min(frames, queued)
+                queued -= got
+                out.update(repeating: 0, count: frames * 2)
+                return got
+            }
+        )
     }
 }
 
