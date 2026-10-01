@@ -93,7 +93,7 @@ func archetypeIcon(for archetype: String?) -> String {
     case "lounge":              return "chair.fill"
     case "man_cave":            return "popcorn.fill"
     case "computer":            return "laptopcomputer"
-    case "studio":              return "music.mike"
+    case "studio":              return "music.mic"
     case "music":               return "music.note"
     case "tv":                  return "tv.fill"
     case "reading":             return "book.fill"
