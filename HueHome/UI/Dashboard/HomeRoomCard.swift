@@ -76,6 +76,9 @@ struct HomeRoomCard: View {
                                           fallbackLevel: localIsOn ? localBrightness / 100 : 0,
                                           height: 70)
                         .padding(.top, 6)
+                        // Keep the arc out of the power button's corner — the
+                        // last lamp (and a "+N" count) used to hide under it.
+                        .padding(.trailing, features.canPower ? 40 : 0)
                     VStack(alignment: .leading, spacing: 2) {
                         HStack(spacing: 6) {
                             Image(systemName: archetypeIcon(for: room.archetype))

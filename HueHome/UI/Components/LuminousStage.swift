@@ -147,7 +147,9 @@ struct LuminousMiniRoomStage: View {
         }
         if n > shown {
             let text = Text("+\(n - shown)").font(.system(size: 9, weight: .bold)).foregroundStyle(LuminousPalette.inkSecondary)
-            ctx.draw(text, at: CGPoint(x: w - 12, y: h * 0.2))
+            // Below the arc's last lamp — the top corner is where cards put
+            // their power button.
+            ctx.draw(text, at: CGPoint(x: w - 10, y: h * 0.9))
         }
     }
 
