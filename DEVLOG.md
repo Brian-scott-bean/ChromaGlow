@@ -742,8 +742,19 @@ per room). Recipe in Claude's memory `device-drive-via-mirroring`.
 - Bugfix branch full suite (2 workers): **2402/2402** (0 failures).
 - UI branch full suite (2 workers): **2418/2418** (0 failures).
 
+### Verified on hardware afterwards (build 59 on Brian's iPhone, 2026-09-30 ~23:05)
+- Fix 1: C9 String live on Main bathroom (Room mode) — **~9 light cmds/sec (was ~14), bridge replies avg 159 ms /
+  max 396 ms (were 270 / 667)**, 105/105 accepted. The remaining latency is queueing inside each concurrent 5-light
+  batch.
+- Fix 3/4: header "Bridge · Room mode"; 8 distinct bulbs in two staggered rows labelled by their real numbers.
+- Fix 5: Stop restored all 8 bulbs to the pre-Go-Live state exactly (bridge read-back: ON 5.9 % mirek 490); all
+  restore writes landed after the last look frame.
+- Fix 6: every card reads 6 % after Sleep (bridge 5.93 %). Fix 7: "YOUR LOOKS" under the Composer card.
+- Fix 2 (unreachable-bulb notice) NOT exercised on hardware — needs a bulb switched off at the wall. Build 58
+  (fixes-only) was not installed; its shared fixes are the same commits.
+
 ### Still NOT verified on hardware
-Everything in this round's fixes until build 58/59 is on the phone: the paced Room-mode rate and bridge latency,
+Before the build-59 check above: everything in this round's fixes: the paced Room-mode rate and bridge latency,
 the unreachable-bulb notice, restore-on-stop, the new 8-light layout on real bulbs. Thunderstorm's actual colours on
 bulbs were not observed (the log does not carry per-frame colour).
 
