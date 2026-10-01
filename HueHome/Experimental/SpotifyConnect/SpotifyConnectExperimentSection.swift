@@ -403,6 +403,7 @@ struct SpotifyConnectExperimentSection: View {
         if s.firstPCMMilliseconds > 0 { parts.append("play→PCM \(s.firstPCMMilliseconds) ms") }
         parts.append("vol \(s.volumePercent)%")
         if receiver.playsOnPhone {
+            parts.append(s.speakerPulling ? "speaker pulling" : "speaker idle")
             parts.append("queue \(s.playbackQueuedMs) ms")
             if s.underruns > 0 { parts.append("underruns \(s.underruns)") }
         }

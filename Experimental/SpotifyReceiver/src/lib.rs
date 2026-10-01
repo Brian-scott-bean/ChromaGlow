@@ -98,6 +98,11 @@ fn pick_free_port() -> u16 {
 
 /// Request shutdown of the running receiver (if any) and wait for it. The
 /// current generation's PCM gate closes before anything else happens.
+///
+/// Playback pull mode is NOT switched off here: it belongs to the app's audio
+/// output (`cg_spotify_set_playback`), which comes up BEFORE the receiver
+/// starts — turning it off on every (re)start left the output pulling an
+/// empty ring forever (device round, build 902). Queued audio is dropped.
 fn stop_and_join() {
     if let Some(cur) = lock(&CURRENT).as_ref() {
         cur.stop.store(true, Ordering::Release);
@@ -107,9 +112,7 @@ fn stop_and_join() {
         let _ = runner.shutdown.send(());
         let _ = runner.handle.join();
     }
-    let p = plumbing();
-    p.enabled.store(false, Ordering::Release);
-    p.ring.request_clear();
+    plumbing().ring.request_clear();
 }
 
 // MARK: - C ABI
@@ -233,6 +236,14 @@ pub unsafe extern "C" fn cg_spotify_read_playback(out: *mut f32, frames: u32) ->
         }
     }
     got_frames
+}
+
+/// Playback is enabled AND the render thread has pulled within the last
+/// 300 ms — i.e. decoded audio is actually going to the speaker. Diagnostics.
+#[no_mangle]
+pub extern "C" fn cg_spotify_playback_live() -> bool {
+    let p = plumbing();
+    p.enabled.load(Ordering::Acquire) && p.consumer_alive()
 }
 
 /// Choose how the receiver identifies itself to Spotify for the NEXT start:
@@ -530,6 +541,19 @@ async fn watch_player_events(mut events: PlayerEventChannel, shared: Arc<Shared>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn restarting_the_receiver_keeps_playback_enabled() {
+        cg_spotify_set_playback(true, 13_230);
+        stop_and_join();
+        assert!(plumbing().enabled.load(Ordering::Acquire), "a receiver (re)start must not switch the app's output off");
+        let mut out = [1.0f32; 64];
+        // SAFETY: 32 stereo frames fit in 64 floats.
+        unsafe { cg_spotify_read_playback(out.as_mut_ptr(), 32) };
+        assert!(cg_spotify_playback_live(), "a pull marks the consumer alive");
+        cg_spotify_set_playback(false, 0);
+        assert!(!cg_spotify_playback_live());
+    }
 
     #[test]
     fn device_id_is_stable_and_name_scoped() {

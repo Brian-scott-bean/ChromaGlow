@@ -84,6 +84,9 @@ void cg_spotify_set_playback(bool enabled, uint32_t target_frames);
 /// `out` (zero-fills the remainder). Real-time safe. Returns frames read.
 uint32_t cg_spotify_read_playback(float *out, uint32_t frames);
 
+/// Phase 2 diagnostics: playback is enabled and the render thread is pulling.
+bool cg_spotify_playback_live(void);
+
 /// Identity for the NEXT start: true = librespot's desktop-Linux speaker
 /// (default), false = the build target's own identity (iPhone on iOS).
 void cg_spotify_set_persona(bool desktop_linux);

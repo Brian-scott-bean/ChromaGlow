@@ -311,6 +311,24 @@ final class SpotifyPCMExperimentTests: XCTestCase {
 
     // MARK: - Phase 2: playback
 
+    /// The output comes up BEFORE the receiver; starting the receiver must
+    /// leave the speaker pulling (build 902 on device: the receiver's start
+    /// switched playback off, so the music was decoded but never heard).
+    func testSpeakerKeepsPullingAfterTheReceiverStarts() async throws {
+        let receiver = SpotifyConnectReceiver.shared
+        receiver.setPlaysOnPhone(true)
+        receiver.start()
+        await receiver.settle()
+        let deadline = Date().addingTimeInterval(2)
+        while !cg_spotify_playback_live(), Date() < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertTrue(cg_spotify_playback_live(), "the render thread pulls the receiver's ring")
+        receiver.stop()
+        await receiver.settle()
+        XCTAssertFalse(cg_spotify_playback_live(), "and stops with it")
+    }
+
     func testTurningPlaybackOffFallsBackToListeningOnly() async throws {
         let receiver = SpotifyConnectReceiver.shared
         receiver.setPlaysOnPhone(true)

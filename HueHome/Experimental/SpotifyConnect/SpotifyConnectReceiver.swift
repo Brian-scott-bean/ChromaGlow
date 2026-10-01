@@ -81,6 +81,8 @@ final class SpotifyConnectReceiver {
         var chunksDropped: UInt64 = 0
         var presentationDelayMs = 0
         var playbackQueuedMs = 0
+        /// The speaker is actually pulling decoded audio (render thread alive).
+        var speakerPulling = false
         var underruns: UInt64 = 0
         var analyzerRunning = false
         var analyzerOnSpotify = false
@@ -270,7 +272,7 @@ final class SpotifyConnectReceiver {
             "ChromaGlow Spotify experiment diagnostics",
             "build \(build) · \(librespotRevision) · identity \(identity.rawValue)",
             "phase=\(s.phase) playback=\(s.playback) port=\(s.zeroconfPort) frames=\(s.framesDelivered) hops=\(s.hopsAnalyzed) play→PCM=\(s.firstPCMMilliseconds)ms",
-            "output=\(output.state) route=\(output.routeName) airplay=\(output.routeIsAirPlay) latency=\(Int(output.routeLatency * 1000))ms queue=\(s.playbackQueuedMs)ms underruns=\(s.underruns) lightDelay=\(s.presentationDelayMs)ms offset=\(lightOffsetMs)ms",
+            "output=\(output.state) pulling=\(s.speakerPulling) route=\(output.routeName) airplay=\(output.routeIsAirPlay) latency=\(Int(output.routeLatency * 1000))ms queue=\(s.playbackQueuedMs)ms underruns=\(s.underruns) lightDelay=\(s.presentationDelayMs)ms offset=\(lightOffsetMs)ms",
             "message: \(s.message)",
             "---- receiver log ----",
         ]
@@ -406,6 +408,7 @@ final class SpotifyConnectReceiver {
         next.presentationDelayMs = Int((router.presentationDelay * 1000).rounded())
         next.playbackQueuedMs = Int((Double(status.playback_queued_frames) / SpotifyPlaybackOutput.sampleRate * 1000).rounded())
         next.underruns = status.underruns
+        next.speakerPulling = cg_spotify_playback_live()
         next.analyzerRunning = engine.isRunning
         next.analyzerOnSpotify = engine.sourceKind == .spotifyConnect
         if next != snapshot { snapshot = next }
@@ -424,11 +427,11 @@ final class SpotifyConnectReceiver {
     private func logDiagnostics(_ s: Snapshot) {
         let f = levels
         print(String(
-            format: "[SpotifyPCM] state=%@ playback=%@ fmt=%dHz/%dch frames=%llu flowing=%@ peak=%.3f hops=%llu dropped=%llu delay=%dms firstPCM=%dms | out=%@ route=%@ lat=%dms queue=%dms under=%llu | analyzer=%@/%@ level=%.2f bass=%.2f mid=%.2f treble=%.2f raw=%.2f onset=%.2f bpm=%.0f",
+            format: "[SpotifyPCM] state=%@ playback=%@ fmt=%dHz/%dch frames=%llu flowing=%@ peak=%.3f hops=%llu dropped=%llu delay=%dms firstPCM=%dms | out=%@ pull=%@ route=%@ lat=%dms queue=%dms under=%llu | analyzer=%@/%@ level=%.2f bass=%.2f mid=%.2f treble=%.2f raw=%.2f onset=%.2f bpm=%.0f",
             "\(s.phase)", "\(s.playback)", s.sampleRate, s.channels, s.framesDelivered,
             s.pcmFlowing ? "yes" : "no", s.peak, s.hopsAnalyzed, s.chunksDropped,
             s.presentationDelayMs, s.firstPCMMilliseconds,
-            "\(output.state)", output.routeName, Int(output.routeLatency * 1000), s.playbackQueuedMs, s.underruns,
+            "\(output.state)", s.speakerPulling ? "live" : "no", output.routeName, Int(output.routeLatency * 1000), s.playbackQueuedMs, s.underruns,
             s.analyzerRunning ? "running" : "idle", s.analyzerOnSpotify ? "spotify" : "mic",
             f.level, f.bass, f.mid, f.treble, f.rawOverall, f.onsetStrength, f.bpm
         ))
