@@ -215,4 +215,29 @@ final class Composer2LabSlotTests: XCTestCase {
         XCTAssertEqual(Composer2SlotLayout.capability(dimmable), .dimmable)
         XCTAssertEqual(Composer2SlotLayout.estimated(lights: Composer2LabFixtures.lights).whiteOnlyCount, 1)
     }
+
+    /// Device round (build 58): an 8-light ceiling room laid out on the old
+    /// half-width arc fused into one glow. Every pair stays a readable
+    /// distance apart, positions stay on the stage, and index order still
+    /// runs left to right (a chase steps down the line).
+    func testManyCeilingLightsSpreadOutAndKeepTheirOrder() {
+        for n in [4, 6, 8, 12] {
+            let p = Composer2SlotLayout.semanticPositions(
+                count: n, archetypes: Array(repeating: "sultan_bulb", count: n))
+            XCTAssertEqual(p.count, n)
+            for a in 0..<n {
+                XCTAssertTrue((0...1).contains(p[a].x) && (0...1).contains(p[a].z))
+                if a > 0 { XCTAssertGreaterThan(p[a].x, p[a - 1].x, "left to right at \(n) lights") }
+                for b in (a + 1)..<n {
+                    let d = ((p[a].x - p[b].x) * (p[a].x - p[b].x) + (p[a].z - p[b].z) * (p[a].z - p[b].z)).squareRoot()
+                    XCTAssertGreaterThan(d, 0.1, "lights \(a) and \(b) of \(n) crowd together (\(d))")
+                }
+            }
+        }
+        // A small room keeps its familiar arc.
+        let three = Composer2SlotLayout.semanticPositions(count: 3, archetypes: ["sultan_bulb", "sultan_bulb", "sultan_bulb"])
+        XCTAssertEqual(three[0].x, 0.25, accuracy: 1e-9)
+        XCTAssertEqual(three[2].x, 0.75, accuracy: 1e-9)
+    }
+
 }

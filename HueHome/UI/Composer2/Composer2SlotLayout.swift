@@ -249,11 +249,23 @@ struct Composer2SlotLayout: Equatable {
             let side = k % 2 == 0 ? 0.12 : 0.88
             out[i] = (x: side, z: n > 1 ? 0.35 + 0.5 * Double(k) / (n - 1) : 0.6)
         }
-        // Ceiling lights in a centred arc.
+        // Ceiling lights: a centred arc for a few; a wide arc for up to six;
+        // two staggered rows beyond that. An 8-light bathroom on the old
+        // half-width arc sat ~7 % of the stage apart and its glows fused into
+        // one white blob (device round, build 58). Index order still runs
+        // left to right, so a chase steps down the line either way.
+        let ceilingCount = ceilings.count
         for (k, i) in ceilings.enumerated() {
-            let n = Double(ceilings.count)
+            let n = Double(ceilingCount)
             let t = n > 1 ? Double(k) / (n - 1) : 0.5
-            out[i] = (x: 0.25 + 0.5 * t, z: 0.45 - 0.12 * sin(.pi * t))
+            switch ceilingCount {
+            case ...3:
+                out[i] = (x: 0.25 + 0.5 * t, z: 0.45 - 0.12 * sin(.pi * t))
+            case 4...6:
+                out[i] = (x: 0.12 + 0.76 * t, z: 0.46 - 0.16 * sin(.pi * t))
+            default:
+                out[i] = (x: 0.08 + 0.84 * t, z: k % 2 == 0 ? 0.30 : 0.62)
+            }
         }
         // Everything else on a golden-angle ring.
         for (k, i) in others.enumerated() {
