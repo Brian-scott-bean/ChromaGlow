@@ -13812,3 +13812,28 @@ Durable facts:
   was pushed during builds 20–26). Local/shipping Xcode 26.4 handles it; the provenance
   workflow now prefers `Xcode_26.4.app` (falls back 26.3) and is green. The body remains at
   the ceiling: the next Studio change should extract a subview rather than add anything to it.
+
+## 2026-10-01 — [Claude] Spotify experiment builds 904 + 905 (branch `experiment/luminous-spotify-pcm`, local only)
+
+Device round on 903 (Brian): Spotify connected and played, but changing the iPhone's speaker while
+the Spotify app was open made Spotify reclaim playback (log: the phone's Spotify announced the JBL
+as its own output; ChromaGlow "device became inactive"). Auto Detect Song + Spotify crashed
+(2 crash reports: ObjC exception from ShazamKit's buffer tap on librespot's player thread →
+`__rust_foreign_exception` abort). Rollback tag `checkpoint/pre-spotify-build-904`.
+
+- `88b2e19` crash fix: Spotify hops no longer fan out to raw-buffer taps (Shazam).
+- `190fefa` `cg_spotify_command` (play/pause/next/prev/bring-here = Connect transfer), status
+  handoff + position/duration (CGSpotifyStatus 992 bytes), lock screen / Control Center via
+  `SpotifyNowPlaying.swift`, panel transport row + "Spotify moved the music" notice with
+  *Bring it back here*; identity switch removed from the UI.
+- **Build 904** (`6908ccb`) installed on Brian's phone — being tested.
+- Parallel lane (subagent, branch `experiment/luminous-spotify-airplay2`, merged `82c9a6e`):
+  playback rewritten on AVSampleBufferAudioRenderer + RenderSynchronizer with
+  `routeSharingPolicy .longFormAudio` (AirPlay 2 multi-speaker); lights timed from the
+  synchronizer timeline (assumed to include AirPlay latency — WWDC17 509); lookahead 1 s local /
+  3 s AirPlay; pause flushes. `9ac28ca` speaker row shows the real light delay.
+- **Build 905** (`448e4d6`) built for the device, NOT installed (Brian mid-test on 904).
+- Tests: Rust 17/17; SpotifyPCMExperimentTests + AudioAnalysisSourceTests 51/51 (simulator);
+  `HueHome 1` Debug builds with the experiment compiled out. Full suite not run this round.
+- Unverified on hardware: everything above — hand-off survives speaker changes once Spotify is
+  closed, lock-screen controls, multi-speaker AirPlay 2, light alignment on AirPlay.
