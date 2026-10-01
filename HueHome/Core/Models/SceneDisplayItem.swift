@@ -14,10 +14,24 @@ struct SceneDisplayItem: Identifiable, Hashable {
     let id: String
     var name: String     // var — allows optimistic rename via copy-mutate-assign
     var isActive: Bool
+    /// Up to 3 real colour points (palette, else the stored light colours);
+    /// [] = unknown, and the tile falls back to the name tint.
+    var paletteXY: [SceneXY] = []
 
-    // Derived from name — used for chip accent colour and icon.
+    // Derived from name — the fallback tint and the icon.
     var accentColor: Color { SceneDisplayItem.color(for: name) }
     var icon: String       { SceneDisplayItem.icon(for: name) }
+
+    /// The colours the scene really paints with, for tiles and orbs.
+    var previewColors: [Color] {
+        guard !paletteXY.isEmpty else { return [accentColor, accentColor.opacity(0.85), accentColor] }
+        let colors = paletteXY.map { HueColorUtils.color(fromX: $0.x, y: $0.y, brightness: 100) }
+        // Three orbs: repeat a one- or two-colour scene across them.
+        return (0..<3).map { colors[$0 % colors.count] }
+    }
+
+    /// The one colour the scene stands for (icon, glow).
+    var previewAccent: Color { previewColors[1] }
 
     // ──────────────────────────────────────────────
     // MARK: - Name → Color
@@ -83,6 +97,7 @@ struct SceneDisplayItem: Identifiable, Hashable {
 
     static func == (lhs: SceneDisplayItem, rhs: SceneDisplayItem) -> Bool {
         lhs.id == rhs.id && lhs.isActive == rhs.isActive && lhs.name == rhs.name
+            && lhs.paletteXY == rhs.paletteXY
     }
     func hash(into hasher: inout Hasher) { hasher.combine(id); hasher.combine(isActive); hasher.combine(name) }
 }

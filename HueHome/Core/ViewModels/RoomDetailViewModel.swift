@@ -808,9 +808,10 @@ final class RoomDetailViewModel {
             scenes = roomScenes
                 .map { s in
                     SceneDisplayItem(
-                        id:       s.id,
-                        name:     s.metadata.name,
-                        isActive: s.status?.active == "active"
+                        id:        s.id,
+                        name:      s.metadata.name,
+                        isActive:  s.isRecalled,
+                        paletteXY: s.paletteXY
                     )
                 }
                 .sorted { $0.name < $1.name }

@@ -10876,8 +10876,7 @@ final class UnifiedOrchestrator {
                             name:          scene.metadata.name.sanitizedSceneName,
                             roomID:        scene.group.rid,
                             bridgeID:      bridgeID,
-                            isActive:      scene.status?.active == "active"
-                                        || scene.status?.active == "dynamic_palette",
+                            isActive:      scene.isRecalled,
                             isDynamic:     scene.isDynamic,
                             speed:         scene.speed ?? 0.5,
                             paletteXY:     scene.paletteXY

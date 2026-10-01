@@ -1282,24 +1282,7 @@ struct LuminousEmptyState: View {
 enum LuminousLight {
     /// CIE xy of a white at `mirek` (Kim et al. Planckian approximation).
     static func xy(mirek: Int) -> (x: Double, y: Double) {
-        let t = max(1667.0, min(25000.0, 1_000_000.0 / Double(max(1, mirek))))
-        let t2 = t * t, t3 = t2 * t
-        let x: Double
-        if t <= 4000 {
-            x = -0.2661239e9 / t3 - 0.2343589e6 / t2 + 0.8776956e3 / t + 0.179910
-        } else {
-            x = -3.0258469e9 / t3 + 2.1070379e6 / t2 + 0.2226347e3 / t + 0.240390
-        }
-        let x2 = x * x, x3 = x2 * x
-        let y: Double
-        if t <= 2222 {
-            y = -1.1063814 * x3 - 1.34811020 * x2 + 2.18555832 * x - 0.20219683
-        } else if t <= 4000 {
-            y = -0.9549476 * x3 - 1.37418593 * x2 + 2.09137015 * x - 0.16748867
-        } else {
-            y = 3.0817580 * x3 - 5.87338670 * x2 + 3.75112997 * x - 0.37001483
-        }
-        return (x, y)
+        HueColorUtils.planckianXY(mirek: mirek)
     }
 
     /// The colour a light is showing (ignoring brightness). A non-nil mirek

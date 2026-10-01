@@ -18,9 +18,14 @@ struct HueScene: Decodable, Identifiable {
     /// depend on palette (or any optional field) decoding; only id/metadata/
     /// group can fail an element.
     let palette: ScenePaletteDetail?
+    /// The stored per-light looks, read ONLY for preview colours. Same
+    /// tolerance as `palette`: a variant this decode can't read leaves the
+    /// preview to the palette or the name tint, never fails the listing.
+    let previewActions: [ScenePreviewAction]?
 
     private enum CodingKeys: String, CodingKey {
         case id, metadata, group, status, speed, type, palette
+        case previewActions = "actions"
     }
 
     init(from decoder: Decoder) throws {
@@ -32,6 +37,15 @@ struct HueScene: Decodable, Identifiable {
         speed    = try? c.decode(Double.self, forKey: .speed)
         type     = try? c.decode(String.self, forKey: .type)
         palette  = try? c.decode(ScenePaletteDetail.self, forKey: .palette)
+        previewActions = try? c.decode([ScenePreviewAction].self, forKey: .previewActions)
+    }
+
+    /// True while the bridge reports the scene recalled. CLIP v2 answers
+    /// "inactive" | "static" | "dynamic_palette" — there is no "active",
+    /// which the Room page used to test for, so its tiles never said "On now".
+    var isRecalled: Bool {
+        guard let active = status?.active else { return false }
+        return active != "inactive"
     }
 
     /// True when this is a Hue dynamic palette scene (colours auto-cycle).
@@ -40,14 +54,53 @@ struct HueScene: Decodable, Identifiable {
         type == "dynamic" || status?.active == "dynamic_palette"
     }
 
-    /// Up to 3 palette color points for previews ([] when absent/foreign).
+    /// Up to 3 colour points for previews: the dynamic palette when the
+    /// scene has one, otherwise the colours its lights are stored at ([] when
+    /// neither can be read — the card falls back to its name tint).
+    ///
+    /// A plain scene has no palette, so every one of them used to preview in
+    /// a tint guessed from its NAME — the red/blue/green "Test 1" showed
+    /// lavender (build-60 regression M-4).
     var paletteXY: [SceneXY] {
-        guard let entries = palette?.color else { return [] }
-        return entries.prefix(3).compactMap { entry in
-            guard let xy = entry.color?.xy else { return nil }
-            return SceneXY(x: xy.x, y: xy.y)
+        if let entries = palette?.color {
+            let points = entries.prefix(3).compactMap { entry -> SceneXY? in
+                guard let xy = entry.color?.xy else { return nil }
+                return SceneXY(x: xy.x, y: xy.y)
+            }
+            if !points.isEmpty { return points }
         }
+        return Self.previewXY(from: previewActions ?? [])
     }
+
+    /// Distinct colours of the lights a scene turns on, in stored order, up
+    /// to three. A white is placed on the black-body curve from its mirek.
+    static func previewXY(from actions: [ScenePreviewAction]) -> [SceneXY] {
+        var out: [SceneXY] = []
+        for entry in actions {
+            let state = entry.action
+            guard state?.on?.on != false else { continue }
+            let point: SceneXY
+            if let xy = state?.color?.xy {
+                point = SceneXY(x: xy.x, y: xy.y)
+            } else if let mirek = state?.color_temperature?.mirek {
+                let xy = HueColorUtils.planckianXY(mirek: mirek)
+                point = SceneXY(x: xy.x, y: xy.y)
+            } else {
+                continue
+            }
+            // "Distinct" to the eye — two lights a hair apart are one colour.
+            let isNew = out.allSatisfy { abs($0.x - point.x) > 0.01 || abs($0.y - point.y) > 0.01 }
+            if isNew { out.append(point) }
+            if out.count == 3 { break }
+        }
+        return out
+    }
+}
+
+/// One stored scene action, decoded leniently for previews: every field is
+/// optional and unknown keys (gradient, effects…) are ignored.
+struct ScenePreviewAction: Decodable {
+    let action: SceneActionState?
 }
 
 struct SceneMetadata: Decodable {

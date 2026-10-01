@@ -27,17 +27,16 @@ struct RoomSceneTile: View {
     var body: some View {
         Button(action: onTap) {
             VStack(alignment: .leading, spacing: 6) {
-                LuminousPaletteOrbs(colors: [scene.accentColor, scene.accentColor.opacity(0.85), scene.accentColor],
-                                    count: 3, lit: true, height: 40)
+                LuminousPaletteOrbs(colors: scene.previewColors, count: 3, lit: true, height: 40)
                     .opacity(scene.isActive ? 1 : 0.55)
                 HStack(spacing: 6) {
                     if isActivating {
-                        ProgressView().tint(scene.accentColor).scaleEffect(0.7)
+                        ProgressView().tint(scene.previewAccent).scaleEffect(0.7)
                             .frame(width: 14, height: 14)
                     } else {
                         Image(systemName: scene.icon)
                             .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(scene.accentColor)
+                            .foregroundStyle(scene.previewAccent)
                     }
                     Text(scene.name)
                         .font(LuminousType.cardTitleSmall)
@@ -51,7 +50,7 @@ struct RoomSceneTile: View {
             }
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .luminousPanel(radius: 18, glow: scene.isActive ? scene.accentColor : nil,
+            .luminousPanel(radius: 18, glow: scene.isActive ? scene.previewAccent : nil,
                            glowStrength: scene.isActive ? 0.8 : 0)
             .overlay(alignment: .topTrailing) {
                 if isFavorite {
