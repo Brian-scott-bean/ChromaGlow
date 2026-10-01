@@ -69,6 +69,9 @@ TEST_FILES = {
 # (and the files deleted from disk by the commit that retired them).
 REMOVED_FILES = [
   'HueHome/UI/Scenes/SceneMoodCard.swift',
+  'HueHome/UI/Components/HueComponents.swift',
+  'HueHome/UI/RoomDetail/CreateSceneView.swift',
+  'HueHome/UI/Components/ShimmerComponents.swift',
 ]
 
 existing = existing_paths(project)
