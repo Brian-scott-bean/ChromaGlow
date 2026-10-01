@@ -6926,7 +6926,7 @@ final class MultiBridgeRoutingTests: XCTestCase {
     func testP8ReconciliationRunsInsideLoadAllAfterTheBridgeFetchAndRoomRebuild() throws {
         let code = try productionCode("HueHome/Core/Network/UnifiedOrchestrator.swift")
         let body = try XCTUnwrap(functionBody(code, startingWith: "func loadAll(cacheContext:"))
-        let fetch = try XCTUnwrap(body.firstIndex { $0.contains("await fetchAndMergeAllBridges()") })
+        let fetch = try XCTUnwrap(body.firstIndex { $0.contains("await fetchAndMergeAllBridges(") })
         let rebuild = try XCTUnwrap(body.firstIndex { $0.contains("rebuildAllRooms()") })
         let reconcile = try XCTUnwrap(
             body.firstIndex { $0.contains("scheduleBridgeAnimationReconciliation()") })
@@ -12612,8 +12612,12 @@ extension MultiBridgeRoutingTests {
         XCTAssertNil(vm.runningEffect(for: roomA))
         XCTAssertNil(vm.runningEffect(for: roomC), "the unselected room's row is stopped too")
         XCTAssertFalse(vm.compositionStore.presets.contains { $0.id == look.id })
-        XCTAssertTrue(bridgeA.groupedPowerIDs.contains("gl-room-c:false"),
-                      "a real delete is still the explicit stop it always was")
+        // A real delete is still an explicit stop — and since build 61 an
+        // explicit stop puts the room back as it was before the look (the
+        // snapshot taken at its first start) instead of switching it off
+        // (build-60 regression M-6).
+        XCTAssertFalse(bridgeA.groupedPowerIDs.contains("gl-room-c:false"),
+                       "an explicit stop restores the room; it no longer switches it off")
     }
 
     /// …and "deleting" a shipped built-in is a RESET: the look keeps existing,

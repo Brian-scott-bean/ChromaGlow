@@ -380,7 +380,7 @@ final class Composer2OwnershipCharacterizationTests: XCTestCase {
         let bodies = [
             "func setRoom(_ item: RoomDisplayItem, isOn desiredState: Bool) {",
             "func setBrightness(_ brightness: Double, for item: RoomDisplayItem) {",
-            "func activateGlobalScene(_ scene: GlobalSceneItem) {",
+            "func activateGlobalScene(_ scene: GlobalSceneItem, playDynamic: Bool = false) {",
         ]
         for signature in bodies {
             let body = try requireBody(signature, in: src, of: orchestratorPath)
