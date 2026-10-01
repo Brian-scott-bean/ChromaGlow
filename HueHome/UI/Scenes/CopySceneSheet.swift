@@ -259,7 +259,7 @@ struct CopySceneSheet: View {
                 StageBadge(text: "BRIGHTNESS ONLY", style: .muted)
             }
             if let brightness = action.brightness, action.on {
-                Text("\(Int(brightness))%")
+                Text("\(BrightnessDisplay.percent(brightness))%")
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
                     .foregroundStyle(StagePalette.muted)
             }

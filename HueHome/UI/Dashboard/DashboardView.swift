@@ -1161,7 +1161,7 @@ struct BrightnessRow: View {
                 Image(systemName: "sun.max.fill")
                     .font(.system(size: 9))
                     .foregroundStyle(.white.opacity(0.35))
-                Text("\(Int(displayValue))%")
+                Text("\(BrightnessDisplay.percent(displayValue))%")
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
                     .foregroundStyle(.white.opacity(0.55))
                     .frame(width: 28, alignment: .trailing)

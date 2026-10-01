@@ -154,7 +154,7 @@ struct RectangularView: View {
                     .lineLimit(1)
 
                 Text(room.isOn
-                     ? "\(Int(room.brightness))% · \(room.lightCount) bulb\(room.lightCount == 1 ? "" : "s")"
+                     ? "\(Int(room.brightness.rounded()))% · \(room.lightCount) bulb\(room.lightCount == 1 ? "" : "s")"
                      : "Lights off")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
@@ -191,7 +191,7 @@ struct RectangularView: View {
                             .foregroundStyle(room.isOn ? .primary : .secondary)
                             .lineLimit(1)
                         Spacer()
-                        Text(room.isOn ? "\(Int(room.brightness))%" : "—")
+                        Text(room.isOn ? "\(Int(room.brightness.rounded()))%" : "—")
                             .font(.system(size: 10, design: .monospaced))
                             .foregroundStyle(.secondary)
                     }
@@ -213,7 +213,7 @@ struct CornerView: View {
             Image(systemName: watchArchetypeIcon(room.archetype))
                 .widgetAccentable(room.isOn)
                 .widgetLabel {
-                    Text(room.isOn ? "\(Int(room.brightness))%" : "Off")
+                    Text(room.isOn ? "\(Int(room.brightness.rounded()))%" : "Off")
                 }
         } else {
             Image(systemName: entry.onCount > 0 ? "lightbulb.fill" : "lightbulb.slash")
@@ -234,7 +234,7 @@ struct InlineView: View {
     var body: some View {
         if let room = entry.selectedRoom {
             Label(
-                room.isOn ? "\(room.name) \(Int(room.brightness))%" : "\(room.name) off",
+                room.isOn ? "\(room.name) \(Int(room.brightness.rounded()))%" : "\(room.name) off",
                 systemImage: watchArchetypeIcon(room.archetype)
             )
             .widgetAccentable(room.isOn)

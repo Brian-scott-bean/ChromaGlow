@@ -400,7 +400,7 @@ struct RoomDetailView: View {
             Text(light.name)
                 .font(.system(size: 22, weight: .bold))
                 .foregroundStyle(.white)
-            Text(light.isOn ? "On · \(Int(light.brightness))%" : "Off")
+            Text(light.isOn ? "On · \(BrightnessDisplay.percent(light.brightness))%" : "Off")
                 .font(HueFont.stageStatus)
                 .foregroundStyle(.white.opacity(0.5))
 
@@ -1256,7 +1256,7 @@ struct LightCard: View {
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.white)
                     .lineLimit(1)
-                Text(localIsOn ? "\(Int(light.brightness))%" : "Off")
+                Text(localIsOn ? "\(BrightnessDisplay.percent(light.brightness))%" : "Off")
                     .font(.caption)
                     .foregroundStyle(localIsOn ? glowColor.opacity(0.8) : .white.opacity(0.40))
             }
@@ -1327,7 +1327,7 @@ struct CompactLightCard: View {
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
 
-            Text(localIsOn ? "\(Int(light.brightness))%" : "Off")
+            Text(localIsOn ? "\(BrightnessDisplay.percent(light.brightness))%" : "Off")
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(localIsOn ? glowColor.opacity(0.8) : .white.opacity(0.40))
 

@@ -373,7 +373,7 @@ struct LightControlView: View {
         VStack(alignment: .leading, spacing: 12) {
             // Label shows the committed value — updated by onCommit, not during drag.
             // Avoids re-rendering the GlassmorphicCard on every drag tick.
-            sectionLabel("Brightness · \(Int(displayBrightness))%")
+            sectionLabel("Brightness · \(BrightnessDisplay.percent(displayBrightness))%")
             GlassmorphicCard(isActive: light.isOn, glowColor: glowColor) {
                 BrightnessRow(
                     brightness: light.brightness,   // read-only snapshot

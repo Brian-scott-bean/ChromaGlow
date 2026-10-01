@@ -204,7 +204,7 @@ struct RoomRowView: View {
                     .foregroundStyle(room.isOn ? .primary : .secondary)
                     .lineLimit(1)
                 if room.isOn {
-                    Text("\(Int(room.brightness))%")
+                    Text("\(BrightnessDisplay.percent(room.brightness))%")
                         .font(.system(size: 10, design: .monospaced))
                         .foregroundStyle(amber.opacity(0.8))
                 } else {

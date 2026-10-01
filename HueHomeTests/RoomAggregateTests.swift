@@ -364,4 +364,23 @@ final class RoomAggregateTests: XCTestCase {
         XCTAssertFalse(vm.roomIsOn)
         XCTAssertEqual(vm.roomBrightness, 1)
     }
+
+    // MARK: - Brightness on screen (device round, build 58)
+
+    /// The bridge stores 254 steps: the 6 % Sleep preset read back as 5.93
+    /// and every card said 5 %; a slider at 49.6 said 49 % while the bridge
+    /// set 50 %. On screen a brightness rounds, and a lit light is never 0 %.
+    func testBrightnessDisplayRoundsAndNeverShowsALitLightAsZero() {
+        XCTAssertEqual(BrightnessDisplay.percent(5.93), 6, "Sleep reads as the 6 % it set")
+        XCTAssertEqual(BrightnessDisplay.percent(49.6), 50, "matches what the bridge rounds to")
+        XCTAssertEqual(BrightnessDisplay.percent(10.67), 11)
+        XCTAssertEqual(BrightnessDisplay.percent(81.82), 82)
+        XCTAssertEqual(BrightnessDisplay.percent(100), 100)
+        XCTAssertEqual(BrightnessDisplay.percent(0.39), 1, "the dimmest lit step is 1 %, not 0 %")
+        XCTAssertEqual(BrightnessDisplay.percent(0), 0)
+        XCTAssertEqual(BrightnessDisplay.percent(-3), 0)
+        XCTAssertEqual(BrightnessDisplay.percent(140), 100)
+        XCTAssertEqual(BrightnessDisplay.percent(.nan), 0)
+    }
+
 }

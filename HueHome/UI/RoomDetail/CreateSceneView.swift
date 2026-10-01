@@ -248,7 +248,7 @@ struct CreateSceneView: View {
                             .lineLimit(1)
 
                         Text(light.isOn
-                             ? "\(Int(light.brightness))% · \(lightStateLabel(light))"
+                             ? "\(BrightnessDisplay.percent(light.brightness))% · \(lightStateLabel(light))"
                              : "Off — will be off in scene")
                             .font(.caption)
                             .foregroundStyle(isSelected
