@@ -1,14 +1,13 @@
 // LightControlView.swift
-// CastChroma — Epic 3 / Story 3.3
+// ChromaGlow — Light (Luminous).
 //
-// Full-screen individual light controller.
-// Capabilities detected at runtime:
-//   • supportsColor     → color wheel (CIE xy via HueColorUtils)
-//   • supportsColorTemp → colour-temperature gradient slider (mirek)
-//   • always            → brightness scrubber + on/off toggle
+// One lamp on its own stage: an orb in the lamp's colour whose glow is its
+// brightness, then power + brightness, colour (wheel, quick colours, My
+// Colors) and warmth — each shown only when the lamp can do it.
 //
-// All changes are optimistic — UI updates immediately, API called on gesture end.
-// Haptic feedback mirrors the room-level brightness scrubber pattern.
+// Contract: the host's callbacks do the optimistic model write and own the
+// rollback; this view never writes the binding first. Every control keeps
+// its drag state locally and commits ONCE when the finger lifts.
 
 import SwiftUI
 import CoreGraphics
@@ -22,8 +21,8 @@ struct LightControlView: View {
     let onBrightness: (Double) -> Void
     let onColor:      (Double, Double) -> Void      // x, y
     let onColorTemp:  (Int) -> Void                 // mirek
-    /// Round 3 (D): bridge-native identify flash. Optional so hosts without
-    /// a bridge context (previews, demo) simply don't show the button.
+    /// Bridge-native identify flash. Optional so hosts without a bridge
+    /// context (previews, demo) simply don't show the button.
     var onIdentify:   (() -> Void)? = nil
 
     // Local in-progress state (committed on gesture end)
@@ -32,75 +31,62 @@ struct LightControlView: View {
     @State private var liveMirek:      Int    = 300
     @State private var selectedSwatch: Int?   = nil  // index into ColorSwatch.presets
 
-    // Cached glow colour — recomputed only on light change, not on every render.
-    // Prevents ambientBackground blur from being re-composited during drag.
-    private var glowColor: Color {
-        guard light.supportsColor, let x = light.colorX, let y = light.colorY else {
-            return Color(red: 1.0, green: 0.76, blue: 0.2)
+    // The brightness slider's drag state — commits ONCE on release; the
+    // committed value is what the labels show.
+    @State private var displayBrightness: Double = 0
+    @State private var brightnessLevel: Double = 50
+    @State private var draggingBrightness = false
+
+    /// The colour the lamp is showing (warm white for a lamp that only dims).
+    private var lampColor: Color { LuminousLight.color(of: light) }
+    private var level: Double { LuminousLight.level(of: light) }
+
+    private var capabilityText: String {
+        switch (light.supportsColor, light.supportsColorTemp) {
+        case (true, true):  return "Colour and white"
+        case (true, false): return "Colour"
+        case (false, true): return "Warm to cool white"
+        default:            return "Brightness only"
         }
-        return HueColorUtils.color(fromX: x, y: y, brightness: light.brightness)
     }
 
-    // Local brightness state for optimistic display before SSE confirms.
-    // Updated by BrightnessRow.onCommit — never written during drag.
-    @State private var displayBrightness: Double = 0
-
     var body: some View {
-        ZStack {
-            ambientBackground
-            ScrollView {
-                VStack(spacing: 28) {
-                    // ── On/Off + name ──────────────────────
-                    controlHeader
-
-                    // ── Color wheel (color-capable lights) ─
-                    if light.supportsColor {
-                        colorSection
-                    }
-
-                    // ── Colour temp slider ─────────────────
-                    if light.supportsColorTemp {
-                        colorTempSection
-                    }
-
-                    // ── Brightness ─────────────────────────
-                    brightnessSection
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                hero
+                LuminousScreenTitle(title: light.name,
+                                    eyebrow: "Light",
+                                    eyebrowSymbol: archetypeIcon(for: light.archetype),
+                                    eyebrowTint: light.isOn ? lampColor : LuminousPalette.inkSecondary,
+                                    subtitle: light.isOn
+                                        ? "On · \(BrightnessDisplay.percent(displayBrightness))% · \(capabilityText)"
+                                        : "Off · \(capabilityText)")
+                brightnessPanel
+                if light.supportsColor {
+                    colorSection
                 }
-                .padding(.horizontal, 24)
-                .padding(.top, 20)
-                .padding(.bottom, 48)
+                if light.supportsColorTemp {
+                    colorTempSection
+                }
             }
-            .scrollIndicators(.hidden)
+            .padding(.horizontal, HueSpacing.screenH)
+            .padding(.top, 4)
+            .padding(.bottom, 28)
         }
-        .navigationTitle(light.name)
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbarColorScheme(.dark, for: .navigationBar)
-        .toolbarBackground(.hidden, for: .navigationBar)
+        .scrollIndicators(.hidden)
+        .background { LuminousAmbience(colors: light.isOn ? [lampColor] : [LuminousPalette.night]) }
+        .luminousNavigationChrome()
         .toolbar {
             if let onIdentify {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    // Free bridge signaling: 3 s flash, self-terminating.
+                ToolbarItem(placement: .topBarTrailing) {
+                    // Free bridge signalling: a 3 s flash, self-terminating.
                     Button {
                         HapticManager.shared.light()
                         onIdentify()
                     } label: {
                         Image(systemName: "light.beacon.max")
-                            .font(.system(size: 17))
-                            .foregroundStyle(.white.opacity(0.65))
                     }
                     .accessibilityLabel("Flash to identify")
-                }
-            }
-            ToolbarItem(placement: .navigationBarTrailing) {
-                // Power toggle in toolbar — always reliable, no clipping/gesture conflicts.
-                Button {
-                    HapticManager.shared.medium()
-                    onToggle(!light.isOn)   // light is @Binding — reads current vm.lights[idx]
-                } label: {
-                    Image(systemName: light.isOn ? "power.circle.fill" : "power.circle")
-                        .font(.system(size: 22))
-                        .foregroundStyle(light.isOn ? glowColor : .white.opacity(0.55))
-                        .symbolEffect(.bounce, value: light.isOn)
                 }
             }
         }
@@ -108,130 +94,118 @@ struct LightControlView: View {
         .onAppear {
             syncLocalState()
             displayBrightness = light.brightness
+            brightnessLevel = max(1, light.brightness)
         }
-        .onChange(of: light.brightness) { _, new in displayBrightness = new }
+        .onChange(of: light.brightness) { _, new in
+            displayBrightness = new
+            if !draggingBrightness { brightnessLevel = max(1, new) }
+        }
     }
 
     // ──────────────────────────────────────────────
-    // MARK: - Background
+    // MARK: - Hero
     // ──────────────────────────────────────────────
 
-    private var ambientBackground: some View {
-        ZStack {
-            Color(red: 0.055, green: 0.055, blue: 0.08).ignoresSafeArea()
-            if light.isOn {
-                Circle()
-                    .fill(RadialGradient(
-                        colors: [glowColor.opacity(0.30), .clear],
-                        center: .center, startRadius: 0, endRadius: 220
-                    ))
-                    .frame(width: 400)
-                    .blur(radius: 30)
-                    .animation(.easeInOut(duration: 0.5), value: glowColor.description)
+    /// The lamp on its own stage: its colour, its glow its brightness, the
+    /// pool of light it throws. Dark glass when off.
+    private var hero: some View {
+        ZStack(alignment: .top) {
+            LinearGradient(colors: [LuminousPalette.void, LuminousPalette.night.opacity(0.9), LuminousPalette.void],
+                           startPoint: .top, endPoint: .bottom)
+            LuminousLampOrb(color: lampColor, level: level, size: 58, showsFloor: true)
+                .frame(maxWidth: .infinity)
+                .padding(.top, 38)
+                .animation(.easeInOut(duration: 0.4), value: level)
+            HStack(spacing: 6) {
+                LuminousFactBadge(text: light.isOn ? "On · \(BrightnessDisplay.percent(displayBrightness))%" : "Off",
+                                  symbol: "power")
+                Spacer(minLength: 0)
+                LuminousFactBadge(text: capabilityText, symbol: light.supportsColor ? "paintpalette.fill" : "sun.max.fill")
             }
+            .padding(12)
         }
-        .ignoresSafeArea()
+        .frame(height: 220)
+        .luminousStageFrame()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(light.name), \(light.isOn ? "on at \(BrightnessDisplay.percent(displayBrightness)) percent" : "off")")
     }
 
     // ──────────────────────────────────────────────
-    // MARK: - Header
+    // MARK: - Power + brightness
     // ──────────────────────────────────────────────
 
-    private var controlHeader: some View {
-        GlassmorphicCard(isActive: light.isOn, glowColor: glowColor) {
-            HStack(spacing: 16) {
-                // Archetype icon
-                ZStack {
-                    Circle()
-                        .fill(light.isOn ? glowColor.opacity(0.22) : Color.white.opacity(0.07))
-                        .frame(width: 52, height: 52)
-                    Image(systemName: archetypeIcon(for: light.archetype))
-                        .font(.system(size: 22, weight: .medium))
-                        .foregroundStyle(light.isOn ? glowColor : .white.opacity(0.4))
-                        .symbolEffect(.pulse, value: light.isOn)
-                }
-
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(light.isOn ? "On" : "Off")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(light.isOn ? glowColor : .white.opacity(0.55))
-                    HStack(spacing: 4) {
-                        if light.supportsColor    { capBadge("Color") }
-                        if light.supportsColorTemp { capBadge("Warmth") }
-                        if !light.supportsColor && !light.supportsColorTemp {
-                            capBadge("Brightness")
-                        }
-                    }
-                }
-
-                Spacer()
-
-                // State indicator dot (power button is in the toolbar)
-                Circle()
-                    .fill(light.isOn ? glowColor : Color.white.opacity(0.2))
-                    .frame(width: 10, height: 10)
-                    .shadow(color: light.isOn ? glowColor.opacity(0.9) : .clear, radius: 8)
+    private var brightnessPanel: some View {
+        HStack(spacing: 14) {
+            LuminousPowerButton(isOn: light.isOn, tint: lampColor, size: 52,
+                                label: "Turn \(light.name) \(light.isOn ? "off" : "on")") {
+                HapticManager.shared.medium()
+                onToggle(!light.isOn)   // light is @Binding — reads current vm.lights[idx]
             }
+            LuminousGlowSlider(title: "Brightness",
+                               symbol: "sun.max.fill",
+                               value: $brightnessLevel,
+                               range: 1...100,
+                               colors: [lampColor.opacity(0.5), lampColor],
+                               format: { "\(BrightnessDisplay.percent($0))%" },
+                               accessibilityName: "\(light.name) brightness",
+                               onEditingChanged: { editing in
+                                   draggingBrightness = editing
+                                   guard !editing else { return }
+                                   // One write on release: the host's onBrightness does
+                                   // the optimistic model write, the API and rollback.
+                                   displayBrightness = brightnessLevel
+                                   HapticManager.shared.heavy()
+                                   onBrightness(brightnessLevel)
+                               })
         }
-        .frame(height: 88)
-    }
-
-    private func capBadge(_ label: String) -> some View {
-        Text(label)
-            .font(.system(size: 9, weight: .medium))
-            .foregroundStyle(.white.opacity(0.5))
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(Capsule().fill(Color.white.opacity(0.1)))
+        .padding(14)
+        .luminousPanel(glow: light.isOn ? lampColor : nil, glowStrength: light.isOn ? 0.3 + 0.7 * level : 0)
+        .animation(.spring(response: 0.35, dampingFraction: 0.75), value: light.isOn)
     }
 
     // ──────────────────────────────────────────────
-    // MARK: - Color Wheel
+    // MARK: - Colour
     // ──────────────────────────────────────────────
 
     private var colorSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            sectionLabel("Color")
-            GlassmorphicCard(isActive: light.isOn, glowColor: glowColor) {
-                VStack(spacing: 20) {
-                    ColorWheelView(
-                        hue: $liveHue,
-                        saturation: $liveSaturation
-                    ) { h, s in
-                        // Commit: convert HSB → xy and call API. The host's
-                        // onColor does the optimistic model write (and owns
-                        // the rollback) — writing the binding first made the
-                        // rollback "restore" the new value.
-                        let (x, y) = HueColorUtils.xyFrom(hue: h, saturation: s, brightness: 1)
-                        selectedSwatch = ColorSwatch.nearest(hue: h, saturation: s)
-                        HapticManager.shared.heavy()
-                        onColor(x, y)
-                    }
-                    .frame(width: 220, height: 220)
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, 12)
-
-                    // ── Quick color presets ─────────────────────
-                    Divider().background(Color.white.opacity(0.08))
-                    colorSwatchRow
-
-                    // ── My Colors (saved palette) ───────────────
-                    Divider().background(Color.white.opacity(0.08))
-                    myColorsRow
-                        .padding(.bottom, 12)
+        VStack(alignment: .leading, spacing: 10) {
+            LuminousSectionHeader(title: "Colour", subtitle: "Drag across the wheel, or pick a colour below.")
+            VStack(spacing: 18) {
+                ColorWheelView(
+                    hue: $liveHue,
+                    saturation: $liveSaturation
+                ) { h, s in
+                    // Commit: convert HSB → xy and call the host. The host's
+                    // onColor does the optimistic model write (and owns the
+                    // rollback) — writing the binding first made the rollback
+                    // "restore" the new value.
+                    let (x, y) = HueColorUtils.xyFrom(hue: h, saturation: s, brightness: 1)
+                    selectedSwatch = ColorSwatch.nearest(hue: h, saturation: s)
+                    HapticManager.shared.heavy()
+                    onColor(x, y)
                 }
+                .frame(width: 236, height: 236)
+                .frame(maxWidth: .infinity)
+
+                colorSwatchGrid
+                    .padding(.horizontal, 16)
+
+                Rectangle().fill(LuminousPalette.hairline).frame(height: 1)
+                    .padding(.horizontal, 16)
+
+                myColorsRow
             }
+            .padding(.vertical, 18)
+            .luminousGlass()
         }
     }
 
-    /// Saved palette: ＋ captures the light's current look (color + brightness);
-    /// tapping a swatch applies it with the light's capability fallback.
+    /// Saved palette: ＋ captures the light's current look (colour +
+    /// brightness); tapping a swatch applies it with the light's capability
+    /// fallback.
     private var myColorsRow: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("MY COLORS")
-                .font(.system(size: 9, weight: .semibold))
-                .tracking(1.0)
-                .foregroundStyle(.white.opacity(0.4))
+        VStack(alignment: .leading, spacing: 8) {
+            LuminousEyebrow(text: "My Colors")
                 .padding(.leading, 16)
             SavedColorStrip(
                 onSave: {
@@ -246,6 +220,7 @@ struct LightControlView: View {
                 onTapSwatch: { applySavedColor($0) }
             )
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func applySavedColor(_ saved: SavedColor) {
@@ -274,130 +249,99 @@ struct LightControlView: View {
 
     private func commitSavedBrightness(_ brightness: Double) {
         displayBrightness = brightness
+        brightnessLevel = max(1, brightness)
         onBrightness(brightness)   // host writes the model (and rolls back)
     }
 
-    private var colorSwatchRow: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 12) {
-                ForEach(Array(ColorSwatch.presets.enumerated()), id: \.offset) { i, swatch in
-                    Button {
-                        HapticManager.shared.medium()
-                        liveHue        = swatch.hue
-                        liveSaturation = swatch.saturation
-                        selectedSwatch = i
-                        let (x, y) = HueColorUtils.xyFrom(
-                            hue: swatch.hue, saturation: swatch.saturation, brightness: 1
-                        )
-                        HapticManager.shared.heavy()
-                        onColor(x, y)
-                    } label: {
-                        ZStack {
-                            Circle()
-                                .fill(swatch.color)
-                                .frame(width: 32, height: 32)
-                                .shadow(color: swatch.color.opacity(0.6), radius: 4)
-                            if selectedSwatch == i {
-                                Circle()
-                                    .stroke(.white, lineWidth: 2.5)
-                                    .frame(width: 36, height: 36)
-                            }
-                        }
-                        .frame(width: 40, height: 40)
-                    }
-                    .buttonStyle(.plain)
-                    .stageTapTarget(visual: 40)
-                    .accessibilityLabel(swatch.name)
+    /// The twelve quick colours as glowing beads, two rows of six.
+    private var colorSwatchGrid: some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 6), spacing: 8) {
+            ForEach(Array(ColorSwatch.presets.enumerated()), id: \.offset) { i, swatch in
+                let selected = selectedSwatch == i
+                Button {
+                    liveHue        = swatch.hue
+                    liveSaturation = swatch.saturation
+                    selectedSwatch = i
+                    let (x, y) = HueColorUtils.xyFrom(
+                        hue: swatch.hue, saturation: swatch.saturation, brightness: 1
+                    )
+                    HapticManager.shared.heavy()
+                    onColor(x, y)
+                } label: {
+                    Circle()
+                        .fill(RadialGradient(colors: [Color.white.opacity(0.75), swatch.color],
+                                             center: UnitPoint(x: 0.35, y: 0.3), startRadius: 0, endRadius: 20))
+                        .frame(width: 32, height: 32)
+                        .overlay(Circle().strokeBorder(Color.white.opacity(selected ? 0.95 : 0.25), lineWidth: selected ? 2.5 : 1))
+                        .shadow(color: swatch.color.opacity(selected ? 0.9 : 0.55), radius: selected ? 10 : 6)
+                        .scaleEffect(selected ? 1.1 : 1)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Circle())
                 }
+                .buttonStyle(LuminousPressStyle(scale: 0.88))
+                .accessibilityLabel(swatch.name)
+                .accessibilityAddTraits(selected ? [.isButton, .isSelected] : [.isButton])
+                .animation(.spring(response: 0.3, dampingFraction: 0.7), value: selected)
             }
-            .padding(.horizontal, 16)
         }
     }
 
     // ──────────────────────────────────────────────
-    // MARK: - Color Temperature Slider
+    // MARK: - Warmth
     // ──────────────────────────────────────────────
 
     private var colorTempSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // liveMirek is updated only by onCommit — not during drag.
-            let kelvin = HueColorUtils.kelvin(from: liveMirek)
-            sectionLabel("Warmth · \(kelvin)K")
-            GlassmorphicCard(isActive: light.isOn, glowColor: glowColor) {
-                VStack(spacing: 12) {
-                    ColorTempSlider(
-                        currentMirek: liveMirek,
-                        mirekMin: light.mirekMin,
-                        mirekMax: light.mirekMax
-                    ) { mirek in
-                        liveMirek = mirek                // update label once on release
-                        HapticManager.shared.heavy()
-                        // onColorTemp does the optimistic model write + rollback.
-                        onColorTemp(mirek)
-                    }
-                    .padding(.top, 16)
-
-                    // CT-only lights have no color section — give them their
-                    // own My Colors row so warm/cool whites are saveable too.
-                    if !light.supportsColor {
-                        Divider().background(Color.white.opacity(0.08))
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("MY COLORS")
-                                .font(.system(size: 9, weight: .semibold))
-                                .tracking(1.0)
-                                .foregroundStyle(.white.opacity(0.4))
-                                .padding(.leading, 16)
-                            SavedColorStrip(
-                                onSave: {
-                                    SavedColorStore.shared.add(SavedColor(
-                                        mirek: liveMirek, brightness: displayBrightness
-                                    ))
-                                    HapticManager.shared.success()
-                                },
-                                onTapSwatch: { applySavedColor($0) }
-                            )
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
+        // liveMirek is updated only on commit — not during a drag.
+        let kelvin = HueColorUtils.kelvin(from: liveMirek)
+        return VStack(alignment: .leading, spacing: 10) {
+            LuminousSectionHeader(title: "Warmth", subtitle: "From candlelight to daylight.") {
+                Text("\(kelvin)K")
+                    .font(LuminousType.value)
+                    .foregroundStyle(LuminousPalette.ink.opacity(0.8))
+                    .contentTransition(.numericText())
+            }
+            VStack(spacing: 14) {
+                ColorTempSlider(
+                    currentMirek: liveMirek,
+                    mirekMin: light.mirekMin,
+                    mirekMax: light.mirekMax
+                ) { mirek in
+                    liveMirek = mirek                // update the label once on release
+                    HapticManager.shared.heavy()
+                    // onColorTemp does the optimistic model write + rollback.
+                    onColorTemp(mirek)
                 }
-                .padding(.bottom, 16)
-            }
-        }
-    }
+                .padding(.horizontal, 16)
 
-    // ──────────────────────────────────────────────
-    // MARK: - Brightness
-    // ──────────────────────────────────────────────
-
-    private var brightnessSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Label shows the committed value — updated by onCommit, not during drag.
-            // Avoids re-rendering the GlassmorphicCard on every drag tick.
-            sectionLabel("Brightness · \(BrightnessDisplay.percent(displayBrightness))%")
-            GlassmorphicCard(isActive: light.isOn, glowColor: glowColor) {
-                BrightnessRow(
-                    brightness: light.brightness,   // read-only snapshot
-                    glowColor: glowColor,
-                    onCommit: { newBrightness in
-                        displayBrightness = newBrightness    // update label once on release
-                        onBrightness(newBrightness)          // optimistic model write + API + rollback
+                // White-only lights have no colour section — give them their
+                // own My Colors row so warm/cool whites are saveable too.
+                if !light.supportsColor {
+                    Rectangle().fill(LuminousPalette.hairline).frame(height: 1)
+                        .padding(.horizontal, 16)
+                    VStack(alignment: .leading, spacing: 8) {
+                        LuminousEyebrow(text: "My Colors")
+                            .padding(.leading, 16)
+                        SavedColorStrip(
+                            onSave: {
+                                SavedColorStore.shared.add(SavedColor(
+                                    mirek: liveMirek, brightness: displayBrightness
+                                ))
+                                HapticManager.shared.success()
+                            },
+                            onTapSwatch: { applySavedColor($0) }
+                        )
                     }
-                )
-                .padding(.vertical, 16)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
+            .padding(.vertical, 18)
+            .luminousGlass()
         }
     }
 
     // ──────────────────────────────────────────────
     // MARK: - Helpers
     // ──────────────────────────────────────────────
-
-    private func sectionLabel(_ text: String) -> some View {
-        Text(text)
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(.white.opacity(0.55))
-            .padding(.leading, 4)
-    }
 
     private func syncLocalState() {
         if let x = light.colorX, let y = light.colorY {
@@ -427,6 +371,13 @@ struct ColorWheelView: View {
             let center = CGPoint(x: geo.size.width / 2, y: geo.size.height / 2)
 
             ZStack {
+                // ── A soft glow of the picked colour behind the wheel ──
+                Circle()
+                    .fill(Color(hue: hue, saturation: max(0.35, saturation), brightness: 1).opacity(0.28))
+                    .frame(width: radius * 2 + 24, height: radius * 2 + 24)
+                    .blur(radius: 18)
+                    .position(center)
+
                 // ── Hue wheel ────────────────────────
                 Circle()
                     .fill(AngularGradient(
@@ -449,20 +400,21 @@ struct ColorWheelView: View {
                     .frame(width: radius * 2, height: radius * 2)
                     .position(center)
 
-                // ── Outer ring border ─────────────────
+                // ── Glass rim ─────────────────────────
                 Circle()
-                    .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                    .strokeBorder(LinearGradient(colors: [Color.white.opacity(0.35), Color.white.opacity(0.05)],
+                                                 startPoint: .top, endPoint: .bottom), lineWidth: 1.5)
                     .frame(width: radius * 2, height: radius * 2)
                     .position(center)
 
-                // ── Thumb ─────────────────────────────
+                // ── Thumb: a glowing bead of the picked colour ─
                 Circle()
                     .fill(Color(hue: hue, saturation: saturation, brightness: 1))
-                    .frame(width: isDragging ? 28 : 22, height: isDragging ? 28 : 22)
-                    .overlay(Circle().stroke(.white, lineWidth: 2.5)
-                        .shadow(color: .black.opacity(0.3), radius: 3))
-                    .shadow(color: Color(hue: hue, saturation: 1, brightness: 1).opacity(0.6),
-                            radius: isDragging ? 10 : 5)
+                    .frame(width: isDragging ? 32 : 26, height: isDragging ? 32 : 26)
+                    .overlay(Circle().strokeBorder(.white, lineWidth: 3))
+                    .shadow(color: Color(hue: hue, saturation: max(0.4, saturation), brightness: 1).opacity(0.9),
+                            radius: isDragging ? 14 : 8)
+                    .shadow(color: .black.opacity(0.35), radius: 3)
                     .position(thumbPos)
                     .animation(.spring(response: 0.2, dampingFraction: 0.6), value: isDragging)
             }
@@ -541,21 +493,25 @@ struct ColorTempSlider: View {
     var body: some View {
         VStack(spacing: 10) {
             GeometryReader { geo in
+                let thumb: CGFloat = isDragging ? 32 : 26
+                let thumbX = sliderValue * geo.size.width
+                let thumbColor = HueColorUtils.color(fromMirek: localMirek)
                 ZStack(alignment: .leading) {
                     LinearGradient(gradient: HueColorUtils.colorTempGradient,
                                    startPoint: .leading, endPoint: .trailing)
                         .clipShape(Capsule())
-                        .frame(height: 8)
-
-                    let thumbX = sliderValue * geo.size.width
+                        .frame(height: 10)
+                        .overlay(Capsule().strokeBorder(Color.white.opacity(0.12), lineWidth: 1))
+                        .shadow(color: thumbColor.opacity(0.45), radius: isDragging ? 12 : 7)
                     Circle()
                         .fill(.white)
-                        .frame(width: isDragging ? 28 : 22, height: isDragging ? 28 : 22)
-                        .shadow(radius: isDragging ? 8 : 4)
-                        .offset(x: max(0, min(thumbX - (isDragging ? 14 : 11), geo.size.width - (isDragging ? 28 : 22))))
+                        .frame(width: thumb, height: thumb)
+                        .overlay(Circle().fill(thumbColor.opacity(0.55)).padding(7))
+                        .shadow(color: thumbColor.opacity(0.9), radius: isDragging ? 14 : 8)
+                        .offset(x: max(0, min(thumbX - thumb / 2, geo.size.width - thumb)))
                         .animation(.spring(response: 0.15, dampingFraction: 0.7), value: isDragging)
                 }
-                .frame(height: 28)
+                .frame(height: 32)
                 .contentShape(Rectangle())
                 .gesture(
                     DragGesture(minimumDistance: 4)
@@ -580,13 +536,15 @@ struct ColorTempSlider: View {
                         }
                 )
             }
-            .frame(height: 28)
+            .frame(height: 32)
 
             HStack {
-                Text("🕯 Warm").font(.caption2).foregroundStyle(.white.opacity(0.45))
+                Label("Warm", systemImage: "flame.fill")
                 Spacer()
-                Text("☀ Cool").font(.caption2).foregroundStyle(.white.opacity(0.45))
+                Label("Cool", systemImage: "sun.max.fill")
             }
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(LuminousPalette.inkSecondary)
         }
         .padding(.horizontal, 4)
         .onAppear {
@@ -601,9 +559,22 @@ struct ColorTempSlider: View {
                 localMirek  = new
             }
         }
+        // VoiceOver: one adjustable element, each step commits once.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Warmth")
+        .accessibilityValue("\(HueColorUtils.kelvin(from: localMirek)) kelvin")
+        .accessibilityAdjustableAction { direction in
+            let step = 0.1
+            switch direction {
+            case .increment: sliderValue = min(1, sliderValue + step)
+            case .decrement: sliderValue = max(0, sliderValue - step)
+            @unknown default: return
+            }
+            localMirek = HueColorUtils.mirek(fromSlider: sliderValue, min: mirekMin, max: mirekMax)
+            onCommit(localMirek)
+        }
     }
 }
-
 
 
 // MARK: - Color Swatches

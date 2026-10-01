@@ -54,7 +54,8 @@ APP_FILES = {
   'HueHome/UI/Dashboard/HomeRoomCard.swift'              => ['HueHome', 'UI', 'Dashboard'],
   'HueHome/UI/Dashboard/HomeNowPlaying.swift'            => ['HueHome', 'UI', 'Dashboard'],
   'HueHome/UI/RoomDetail/RoomLightTile.swift'            => ['HueHome', 'UI', 'RoomDetail'],
-  'HueHome/UI/RoomDetail/RoomLooksSection.swift'         => ['HueHome', 'UI', 'RoomDetail'],
+  'HueHome/UI/Composer2/ComposerRoomLooks.swift'         => ['HueHome', 'UI', 'Composer2'],
+  'HueHome/UI/Components/LuminousRoomParts.swift'        => ['HueHome', 'UI', 'Components'],
   'HueHome/UI/Scenes/LuminousSceneCard.swift'            => ['HueHome', 'UI', 'Scenes'],
   'HueHome/UI/Components/LuminousScenesParts.swift'      => ['HueHome', 'UI', 'Components'],
 }

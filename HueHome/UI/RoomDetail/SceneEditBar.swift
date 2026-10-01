@@ -1,100 +1,58 @@
 // SceneEditBar.swift
-// CastChroma — Priority 1 (scene multi-select toolbar)
+// ChromaGlow — Room (Luminous): the dock for selected scenes.
 //
-// Floating glassmorphic action bar that slides up from the bottom
-// of RoomDetailView when one or more scenes are selected.
-//
-// Actions: Edit (single selection) · Delete (with confirmation)
+// Floats above the tab bar while scenes are selected: a count and All/None,
+// then Edit (exactly one scene) and Delete (asks first).
 
 import SwiftUI
 
 struct SceneEditBar: View {
 
     @Bindable var vm: RoomDetailViewModel
-    /// Triggers SceneColorBuilderView for the single selected scene.
+    /// Opens the scene builder for the single selected scene.
     var onEditScene: (SceneDisplayItem) -> Void
 
     @State private var showDeleteConfirm = false
 
-    private let amber = Color(red: 1.0, green: 0.76, blue: 0.20)
+    private var count: Int { vm.selectedSceneIDs.count }
+    private var allSelected: Bool { count == vm.scenes.count }
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Selection count label
-            HStack(spacing: 6) {
+        VStack(spacing: 10) {
+            HStack(spacing: 8) {
                 Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 12))
-                    .foregroundStyle(amber)
-                Text("\(vm.selectedSceneIDs.count) scene\(vm.selectedSceneIDs.count == 1 ? "" : "s") selected")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.75))
-                Spacer()
-                // Select All / None
-                Button(vm.selectedSceneIDs.count == vm.scenes.count ? "None" : "All") {
-                    if vm.selectedSceneIDs.count == vm.scenes.count {
-                        vm.clearSceneSelection()
-                    } else {
-                        vm.selectAllScenes()
-                    }
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(LuminousPalette.cyan)
+                Text("\(count) scene\(count == 1 ? "" : "s") selected")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(LuminousPalette.ink)
+                    .contentTransition(.numericText())
+                Spacer(minLength: 0)
+                LuminousTextPill(title: allSelected ? "None" : "All", tint: LuminousPalette.cyan) {
+                    if allSelected { vm.clearSceneSelection() } else { vm.selectAllScenes() }
                 }
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(amber)
-                .buttonStyle(.plain)
+                .accessibilityLabel(allSelected ? "Select none" : "Select all")
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 12)
-            .padding(.bottom, 10)
-
-            Divider()
-                .background(Color.white.opacity(0.08))
-
-            // Action buttons
-            HStack(spacing: 0) {
-                // Edit — only enabled when exactly 1 scene is selected
-                actionButton(
-                    icon: "pencil",
-                    label: "Edit",
-                    color: vm.selectedSceneIDs.count == 1 ? amber : .white.opacity(0.25)
-                ) {
-                    guard vm.selectedSceneIDs.count == 1,
-                          let scene = vm.selectedScenes.first else { return }
+            HStack(spacing: 8) {
+                // Edit — exactly one scene.
+                LuminousDockButton(title: "Edit", symbol: "pencil", tint: LuminousPalette.cyan,
+                                   highlighted: count == 1) {
+                    guard count == 1, let scene = vm.selectedScenes.first else { return }
                     onEditScene(scene)
                 }
-                .disabled(vm.selectedSceneIDs.count != 1)
-
-                divider
-
-                // Delete
-                actionButton(
-                    icon: "trash",
-                    label: "Delete",
-                    color: Color(red: 1.0, green: 0.35, blue: 0.35)
-                ) {
+                .disabled(count != 1)
+                LuminousDockButton(title: "Delete", symbol: "trash", tint: LuminousPalette.danger) {
                     showDeleteConfirm = true
                 }
+                .disabled(count == 0)
             }
-            .padding(.bottom, 4)
         }
-        .background {
-            ZStack {
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .fill(.ultraThinMaterial)
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .fill(amber.opacity(0.06))
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .strokeBorder(
-                        LinearGradient(
-                            colors: [amber.opacity(0.45), amber.opacity(0.08)],
-                            startPoint: .topLeading, endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 1
-                    )
-            }
-            .shadow(color: .black.opacity(0.35), radius: 20, y: -4)
-        }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 14)
+        .padding(.top, 12)
+        .padding(.bottom, 12)
+        .luminousDock()
         .alert(
-            "Delete \(vm.selectedSceneIDs.count) Scene\(vm.selectedSceneIDs.count == 1 ? "" : "s")?",
+            "Delete \(count) Scene\(count == 1 ? "" : "s")?",
             isPresented: $showDeleteConfirm
         ) {
             Button("Delete", role: .destructive) {
@@ -102,37 +60,7 @@ struct SceneEditBar: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This will permanently remove the selected scene\(vm.selectedSceneIDs.count == 1 ? "" : "s") from your bridge.")
+            Text("This will permanently remove the selected scene\(count == 1 ? "" : "s") from your bridge.")
         }
-    }
-
-    // MARK: - Helpers
-
-    private func actionButton(
-        icon: String,
-        label: String,
-        color: Color,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            VStack(spacing: 5) {
-                Image(systemName: icon)
-                    .font(.system(size: 20))
-                    .foregroundStyle(color)
-                Text(label)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(color.opacity(0.75))
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 14)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-
-    private var divider: some View {
-        Rectangle()
-            .fill(Color.white.opacity(0.08))
-            .frame(width: 1, height: 36)
     }
 }

@@ -9,9 +9,9 @@
 // point of harmony).
 //
 // Everything here is reuse: ColorWheelView (per-light control), HarmonyEngine
-// (composer), SavedColorStrip (My Colors), StageSlider (everywhere), and the
+// (composer), SavedColorStrip (My Colors), the Luminous glow slider, and the
 // send pacing that RoomColorWashPlanner + applyColorWash inherit from the
-// effects engine.
+// effects engine. The orbs show what the room will look like.
 
 import SwiftUI
 
@@ -27,59 +27,75 @@ struct RoomColorPopover: View {
     @State private var rule: HarmonyRule = .none
     @State private var isApplying = false
 
-    /// Rules that spread well across a room. Four-color rules are excluded for
-    /// the same reason the composer excludes them: past three anchors a room
-    /// reads as noise, not a palette.
+    /// Rules that spread well across a room. Four-colour rules are excluded
+    /// for the same reason the composer excludes them: past three anchors a
+    /// room reads as noise, not a palette.
     private var rules: [HarmonyRule] {
         HarmonyRule.allCases.filter { $0.anchorCount <= 3 }
+    }
+
+    /// What the wash will look like: the harmony anchors at the current root.
+    private var washColors: [Color] {
+        HarmonyEngine.palette(rule: rule, rootHue: hue, saturation: saturation, brightness: 1.0,
+                              count: max(3, rule.anchorCount))
+            .map { Color(hue: $0.hue, saturation: $0.saturation, brightness: $0.brightness) }
     }
 
     var body: some View {
         NavigationStack {
             ScrollView(showsIndicators: false) {
-                VStack(alignment: .leading, spacing: HueSpacing.lg) {
+                VStack(alignment: .leading, spacing: 20) {
+                    LuminousScreenTitle(title: room.name,
+                                        eyebrow: "Colour wash",
+                                        eyebrowSymbol: "paintbrush.fill",
+                                        eyebrowTint: washColors.first ?? LuminousPalette.cyan,
+                                        subtitle: "One colour for the whole room — or a harmony that spreads several across it.")
 
                     // ── The wheel ────────────────────────────
                     ColorWheelView(hue: $hue, saturation: $saturation) { _, _ in
                         HapticManager.shared.selection()
                     }
-                    .frame(width: 220, height: 220)
+                    .frame(width: 230, height: 230)
                     .frame(maxWidth: .infinity)
-                    .padding(.top, HueSpacing.sm)
 
-                    // ── Harmony preview swatches ─────────────
-                    harmonyPreview
+                    // ── What the room will look like ─────────
+                    LuminousPaletteOrbs(colors: washColors, count: max(3, washColors.count), height: 54)
+                        .opacity(0.35 + 0.65 * brightness / 100)
+                        .padding(.vertical, 4)
+                        .luminousGlass(radius: 18)
+                        .animation(HueAnimation.fast, value: rule)
 
                     // ── Brightness ───────────────────────────
-                    StageSlider(
-                        title: "Brightness",
-                        value: $brightness,
-                        range: 1...100,
-                        format: { "\(Int($0.rounded()))%" }
-                    )
+                    LuminousGlowSlider(title: "Brightness",
+                                       symbol: "sun.max.fill",
+                                       value: $brightness,
+                                       range: 1...100,
+                                       colors: [washColors.first?.opacity(0.5) ?? LuminousPalette.cyan, washColors.first ?? LuminousPalette.violet],
+                                       format: { "\(Int($0.rounded()))%" })
 
                     // ── Harmony rules ────────────────────────
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("HARMONY")
-                            .font(HueFont.stageTag)
-                            .tracking(1.2)
-                            .foregroundStyle(.white.opacity(0.45))
+                    VStack(alignment: .leading, spacing: 8) {
+                        LuminousEyebrow(text: "Harmony")
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 8) {
                                 ForEach(rules, id: \.self) { candidate in
-                                    ruleChip(candidate)
+                                    LuminousChip(title: candidate == .none ? "Single" : candidate.rawValue,
+                                                 symbol: candidate.icon,
+                                                 selected: rule == candidate,
+                                                 accent: washColors.first ?? LuminousPalette.cyan) {
+                                        rule = candidate
+                                    }
                                 }
                             }
+                            .padding(.vertical, 2)
                         }
+                        .scrollClipDisabled()
                     }
 
-                    // ── Saved colors ─────────────────────────
+                    // ── Saved colours ────────────────────────
                     if !SavedColorStore.shared.colors.isEmpty {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("MY COLORS")
-                                .font(HueFont.stageTag)
-                                .tracking(1.2)
-                                .foregroundStyle(.white.opacity(0.45))
+                        VStack(alignment: .leading, spacing: 8) {
+                            LuminousEyebrow(text: "My Colors")
                             SavedColorStrip { saved in
                                 guard let x = saved.x, let y = saved.y else { return }
                                 let hsb = HueColorUtils.hsb(fromX: x, y: y, brightness: 100)
@@ -92,101 +108,46 @@ struct RoomColorPopover: View {
                         }
                     }
 
-                    applyButton
+                    LuminousPrimaryButton(title: rule == .none ? "Apply to \(room.name)" : "Spread across \(room.name)",
+                                          symbol: "paintbrush.fill",
+                                          busy: isApplying) {
+                        apply()
+                    }
+                    .disabled(isApplying)
                 }
-                .padding(.horizontal, HueSpacing.lg)
-                .padding(.bottom, HueSpacing.lg)
+                .padding(.horizontal, HueSpacing.screenH)
+                .padding(.top, 8)
+                .padding(.bottom, 24)
             }
-            .background(StagePalette.stage)
-            .navigationTitle(room.name)
-            .navigationBarTitleDisplayMode(.inline)
+            .background { LuminousAmbience(colors: washColors) }
+            .luminousNavigationChrome()
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }.tint(HuePalette.amber)
+                    Button("Done") { dismiss() }
+                        .foregroundStyle(LuminousPalette.cyan)
                 }
             }
-            .toolbarBackground(StagePalette.stage, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
         }
         .presentationDetents([.medium, .large])
-        .presentationDragIndicator(.visible)
-        .preferredColorScheme(.dark)
+        .luminousSheet()
     }
 
-    // MARK: - Pieces
+    // MARK: - Apply
 
-    /// What the wash will look like: the harmony anchors at the current root.
-    private var harmonyPreview: some View {
-        let colors = HarmonyEngine.palette(
-            rule: rule, rootHue: hue, saturation: saturation, brightness: 1.0,
-            count: max(3, rule.anchorCount)
-        )
-        return HStack(spacing: 6) {
-            ForEach(Array(colors.enumerated()), id: \.offset) { _, paletteColor in
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(Color(hue: paletteColor.hue,
-                                saturation: paletteColor.saturation,
-                                brightness: paletteColor.brightness))
-                    .frame(height: 22)
-            }
+    private func apply() {
+        guard !isApplying else { return }
+        isApplying = true
+        HapticManager.shared.medium()
+        let snapshot = (rule: rule, hue: hue, sat: saturation, bri: brightness)
+        Task {
+            await orchestrator.applyColorWash(
+                to: room,
+                rule: snapshot.rule,
+                rootHue: snapshot.hue,
+                saturation: snapshot.sat,
+                brightness: snapshot.bri
+            )
+            isApplying = false
         }
-        .animation(HueAnimation.fast, value: rule)
-    }
-
-    private func ruleChip(_ candidate: HarmonyRule) -> some View {
-        let selected = rule == candidate
-        return Button {
-            rule = candidate
-            HapticManager.shared.selection()
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: candidate.icon)
-                    .font(.system(size: 10, weight: .semibold))
-                Text(candidate == .none ? "Single" : candidate.rawValue)
-                    .font(.system(size: 12, weight: .semibold))
-            }
-            .foregroundStyle(selected ? .black : .white.opacity(0.75))
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .background(Capsule().fill(selected ? HuePalette.amber : Color.white.opacity(0.08)))
-        }
-        .buttonStyle(.plain)
-    }
-
-    private var applyButton: some View {
-        Button {
-            guard !isApplying else { return }
-            isApplying = true
-            HapticManager.shared.medium()
-            let snapshot = (rule: rule, hue: hue, sat: saturation, bri: brightness)
-            Task {
-                await orchestrator.applyColorWash(
-                    to: room,
-                    rule: snapshot.rule,
-                    rootHue: snapshot.hue,
-                    saturation: snapshot.sat,
-                    brightness: snapshot.bri
-                )
-                isApplying = false
-            }
-        } label: {
-            HStack {
-                if isApplying {
-                    ProgressView().tint(.black)
-                } else {
-                    Image(systemName: "paintbrush.fill")
-                }
-                Text(rule == .none ? "Apply to \(room.name)" : "Spread across \(room.name)")
-                    .fontWeight(.semibold)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-            }
-            .foregroundStyle(Color.black.opacity(0.85))
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 14)
-            .background(RoundedRectangle(cornerRadius: HueRadius.lg).fill(HuePalette.amber))
-        }
-        .buttonStyle(.plain)
-        .disabled(isApplying)
     }
 }

@@ -306,4 +306,115 @@ final class AppGallerySnapshotTests: XCTestCase {
         try await renderScenesPage(ImportSceneFailureSheet(error: ScenePayloadError.unsupportedVersion(99)),
                                    named: "gallery-scene-import-failure", height: 600)
     }
+
+    // MARK: - Lane Room
+
+    /// Renders a screen taller than the phone, so a whole scrolling page can
+    /// be reviewed in one image.
+    /// Suspends (rather than pumping the run loop) so the screen's own
+    /// main-actor `.task` work — a room loading its lights — actually runs.
+    private func renderTall<V: View>(_ view: V, named name: String, height: CGFloat,
+                                     orchestrator: UnifiedOrchestrator, settle: TimeInterval = 2) async throws {
+        let tall = CGSize(width: size.width, height: height)
+        let root = AnyView(
+            view
+                .environment(orchestrator)
+                .environment(DeepLinkCoordinator())
+                .environment(MusicSessionCoordinator.shared)
+                .modelContainer(try container())
+                .preferredColorScheme(.dark)
+        )
+        let controller = UIHostingController(rootView: root)
+        controller.overrideUserInterfaceStyle = .dark
+        let window = UIWindow(frame: CGRect(origin: .zero, size: tall))
+        window.overrideUserInterfaceStyle = .dark
+        window.rootViewController = controller
+        window.isHidden = false
+        controller.view.layoutIfNeeded()
+        try await Task.sleep(for: .seconds(settle))
+        pump(0.3)
+        let image = UIGraphicsImageRenderer(size: tall).image { _ in
+            controller.view.drawHierarchy(in: CGRect(origin: .zero, size: tall), afterScreenUpdates: true)
+        }
+        let attachment = XCTAttachment(image: image)
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        XCTAssertNotNil(image.cgImage, name)
+        dismantle(window)
+    }
+
+    /// The Room page, each segment, on a lit room and on a dark one.
+    func testRoomDetailSegments() async throws {
+        let orchestrator = await demoOrchestrator()
+        let living = try XCTUnwrap(orchestrator.allRooms.first { $0.id == "demo-room-living" })
+        let bedroom = try XCTUnwrap(orchestrator.allRooms.first { $0.id == "demo-room-bedroom" })
+        for segment in RoomDetailView.Segment.allCases {
+            try await renderTall(NavigationStack { RoomDetailView(room: living, initialSegment: segment) },
+                           named: "gallery-room-\(segment.rawValue)", height: 1500, orchestrator: orchestrator)
+        }
+        try await renderTall(NavigationStack { RoomDetailView(room: bedroom) },
+                       named: "gallery-room-dark", height: 1200, orchestrator: orchestrator)
+        orchestrator.exitDemoMode()
+    }
+
+    /// One light: a colour lamp and a white-only lamp.
+    func testLightControl() async throws {
+        let orchestrator = await demoOrchestrator()
+        let colourLamp = try XCTUnwrap(DemoDataProvider.lights(for: "demo-room-living").first { $0.name == "TV Backlight" })
+        let whiteLamp = try XCTUnwrap(DemoDataProvider.lights(for: "demo-room-kitchen").first { $0.name == "Counter Strip" })
+        try await renderTall(LightControlHarness(light: colourLamp), named: "gallery-light-colour",
+                       height: 1500, orchestrator: orchestrator)
+        try await renderTall(LightControlHarness(light: whiteLamp), named: "gallery-light-white",
+                       height: 1100, orchestrator: orchestrator)
+        orchestrator.exitDemoMode()
+    }
+
+    /// The long-press colour wash sheet.
+    func testRoomColorPopover() async throws {
+        let orchestrator = await demoOrchestrator()
+        let room = try XCTUnwrap(orchestrator.allRooms.first)
+        try await renderTall(RoomColorPopover(room: room), named: "gallery-room-color-wash",
+                       height: 1100, orchestrator: orchestrator, settle: 1)
+        orchestrator.exitDemoMode()
+    }
+
+    /// The edit sheet and the two selection docks.
+    func testRoomSheetsAndDocks() async throws {
+        let orchestrator = await demoOrchestrator()
+        let room = try XCTUnwrap(orchestrator.allRooms.first { $0.id == "demo-room-living" })
+        try await renderTall(EditRoomSheet(room: room, isZone: false) { _, _ in },
+                             named: "gallery-room-edit", height: 1100, orchestrator: orchestrator, settle: 1)
+        let vm = RoomDetailViewModel(room: room, isDemoMode: true,
+                                     initialLights: DemoDataProvider.lights(for: room.id))
+        vm.scenes = DemoDataProvider.scenes(for: room.id)
+        vm.enterSelectMode(preselecting: vm.lights.first?.id)
+        vm.enterSceneSelectMode()
+        if let first = vm.scenes.first { vm.toggleSceneSelection(id: first.id) }
+        try await renderTall(VStack(spacing: 12) {
+                                 Spacer()
+                                 BulkActionBar(vm: vm) {}
+                                 SceneEditBar(vm: vm) { _ in }
+                             }
+                             .padding(.bottom, 24)
+                             .background { LuminousAmbience(colors: [LuminousPalette.amber]) },
+                             named: "gallery-room-docks", height: 600, orchestrator: orchestrator, settle: 1)
+        orchestrator.exitDemoMode()
+    }
+
+    /// Hosts LightControlView with a local binding (its host owns the writes).
+    private struct LightControlHarness: View {
+        @State var light: LightDisplayItem
+
+        var body: some View {
+            NavigationStack {
+                LightControlView(light: $light,
+                                 onToggle: { light.isOn = $0 },
+                                 onBrightness: { light.brightness = $0 },
+                                 onColor: { x, y in light.colorX = x; light.colorY = y; light.colorTempMirek = nil },
+                                 onColorTemp: { light.colorTempMirek = $0 },
+                                 onIdentify: {})
+            }
+        }
+    }
 }
