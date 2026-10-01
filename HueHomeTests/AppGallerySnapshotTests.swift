@@ -264,6 +264,21 @@ final class AppGallerySnapshotTests: XCTestCase {
         try await renderTall(GuestInviteMintSheet(spec: spec), named: "lane-more-guest-mint", height: 1000)
     }
 
+    func testLaneMoreEntertainmentBuilder() async throws {
+        try await renderTall(EntertainmentConfigBuilderView(), named: "lane-more-entertainment-builder", height: 1000)
+    }
+
+    /// The app-wide failure toast and the undo toast, over the void.
+    func testLaneMoreToasts() async throws {
+        let toasts = VStack(spacing: 24) {
+            HueToastView(message: "Couldn't reach bridge — Hallway reverted")
+            HueActionToast(message: "Moved to Kitchen", actionTitle: "Undo", action: {})
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(LuminousPalette.void)
+        try await renderTall(toasts, named: "lane-more-toasts", height: 400)
+    }
+
     func testLaneMoreMusicPicker() async throws {
         try await renderTall(MusicSourcePicker(), named: "lane-more-music-picker", height: 1000)
     }

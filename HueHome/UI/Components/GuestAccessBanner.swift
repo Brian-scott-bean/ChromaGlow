@@ -1,7 +1,7 @@
 // GuestAccessBanner.swift
 // ChromaGlow — Family Sharing Phase 3 (guest-side transparency)
 //
-// A slim capsule at the top of the dashboard whenever any live bridge is
+// A slim glass capsule at the top of Home whenever any live bridge is
 // grant-limited. Tapping it opens the detail sheet with the profile
 // name(s), what was granted, and the two mandatory truths (design §5):
 // enforcement is app-side (the key is bridge-wide by Hue platform
@@ -19,29 +19,28 @@ struct GuestAccessBanner: View {
             Button {
                 showDetail = true
             } label: {
-                HStack(spacing: 8) {
+                HStack(spacing: 10) {
                     Image(systemName: "person.2.fill")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(HuePalette.amber)
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(LuminousPalette.amber)
                     Text(bannerText)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.75))
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(LuminousPalette.ink.opacity(0.85))
                         .lineLimit(1)
+                        .minimumScaleFactor(0.85)
                     Spacer(minLength: 0)
                     Image(systemName: "info.circle")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.white.opacity(0.35))
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(LuminousPalette.inkSecondary)
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 9)
-                .background(
-                    Capsule()
-                        .fill(HuePalette.amber.opacity(0.10))
-                        .overlay(Capsule().strokeBorder(HuePalette.amber.opacity(0.25), lineWidth: 1))
-                )
+                .padding(.horizontal, 16)
+                .frame(minHeight: 44)
+                .background(Capsule().fill(.ultraThinMaterial))
+                .background(Capsule().fill(LuminousPalette.amber.opacity(0.08)))
+                .overlay(Capsule().strokeBorder(LuminousPalette.amber.opacity(0.35), lineWidth: 1))
                 .contentShape(Capsule())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(LuminousPressStyle(scale: 0.98))
             .accessibilityLabel("Guest access details")
             .sheet(isPresented: $showDetail) { detailSheet }
         }
@@ -60,32 +59,36 @@ struct GuestAccessBanner: View {
     // ──────────────────────────────────────────────
 
     private var detailSheet: some View {
-        StageSheetScaffold(title: "Guest Access") {
-            StageCard(icon: "person.2.fill", title: "This home is shared with you") {
-                VStack(alignment: .leading, spacing: HueSpacing.sm) {
+        LuminousSheetScaffold(title: "Guest Access",
+                              eyebrow: "Shared with you",
+                              eyebrowSymbol: "person.2.fill",
+                              tint: LuminousPalette.amber,
+                              ambience: [LuminousPalette.amber, LuminousPalette.magenta]) {
+            LuminousTitledCard(symbol: "person.2.fill", title: "This home is shared with you", tint: LuminousPalette.amber) {
+                VStack(alignment: .leading, spacing: 8) {
                     if !orchestrator.guestAccessInfo.profileNames.isEmpty {
                         Text("Profile: \(orchestrator.guestAccessInfo.profileNames.joined(separator: ", "))")
-                            .font(HueFont.stageControl)
-                            .foregroundStyle(StagePalette.ink)
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(LuminousPalette.ink)
                     }
                     Text("You see the rooms and controls the owner shared. Everything else stays out of the way.")
-                        .font(HueFont.stageStatus)
-                        .foregroundStyle(StagePalette.muted)
+                        .font(.footnote)
+                        .foregroundStyle(LuminousPalette.inkSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
 
-            StageCard(icon: "hand.raised.fill", title: "The honest fine print") {
+            LuminousTitledCard(symbol: "hand.raised.fill", title: "The honest fine print", tint: LuminousPalette.cyan) {
                 Text("Room limits apply inside ChromaGlow on this phone. The key itself can control the whole bridge from any Hue app — a Philips Hue limitation.")
-                    .font(HueFont.stageStatus)
-                    .foregroundStyle(StagePalette.muted)
+                    .font(.footnote)
+                    .foregroundStyle(LuminousPalette.inkSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            StageCard(icon: "qrcode", title: "Changing your access") {
+            LuminousTitledCard(symbol: "qrcode", title: "Changing your access", tint: LuminousPalette.magenta) {
                 Text("To change what you can access, ask the owner for a new invite and scan it again — that's the whole update mechanism, by design.")
-                    .font(HueFont.stageStatus)
-                    .foregroundStyle(StagePalette.muted)
+                    .font(.footnote)
+                    .foregroundStyle(LuminousPalette.inkSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -96,18 +99,8 @@ struct GuestAccessBanner: View {
 /// allowed rooms is a deliberate fail-closed outcome, not an error.
 struct GuestZeroRoomsState: View {
     var body: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "person.2.slash")
-                .font(.system(size: 44))
-                .foregroundStyle(.white.opacity(0.25))
-            Text("No rooms shared yet")
-                .font(.headline)
-                .foregroundStyle(.white.opacity(0.55))
-            Text("The owner hasn't shared any rooms with you yet.\nAsk them for a new invite, then scan it again.")
-                .font(.caption)
-                .foregroundStyle(.white.opacity(0.35))
-                .multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        LuminousEmptyState(symbol: "person.2.slash",
+                           title: "No rooms shared yet",
+                           message: "The owner hasn't shared any rooms with you yet.\nAsk them for a new invite, then scan it again.")
     }
 }

@@ -1,9 +1,10 @@
 // HueToastView.swift
-// CastChroma
+// ChromaGlow — the app-wide toasts (Luminous).
 //
-// Lightweight top-of-screen toast for transient error messages.
-// Displayed as a glass pill with a warning icon — auto-dismissed after 3 s
-// by the caller (orchestrator / vm). Allows hit-testing on the content behind.
+// HueToastView: a glass pill for transient failures (bridge unreachable,
+// guest refusals) — drawn once, over every tab, by MainTabView; the caller
+// owns the auto-dismiss. HueActionToast: the same pill with an undo-style
+// action (scene copy/move).
 
 import SwiftUI
 
@@ -12,19 +13,21 @@ struct HueToastView: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: "exclamationmark.wifi")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(Color(red: 1.0, green: 0.76, blue: 0.2))
+            Image(systemName: "wifi.exclamationmark")
+                .font(.system(size: 14, weight: .bold))
+                .foregroundStyle(LuminousPalette.amber)
             Text(message)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.white)
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(LuminousPalette.ink)
                 .lineLimit(2)
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 12)
-        .background(.ultraThinMaterial, in: Capsule())
-        .overlay(Capsule().stroke(.white.opacity(0.12), lineWidth: 0.5))
-        .shadow(color: .black.opacity(0.3), radius: 8, y: 4)
+        .background(Capsule().fill(.ultraThinMaterial))
+        .background(Capsule().fill(LuminousPalette.void.opacity(0.5)))
+        .overlay(Capsule().strokeBorder(LuminousPalette.amber.opacity(0.35), lineWidth: 1))
+        .shadow(color: .black.opacity(0.4), radius: 16, y: 6)
+        .padding(.horizontal, 20)
         .accessibilityLabel(Text("Error: \(message)"))
         .accessibilityAddTraits(.isStaticText)
     }
@@ -32,9 +35,8 @@ struct HueToastView: View {
 
 #Preview {
     ZStack {
-        Color(red: 0.05, green: 0.05, blue: 0.08).ignoresSafeArea()
+        LuminousPalette.void.ignoresSafeArea()
         HueToastView(message: "Couldn't reach bridge — Hallway reverted")
-            .padding(.horizontal, 24)
     }
 }
 
@@ -50,23 +52,27 @@ struct HueActionToast: View {
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(.green)
+                .font(.system(size: 14, weight: .bold))
+                .foregroundStyle(LuminousPalette.live)
             Text(message)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.white)
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(LuminousPalette.ink)
                 .lineLimit(2)
             Button(action: action) {
                 Text(actionTitle)
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(Color(red: 1.0, green: 0.76, blue: 0.2))
+                    .font(.system(.footnote, design: .rounded).weight(.heavy))
+                    .foregroundStyle(LuminousPalette.cyan)
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 12)
-        .background(.ultraThinMaterial, in: Capsule())
-        .overlay(Capsule().stroke(.white.opacity(0.12), lineWidth: 0.5))
-        .shadow(color: .black.opacity(0.3), radius: 8, y: 4)
+        .padding(.leading, 18)
+        .padding(.trailing, 10)
+        .frame(minHeight: 44)
+        .background(Capsule().fill(.ultraThinMaterial))
+        .background(Capsule().fill(LuminousPalette.void.opacity(0.5)))
+        .overlay(Capsule().strokeBorder(LuminousPalette.live.opacity(0.35), lineWidth: 1))
+        .shadow(color: .black.opacity(0.4), radius: 16, y: 6)
     }
 }

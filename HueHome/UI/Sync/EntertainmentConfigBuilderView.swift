@@ -2,8 +2,8 @@
 // CastChroma — Entertainment Area Creation UI
 //
 // Allows users to create entertainment configurations directly in-app
-// without needing the official Hue app. Presented as a sheet from the
-// Sync tab controls card.
+// without needing the official Hue app. Presented as a sheet from More →
+// Entertainment Areas (and the Composer v1 layer sheet in Studio Classic).
 //
 // Flow:
 //   1. Name your area
@@ -51,40 +51,44 @@ struct EntertainmentConfigBuilderView: View {
         return orchestrator.hueClient(for: selectedBridgeID)
     }
 
-    private let amber = Color(red: 1.0, green: 0.76, blue: 0.20)
     private let maxLights = 10
 
     var body: some View {
         NavigationStack {
-            ZStack {
-                // Background
-                Color(red: 0.055, green: 0.055, blue: 0.08).ignoresSafeArea()
-
+            Group {
                 if isLoading {
-                    ProgressView("Loading lights…")
-                        .tint(.white)
-                        .foregroundStyle(.white)
+                    VStack(spacing: 14) {
+                        ProgressView().tint(LuminousPalette.cyan).scaleEffect(1.3)
+                        Text("Loading lights…")
+                            .font(.subheadline)
+                            .foregroundStyle(LuminousPalette.inkSecondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     mainContent
                 }
             }
+            .background { LuminousAmbience(colors: [LuminousPalette.cyan, LuminousPalette.violet], intensity: 0.65) }
             .navigationTitle("New Entertainment Area")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbarBackground(.hidden, for: .navigationBar)
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Color.clear.frame(width: 1, height: 1).accessibilityHidden(true)
+                }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
-                        .foregroundStyle(.white.opacity(0.7))
+                        .foregroundStyle(LuminousPalette.ink.opacity(0.75))
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Create") { Task { await createConfig() } }
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(canCreate ? amber : .white.opacity(0.25))
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(canCreate ? LuminousPalette.cyan : LuminousPalette.inkTertiary)
                         .disabled(!canCreate || isSaving)
                 }
             }
-            .preferredColorScheme(.dark)
         }
+        .luminousSheet()
         .task {
             if selectedBridgeID == nil {
                 selectedBridgeID = ownedBridgeIDs.first
@@ -105,43 +109,33 @@ struct EntertainmentConfigBuilderView: View {
 
     private var mainContent: some View {
         ScrollView(showsIndicators: false) {
-            VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 20) {
+                LuminousScreenTitle(title: "New area",
+                                    eyebrow: "Entertainment Areas",
+                                    eyebrowSymbol: "dot.radiowaves.left.and.right",
+                                    eyebrowTint: LuminousPalette.cyan,
+                                    subtitle: "Name it, pick up to \(maxLights) lights, and the bridge does the rest.")
 
                 // ── Bridge (multi-bridge homes only) ────────
                 if ownedBridgeIDs.count > 1 {
                     bridgePickerSection
-                        .padding(.horizontal, 20)
-                        .padding(.top, 16)
-                        .padding(.bottom, 20)
                 }
 
-                // ── Name ────────────────────────────────────
-                nameSection
-                    .padding(.horizontal, 20)
-                    .padding(.top, ownedBridgeIDs.count > 1 ? 0 : 16)
-                    .padding(.bottom, 20)
+                LuminousTextField(caption: "Area Name", placeholder: "e.g. Living Room Music", text: $areaName)
+                    .autocorrectionDisabled()
 
-                // ── Light Picker ────────────────────────────
                 lightPickerSection
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 16)
 
-                // ── Info ────────────────────────────────────
-                infoSection
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 20)
+                LuminousNotice(text: "Entertainment areas let lights respond instantly for music sync. Lights in the area are controlled directly by your Hue Bridge.",
+                               symbol: "info.circle.fill", tint: LuminousPalette.cyan)
 
-                // ── Error ───────────────────────────────────
                 if let error = errorMessage {
-                    Text(error)
-                        .font(.system(size: 13))
-                        .foregroundStyle(.red.opacity(0.8))
-                        .padding(.horizontal, 20)
-                        .padding(.bottom, 16)
+                    LuminousNotice(text: error, symbol: "exclamationmark.triangle.fill", tint: LuminousPalette.danger)
                 }
-
-                Color.clear.frame(height: 40)
             }
+            .padding(.horizontal, HueSpacing.screenH)
+            .padding(.top, 4)
+            .padding(.bottom, 40)
         }
     }
 
@@ -149,7 +143,7 @@ struct EntertainmentConfigBuilderView: View {
 
     private var bridgePickerSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            sectionLabel("Bridge")
+            LuminousEyebrow(text: "Bridge").padding(.horizontal, 6)
             Menu {
                 ForEach(ownedBridgeIDs, id: \.self) { bridgeID in
                     Button {
@@ -169,51 +163,21 @@ struct EntertainmentConfigBuilderView: View {
                 }
             } label: {
                 HStack {
+                    Image(systemName: "network")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(LuminousPalette.cyan)
                     Text(selectedBridgeID.flatMap { orchestrator.bridgeName(for: $0) } ?? "Select a bridge")
-                        .font(.system(size: 16))
-                        .foregroundStyle(.white)
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(LuminousPalette.ink)
                     Spacer()
                     Image(systemName: "chevron.up.chevron.down")
                         .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.5))
+                        .foregroundStyle(LuminousPalette.inkSecondary)
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 12)
-                .background(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(Color.white.opacity(0.06))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
-                        )
-                )
+                .padding(.horizontal, 16)
+                .frame(minHeight: 52)
+                .luminousGlass(radius: 16)
             }
-        }
-    }
-
-    // MARK: - Name Section
-
-    private var nameSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            sectionLabel("Area Name")
-
-            TextField("e.g. Living Room Music", text: $areaName)
-                .font(.system(size: 16))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 12)
-                .background(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(Color.white.opacity(0.06))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .strokeBorder(
-                                    areaName.isEmpty ? Color.white.opacity(0.08) : amber.opacity(0.4),
-                                    lineWidth: 1
-                                )
-                        )
-                )
-                .autocorrectionDisabled()
         }
     }
 
@@ -222,34 +186,43 @@ struct EntertainmentConfigBuilderView: View {
     private var lightPickerSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                sectionLabel("Select Lights")
+                LuminousEyebrow(text: "Select Lights")
                 Spacer()
                 Text("\(selectedLightIDs.count) / \(maxLights)")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(atLimit ? amber : .white.opacity(0.45))
+                    .font(LuminousType.value)
+                    .foregroundStyle(atLimit ? LuminousPalette.amber : LuminousPalette.inkSecondary)
             }
+            .padding(.horizontal, 6)
 
             if atLimit {
                 Text("Maximum of \(maxLights) lights per entertainment area")
-                    .font(.system(size: 11))
-                    .foregroundStyle(amber.opacity(0.6))
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(LuminousPalette.amber)
+                    .padding(.horizontal, 6)
             }
 
             if availableLights.isEmpty {
                 Text("No lights found on bridge")
-                    .font(.system(size: 13))
-                    .foregroundStyle(.white.opacity(0.35))
-                    .padding(.vertical, 20)
+                    .font(.subheadline)
+                    .foregroundStyle(LuminousPalette.inkSecondary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 24)
+                    .luminousGlass()
             } else {
-                // Select All / Deselect All
-                HStack(spacing: 10) {
-                    let allSelected = Set(availableLights.map(\.id)) == selectedLightIDs
-                    selectAllChip(allSelected: allSelected)
-                    Spacer()
+                let allSelected = Set(availableLights.map(\.id)) == selectedLightIDs
+                LuminousChip(title: allSelected ? "Deselect All" : "Select All",
+                             symbol: allSelected ? "checkmark.circle.fill" : "circle",
+                             selected: allSelected) {
+                    withAnimation(.spring(response: 0.25)) {
+                        if allSelected {
+                            selectedLightIDs.removeAll()
+                        } else {
+                            // Cap at maxLights
+                            selectedLightIDs = Set(availableLights.prefix(maxLights).map(\.id))
+                        }
+                    }
                 }
-                .padding(.bottom, 4)
 
-                // Light grid
                 LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
                     ForEach(availableLights) { light in
                         lightCard(light)
@@ -257,32 +230,6 @@ struct EntertainmentConfigBuilderView: View {
                 }
             }
         }
-    }
-
-    private func selectAllChip(allSelected: Bool) -> some View {
-        Button {
-            withAnimation(.spring(response: 0.25)) {
-                if allSelected {
-                    selectedLightIDs.removeAll()
-                } else {
-                    // Cap at maxLights
-                    selectedLightIDs = Set(availableLights.prefix(maxLights).map(\.id))
-                }
-            }
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: allSelected ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 12))
-                Text(allSelected ? "Deselect All" : "Select All")
-                    .font(.system(size: 12, weight: .medium))
-            }
-            .foregroundStyle(allSelected ? amber : .white.opacity(0.5))
-            .padding(.horizontal, 12).padding(.vertical, 6)
-            .background(
-                Capsule().fill(allSelected ? amber.opacity(0.12) : .white.opacity(0.06))
-            )
-        }
-        .buttonStyle(.plain)
     }
 
     private func lightCard(_ light: HueLight) -> some View {
@@ -299,84 +246,41 @@ struct EntertainmentConfigBuilderView: View {
             HapticManager.shared.light()
         } label: {
             HStack(spacing: 10) {
-                // Checkmark
-                ZStack {
-                    Circle()
-                        .fill(isSelected ? amber : .white.opacity(0.08))
-                        .frame(width: 28, height: 28)
-                    Image(systemName: isSelected ? "checkmark" : "lightbulb.fill")
-                        .font(.system(size: isSelected ? 12 : 13, weight: .medium))
-                        .foregroundStyle(isSelected ? .black : .white.opacity(0.4))
-                }
+                Image(systemName: isSelected ? "checkmark" : "lightbulb.fill")
+                    .font(.system(size: isSelected ? 13 : 13, weight: .bold))
+                    .foregroundStyle(isSelected ? LuminousPalette.void : LuminousPalette.inkSecondary)
+                    .frame(width: 30, height: 30)
+                    .background(Circle().fill(isSelected ? AnyShapeStyle(LuminousPalette.signalGradient)
+                                                         : AnyShapeStyle(Color.white.opacity(0.08))))
+                    .shadow(color: isSelected ? LuminousPalette.cyan.opacity(0.5) : .clear, radius: 6)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(light.metadata.name)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(.white)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(LuminousPalette.ink)
                         .lineLimit(1)
                     Text(lightCapability(light))
-                        .font(.system(size: 10))
-                        .foregroundStyle(.white.opacity(0.35))
+                        .font(.caption2)
+                        .foregroundStyle(LuminousPalette.inkSecondary)
                 }
-
-                Spacer()
+                Spacer(minLength: 0)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(isSelected ? amber.opacity(0.10) : Color.white.opacity(0.05))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .strokeBorder(
-                                isSelected ? amber.opacity(0.45) : Color.white.opacity(0.07),
-                                lineWidth: isSelected ? 1.5 : 1
-                            )
-                    )
-            )
+            .frame(minHeight: 56)
+            .luminousGlass(radius: 16, accent: LuminousPalette.cyan, selected: isSelected)
             .opacity(isDisabled ? 0.4 : 1.0)
+            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(LuminousPressStyle(scale: 0.96))
         .disabled(isDisabled)
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : [.isButton])
     }
 
     private func lightCapability(_ light: HueLight) -> String {
         if light.color != nil { return "Color" }
         if light.color_temperature != nil { return "White Ambiance" }
         return "Dimmable"
-    }
-
-    // MARK: - Info Section
-
-    private var infoSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Image(systemName: "info.circle")
-                    .font(.system(size: 13))
-                    .foregroundStyle(amber.opacity(0.6))
-                Text("Entertainment areas let lights respond instantly for music sync. Lights in the area are controlled directly by your Hue Bridge.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.white.opacity(0.4))
-            }
-            .padding(12)
-            .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(amber.opacity(0.04))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .strokeBorder(amber.opacity(0.12), lineWidth: 1)
-                    )
-            )
-        }
-    }
-
-    // MARK: - Helpers
-
-    private func sectionLabel(_ text: String) -> some View {
-        Text(text.uppercased())
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(.white.opacity(0.45))
-            .tracking(0.8)
     }
 
     // MARK: - Load Lights + Entertainment Services
