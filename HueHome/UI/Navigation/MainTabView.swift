@@ -438,9 +438,8 @@ struct MainTabView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     // HueTabBar is a custom floating capsule in the ZStack;
                     // the system safe area has no knowledge of it.
-                    // Height: icon(32) + padding.vertical(12*2) + padding.bottom(8) = 64pt
                     .safeAreaInset(edge: .bottom, spacing: 0) {
-                        Color.clear.frame(height: 64)
+                        Color.clear.frame(height: HueTabBarMetrics.height)
                     }
                     .opacity(selectedTab == tab ? 1 : 0)
                     .allowsHitTesting(selectedTab == tab)
@@ -602,6 +601,17 @@ struct MainTabView: View {
 }
 
 // MARK: - Luminous Tab Bar
+
+/// The floating HueTabBar's footprint above the bottom safe area.
+enum HueTabBarMetrics {
+    /// Item 50 + vertical padding 7×2 + bottom padding 8.
+    static let height: CGFloat = 72
+    /// What a dock or toast pinned to a tab page's bottom edge must pad
+    /// itself by. A `safeAreaInset` inside tab content does NOT stack on
+    /// MainTabView's per-tab clear inset (DEVLOG 2026-07-21, R8b), so
+    /// anything mounted there clears the bar explicitly, plus a small gap.
+    static let dockClearance: CGFloat = height + 8
+}
 
 /// The Composer's dock language for the whole app: deep glass floating over
 /// the room, a label under every icon, and the signal glow gliding to the

@@ -178,7 +178,8 @@ struct RoomDetailView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background { LuminousAmbience(colors: ambienceColors) }
         // Contextual docks float above the tab bar and inset the scroll
-        // content, so the last tiles are never hidden behind them.
+        // content, so the last tiles are never hidden behind them. They pad
+        // themselves clear of the bar (see `docks`).
         .safeAreaInset(edge: .bottom, spacing: 0) { docks }
         .animation(.spring(response: 0.35, dampingFraction: 0.78), value: vm.isSelecting)
         .animation(.spring(response: 0.35, dampingFraction: 0.78), value: vm.isSelectingScenes)
@@ -933,7 +934,9 @@ struct RoomDetailView: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .padding(.bottom, vm.isSelecting || vm.isSelectingScenes ? 8 : 0)
+        // The inset doesn't stack on the tab bar's, so the docks clear it
+        // themselves — without this the action row sat behind the bar.
+        .padding(.bottom, vm.isSelecting || vm.isSelectingScenes ? HueTabBarMetrics.dockClearance : 0)
     }
 
     // MARK: - Light destination
