@@ -74,8 +74,25 @@ struct Composer2PaletteEditorContent: View {
 
     // MARK: Stops
 
+    /// The swatches scroll sideways in their own strip: eight colors, the "+"
+    /// and the reorder buttons are wider than the sheet, and a plain HStack
+    /// pushed the whole editor off both edges (build-61 device check).
     private var stopRow: some View {
         HStack(spacing: 8) {
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    swatches
+                }
+                .onChange(of: selectedStop) { _, index in
+                    withAnimation(reduceMotion ? nil : HueAnimation.fast) { proxy.scrollTo(index, anchor: .center) }
+                }
+            }
+            reorderButtons
+        }
+    }
+
+    private var swatches: some View {
+        HStack(spacing: 4) {
             ForEach(Array(stops.enumerated()), id: \.offset) { index, stop in
                 let selected = index == selectedStop
                 Button {
@@ -92,13 +109,15 @@ struct Composer2PaletteEditorContent: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("Color \(index + 1) of \(stops.count)")
                 .accessibilityAddTraits(selected ? [.isSelected] : [])
+                .id(index)
             }
             if stops.count < Composer2ColorSource.maxStops {
                 Button {
                     HapticManager.shared.medium()
                     let base = stops[min(selectedStop, stops.count - 1)]
-                    document.editSelectedLayer { $0.color.stops = stops + [Composer2PaletteStop(x: base.x, y: base.y)] }
-                    selectedStop = stops.count
+                    let next = stops + [Composer2PaletteStop(x: base.x, y: base.y)]
+                    document.editSelectedLayer { $0.color.stops = next }
+                    selectedStop = next.count - 1
                 } label: {
                     Image(systemName: "plus")
                         .font(.system(size: 14, weight: .bold))
@@ -110,9 +129,8 @@ struct Composer2PaletteEditorContent: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Add color")
+                .id(stops.count)
             }
-            Spacer(minLength: 0)
-            reorderButtons
         }
     }
 

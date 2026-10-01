@@ -164,6 +164,21 @@ final class Composer2LabLifecycleTests: XCTestCase {
         XCTAssertEqual(doc.selectedLayer.mask.kind, .wholeRoom)
     }
 
+    /// Build-60 crash: the palette "+" read `document.selectedLayer` inside
+    /// its own `editSelectedLayer` closure, and Swift's exclusivity check
+    /// aborted the app. An edit closure may read the document freely.
+    func testEditClosureMayReadTheDocument() {
+        let doc = document()
+        let before = doc.selectedLayer.color.sanitizedStops.count
+        doc.editSelectedLayer { layer in
+            let current = doc.selectedLayer.color.sanitizedStops
+            layer.color.stops = current + [current[0]]
+        }
+        XCTAssertEqual(doc.selectedLayer.color.sanitizedStops.count, before + 1)
+        doc.edit { $0.master.intensity = doc.composition.master.intensity * 0.5 }
+        XCTAssertTrue(doc.isDirty)
+    }
+
     func testExpertStackOperations() {
         let doc = document(Composer2PresetLibrary.lavaLamp)
         XCTAssertEqual(doc.composition.layers.count, 2)

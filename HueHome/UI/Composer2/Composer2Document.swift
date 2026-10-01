@@ -215,8 +215,14 @@ final class Composer2Document {
 
     func edit(_ mutate: (inout Composer2Composition) -> Void) {
         let before = composition
-        mutate(&composition)
-        guard composition != before else { return }
+        // Mutate a copy, then store it. Mutating `composition` in place held
+        // write access for the whole closure, so an editor closure that read
+        // the document (`stops`, `selectedLayer`…) aborted the app with a
+        // Swift exclusivity violation — the palette "+" crash (build 60).
+        var next = before
+        mutate(&next)
+        guard next != before else { return }
+        composition = next
         recordUndo(before)
         isDirty = true
         onEdit?()
