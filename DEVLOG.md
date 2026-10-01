@@ -669,6 +669,50 @@
 
 ---
 
+## 2026-10-01 - [Claude] Local Spotify PCM sync experiment — Phase 1 built, discovery proven on iPhone (LOCAL-ONLY)
+
+### Branch
+- `experiment/local-spotify-pcm-sync` (worktree `~/Developer/huehome-spotify-pcm`), off `main` @ `c2368c8`;
+  rollback tag `checkpoint/pre-local-spotify-pcm-sync`. Commits `3b22b8b` (Rust receiver), `af12c3b`
+  (audio-source boundary), `dea734c` (experiment config/source/panel), `8e92b77` (build 900), + docs.
+  Not merged, not pushed. Full record: `docs/ios/local-spotify-pcm-experiment.md`.
+
+### Did
+- Rust static lib `Experimental/SpotifyReceiver` over librespot **dev @ `939dc5e`** (v0.8.0 doesn't build,
+  #1760): zeroconf via dns_sd, no cache/credentials stored, Info-capped redacting logger, in-memory paced
+  sink, tiny C ABI. `dns-sd` 0.1.3 vendored with a one-line iOS build fix.
+- Audio-source boundary: `AudioAnalysisEngine` now pulls from `AudioAnalysisSource`
+  (`MicrophoneAudioSource` = the old capture verbatim); generation-gated sink, per-activation extractor,
+  presentation-time delay line, hopper. Downstream (extractor, tempo, BeatClock, render loops, Hue) untouched.
+- `Debug-SpotifyExperimental` configuration + "HueHome Spotify Experimental" scheme; flag
+  `CHROMAGLOW_EXPERIMENTAL_SPOTIFY` (+ `#error` without DEBUG); Bonjour key injected into the built plist
+  only there; experiment panel in the Music Source sheet; `-ChromaGlowSpotifyAutoStart` console hook.
+
+### Working
+- Physical iPhone, build 900: receiver advertises "ChromaGlow Sync" (Mac dns-sd → `brians-iPhone.local.:54345`,
+  getInfo 101 OK) and the Spotify app lists it. Simulator + macOS harness start/stop cycles clean.
+- Release and normal Debug device builds contain none of the experiment (`Scripts/verify_spotify_experiment_absent.sh`).
+
+### Left
+- Brian's on-device run: Spotify hand-off → Connected → PCM → analyzer → Live look → lights (procedure in the
+  doc). My mirroring drive hit the ~30 s background window; an accidental tap set Brian's Spotify target to
+  DESKTOP-45TSJ6I (paused) — pick "This iPhone" in Spotify to undo.
+- Latency unmeasured. Phase 2 (playback/AirPlay/offset UI) not started — gated on Phase 1.
+- Built on `main`, i.e. the pre-Luminous UI; port to `experiment/luminous-app-redesign` if wanted.
+
+### Validation
+- Rust 10/10; full suite (Debug, flag off) **2088/2088**; experimental config 53/53 (incl. real receiver
+  cycles in the simulator); `hardening_guards.sh` pass; device builds for all three configurations.
+
+### Gotchas
+- This branch has **18** `CURRENT_PROJECT_VERSION` entries (bump all 18). Build 900 = local experiment.
+- devicectl app arguments need `--` before the bundle id. zsh doesn't word-split `$VAR` (use arrays for
+  `-only-testing`). The xcodeproj gem re-sorts the build-file section on save (cosmetic).
+- Phase 1 has no background mode: leaving ChromaGlow for the Spotify app gives a ~30 s grace (public
+  `beginBackgroundTask`), then iOS suspends it.
+
+---
+
 ## 2026-09-02 - [Claude] Android Live Control + Hue Capability Convergence — merged to main (versionCode 3)
 
 **Branch:** `feat/android-live-capability-convergence` (base `main` @ `485f49f`), final head ``c66205e` (code) + this docs commit`, fast-forwarded to `main` and pushed to `origin/main` and `origin/staging` on Brian's explicit instruction. Historical worktrees untouched.
