@@ -304,7 +304,7 @@ struct ScenesTabView: View {
                     // globalScenes (setSceneSpeed). Activate THAT, or the
                     // recall goes out at the old speed.
                     let current = orchestrator.globalScenes.first { $0.id == scene.id } ?? scene
-                    orchestrator.activateGlobalScene(current)
+                    orchestrator.activateGlobalScene(current, playDynamic: true)
                 }
             )
         }

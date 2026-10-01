@@ -48,10 +48,13 @@ struct HueScene: Decodable, Identifiable {
         return active != "inactive"
     }
 
-    /// True when this is a Hue dynamic palette scene (colours auto-cycle).
-    /// Falls back to checking status.active for older firmware that omits `type`.
+    /// True when this scene can play dynamically (its colours drift): it has
+    /// a palette. The resource's `type` is always "scene", so the old check
+    /// leaned on `status == dynamic_palette` alone — the Dynamic badge and
+    /// the speed dial vanished the moment the scene was recalled still
+    /// (build-60 M-13).
     var isDynamic: Bool {
-        type == "dynamic" || status?.active == "dynamic_palette"
+        !(palette?.color ?? []).isEmpty || type == "dynamic" || status?.active == "dynamic_palette"
     }
 
     /// Up to 3 colour points for previews: the dynamic palette when the

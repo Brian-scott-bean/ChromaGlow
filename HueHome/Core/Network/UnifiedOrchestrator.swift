@@ -1131,6 +1131,8 @@ final class UnifiedOrchestrator {
     /// Bridges the pending refresh must re-read (union across a debounce).
     @ObservationIgnored private var pendingRefreshBridges: Set<String> = []
     @ObservationIgnored private var pendingRefreshAllBridges = false
+    /// One debounced bridge write per scene whose speed is being dialled.
+    @ObservationIgnored private var sceneSpeedWriteTasks: [String: Task<Void, Never>] = [:]
 
     /// One shared URL session for all SSE streams.
     /// Created lazily so the cert delegate is retained for the orchestrator's lifetime.
@@ -10950,7 +10952,12 @@ final class UnifiedOrchestrator {
 
     /// Activate a scene. Optimistic: marks it active locally, clears others
     /// in the same room, then fires the API call asynchronously.
-    func activateGlobalScene(_ scene: GlobalSceneItem) {
+    /// - Parameter playDynamic: start the scene's palette moving
+    ///   (`dynamic_palette`). A plain tap recalls `active`, which plays
+    ///   dynamically only when the scene's own auto-dynamic is on — Hue's
+    ///   rule. The speed sheet's "Activate Scene" promises drifting colours,
+    ///   so it asks for them explicitly (build-60 M-13).
+    func activateGlobalScene(_ scene: GlobalSceneItem, playDynamic: Bool = false) {
         // Optimistic update via full-array replacement — avoids @Observable subscript bug
         // Deactivate all scenes in the SAME ROOM on the same bridge (the bridge will only
         // allow one active scene per room). Scenes in OTHER rooms stay as-is.
@@ -10968,7 +10975,8 @@ final class UnifiedOrchestrator {
         Task {
             // Pass speed only for dynamic scenes; static scenes ignore the dynamics block.
             let speed: Double? = scene.isDynamic ? scene.speed : nil
-            try? await client.activateScene(id: scene.bridgeSceneID, speed: speed)
+            try? await client.activateScene(id: scene.bridgeSceneID, speed: speed,
+                                            dynamic: playDynamic && scene.isDynamic)
             log.info("Activated scene '\(scene.name)' \(scene.isDynamic ? "@ speed \(String(format: "%.2f", scene.speed))" : "") on bridge \(scene.bridgeID)")
             try? await Task.sleep(nanoseconds: 1_500_000_000)
             refreshDominantColors(for: scene.bridgeID)
@@ -10980,8 +10988,20 @@ final class UnifiedOrchestrator {
     func setSceneSpeed(_ scene: GlobalSceneItem, speed: Double) {
         var updated = globalScenes
         guard let idx = updated.firstIndex(where: { $0.id == scene.id }) else { return }
-        updated[idx].speed = min(max(speed, 0.0), 1.0)
+        let clamped = min(max(speed, 0.0), 1.0)
+        updated[idx].speed = clamped
         globalScenes = updated
+        // Stored on the bridge once the slider settles — it used to live only
+        // in this array, so the next load brought the old speed back (the
+        // sheet's 0.69 never reached the bridge, which still said 0.35).
+        guard let client = clients[scene.bridgeID] else { return }
+        sceneSpeedWriteTasks[scene.id]?.cancel()
+        sceneSpeedWriteTasks[scene.id] = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(600))
+            guard !Task.isCancelled else { return }
+            try? await client.setSceneSpeed(id: scene.bridgeSceneID, speed: clamped)
+            self?.sceneSpeedWriteTasks[scene.id] = nil
+        }
     }
 
     // ──────────────────────────────────────────────────────────────────────────

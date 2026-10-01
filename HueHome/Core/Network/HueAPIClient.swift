@@ -217,9 +217,12 @@ class HueAPIClient: @unchecked Sendable {
     ///   - id:        Bridge scene UUID.
     ///   - speed:     Optional dynamics speed (0.0–1.0). Only meaningful for dynamic
     ///                palette scenes; ignored by the Bridge for static scenes.
-    func activateScene(id: String, speed: Double? = nil) async throws {
+    ///   - dynamic:   Start the scene's palette moving (`dynamic_palette`).
+    ///                `active` plays dynamically only when the scene's own
+    ///                auto-dynamic is on.
+    func activateScene(id: String, speed: Double? = nil, dynamic: Bool = false) async throws {
         let (ip, token) = try credentials()
-        var recall: [String: Any] = ["action": "active"]
+        var recall: [String: Any] = ["action": dynamic ? "dynamic_palette" : "active"]
         if let speed {
             // Clamp to valid range — Bridge rejects values outside [0, 1].
             recall["dynamics"] = ["speed": min(max(speed, 0.0), 1.0)]
@@ -230,6 +233,17 @@ class HueAPIClient: @unchecked Sendable {
             body: body, ip: ip, token: token
         )
         logRaw(data, label: "PUT /scene/\(id) speed=\(speed.map { String(format: "%.2f", $0) } ?? "default")")
+    }
+
+    /// Store a scene's default palette speed on the bridge (0.0–1.0), so the
+    /// next recall — from any app or switch — plays at it.
+    func setSceneSpeed(id: String, speed: Double) async throws {
+        let (ip, token) = try credentials()
+        let data = try await put(
+            path: "/clip/v2/resource/scene/\(id)",
+            body: ["speed": min(max(speed, 0.0), 1.0)], ip: ip, token: token
+        )
+        logRaw(data, label: "PUT /scene/\(id) stored speed=\(String(format: "%.2f", speed))")
     }
 
     /// Create a new scene on the Bridge with the given name and per-light actions.
