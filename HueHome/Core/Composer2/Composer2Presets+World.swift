@@ -227,10 +227,10 @@ extension Composer2PresetLibrary {
             id: layerID(40, 1), name: "Campfire",
             color: flame([Swatch.blood, Swatch.ember, Swatch.pumpkin, Swatch.gold]),
             motion: Composer2Motion(kind: .static),
-            rhythm: Composer2Rhythm(shape: .candle, depth: 1, minBrightness: 0.2, maxBrightness: 1, flickerRate: 2.5),
+            rhythm: Composer2Rhythm(shape: .candle, depth: 1, minBrightness: 0.2, maxBrightness: 1, flickerRate: 2.2),
             variation: .organic)
         let sparks = eventLayer(40, 2, "Sparks",
-                                events: twinkles([Swatch.gold, Swatch.yellow], every: 0.3...0.9,
+                                events: twinkles([Swatch.gold, Swatch.yellow], every: 0.45...1.1,
                                                  lasting: 0.2...0.4, intensity: 0.4...0.8))
         return look(40, "Campfire", "Crackling flames and sparks rising into the dark.", [fire, sparks])
     }()
