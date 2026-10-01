@@ -16,7 +16,6 @@ import SwiftData
 struct ProfilesAccessView: View {
 
     @Environment(\.modelContext) private var modelContext
-    @Environment(\.colorScheme)  private var colorScheme
     @Environment(UnifiedOrchestrator.self) private var orchestrator
 
     @Query(sort: \GuestProfile.createdAt) private var profiles: [GuestProfile]
@@ -44,74 +43,87 @@ struct ProfilesAccessView: View {
         return merged
     }
 
+    private static let rowInsets = EdgeInsets(top: 5, leading: HueSpacing.screenH, bottom: 5, trailing: HueSpacing.screenH)
+
     var body: some View {
-        ZStack {
-            background.ignoresSafeArea()
+        List {
+            LuminousScreenTitle(title: "Profiles & Access",
+                                eyebrow: "People",
+                                eyebrowSymbol: "person.2.fill",
+                                eyebrowTint: LuminousPalette.amber,
+                                subtitle: "A profile for each person: their rooms, what they may change, and a one-scan invite.")
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+                .listRowInsets(EdgeInsets(top: 8, leading: HueSpacing.screenH, bottom: 12, trailing: HueSpacing.screenH))
 
             if profiles.isEmpty {
                 emptyState
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                    .listRowInsets(Self.rowInsets)
             } else {
-                List {
-                    ForEach(profiles) { profile in
-                        profileRow(profile)
-                            .listRowBackground(Color.clear)
-                            .listRowSeparator(.hidden)
-                            .contentShape(Rectangle())
-                            .onTapGesture { editingProfile = profile }
-                            .contextMenu {
-                                Button {
-                                    invitingProfile = profile
-                                } label: {
-                                    Label("Generate Invite", systemImage: "qrcode")
-                                }
-                                .disabled(profile.allowedGroupIDs.isEmpty || profile.revokedAt != nil)
-                                Button {
-                                    editingProfile = profile
-                                } label: {
-                                    Label("Edit", systemImage: "pencil")
-                                }
-                                if !profile.mintedKeyRefs.isEmpty && profile.revokedAt == nil {
-                                    Button(role: .destructive) {
-                                        profileToRevoke = profile
-                                        showRevokeAlert = true
-                                    } label: {
-                                        Label("Revoke Access", systemImage: "nosign")
-                                    }
-                                }
+                ForEach(profiles) { profile in
+                    profileRow(profile)
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                        .listRowInsets(Self.rowInsets)
+                        .contentShape(Rectangle())
+                        .onTapGesture { editingProfile = profile }
+                        .contextMenu {
+                            Button {
+                                invitingProfile = profile
+                            } label: {
+                                Label("Generate Invite", systemImage: "qrcode")
+                            }
+                            .disabled(profile.allowedGroupIDs.isEmpty || profile.revokedAt != nil)
+                            Button {
+                                editingProfile = profile
+                            } label: {
+                                Label("Edit", systemImage: "pencil")
+                            }
+                            if !profile.mintedKeyRefs.isEmpty && profile.revokedAt == nil {
                                 Button(role: .destructive) {
-                                    profileToDelete = profile
-                                    showDeleteAlert = true
+                                    profileToRevoke = profile
+                                    showRevokeAlert = true
                                 } label: {
-                                    Label("Delete", systemImage: "trash")
+                                    Label("Revoke Access", systemImage: "nosign")
                                 }
                             }
-                    }
-                    .onDelete { indexSet in
-                        if let idx = indexSet.first {
-                            profileToDelete = profiles[idx]
-                            showDeleteAlert = true
+                            Button(role: .destructive) {
+                                profileToDelete = profile
+                                showDeleteAlert = true
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
                         }
-                    }
-
-                    newProfileButton
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
-
-                    keysOnBridgeSection
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
-
-                    honestyFootnote
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
                 }
-                .listStyle(.plain)
-                .scrollContentBackground(.hidden)
+                .onDelete { indexSet in
+                    if let idx = indexSet.first {
+                        profileToDelete = profiles[idx]
+                        showDeleteAlert = true
+                    }
+                }
+
+                newProfileButton
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                    .listRowInsets(Self.rowInsets)
+
+                keysOnBridgeSection
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                    .listRowInsets(Self.rowInsets)
+
+                honestyFootnote
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                    .listRowInsets(EdgeInsets(top: 8, leading: HueSpacing.screenH + 6, bottom: 24, trailing: HueSpacing.screenH + 6))
             }
         }
-        .navigationTitle("Profiles & Access")
-        .navigationBarTitleDisplayMode(.large)
-        .preferredColorScheme(.dark)
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .background { LuminousAmbience(colors: [LuminousPalette.amber, LuminousPalette.magenta], intensity: 0.6) }
+        .luminousPageChrome(title: "Profiles & Access")
         .sheet(isPresented: $showCreateSheet) {
             GuestProfileEditorView(profile: nil)
         }
@@ -170,57 +182,45 @@ struct ProfilesAccessView: View {
     // ──────────────────────────────────────────────
 
     private func profileRow(_ profile: GuestProfile) -> some View {
-        GlassmorphicCard(isActive: false, glowColor: HuePalette.amber) {
-            HStack(spacing: 12) {
-                ZStack {
-                    Circle()
-                        .fill(Color(hex: profile.colorHex).opacity(0.20))
-                        .frame(width: 40, height: 40)
-                    Image(systemName: profile.icon)
-                        .font(.system(size: 17, weight: .medium))
-                        .foregroundStyle(Color(hex: profile.colorHex))
-                }
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
-                        Text(profile.name)
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(.white)
-                        if profile.revokedAt != nil {
-                            Text("REVOKED")
-                                .font(.system(size: 9, weight: .bold))
-                                .foregroundStyle(.red)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 3)
-                                .background(Capsule().fill(Color.red.opacity(0.15)))
-                        }
-                    }
-                    Text(summary(for: profile))
-                        .font(.system(size: 12))
-                        .foregroundStyle(.white.opacity(0.45))
-                    if let lastInviteAt = profile.lastInviteAt {
-                        Text("Invited \(lastInviteAt.formatted(.relative(presentation: .named)))")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.white.opacity(0.30))
+        let tint = Color(hex: profile.colorHex)
+        let revoked = profile.revokedAt != nil
+        let canInvite = !profile.allowedGroupIDs.isEmpty && !revoked
+        return HStack(spacing: 14) {
+            LuminousIconBadge(symbol: profile.icon, tint: tint, size: 46, lit: !revoked)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 8) {
+                    Text(profile.name)
+                        .font(LuminousType.cardTitle)
+                        .foregroundStyle(LuminousPalette.ink)
+                        .lineLimit(1)
+                    if revoked {
+                        LuminousTextBadge(text: "Revoked", tint: LuminousPalette.danger)
                     }
                 }
-                Spacer()
-                Button {
-                    invitingProfile = profile
-                } label: {
-                    Image(systemName: "qrcode")
-                        .font(.system(size: 17, weight: .medium))
-                        .foregroundStyle(
-                            profile.allowedGroupIDs.isEmpty || profile.revokedAt != nil
-                                ? .white.opacity(0.2) : HuePalette.amber
-                        )
-                        .frame(width: 36, height: 36)
-                        .background(Circle().fill(Color.white.opacity(0.06)))
+                Text(summary(for: profile))
+                    .font(.footnote)
+                    .foregroundStyle(LuminousPalette.inkSecondary)
+                if let lastInviteAt = profile.lastInviteAt {
+                    Text("Invited \(lastInviteAt.formatted(.relative(presentation: .named)))")
+                        .font(.caption)
+                        .foregroundStyle(LuminousPalette.inkTertiary)
                 }
-                .buttonStyle(.plain)
-                .disabled(profile.allowedGroupIDs.isEmpty || profile.revokedAt != nil)
-                .accessibilityLabel("Generate invite for \(profile.name)")
             }
+            Spacer(minLength: 0)
+            Button {
+                invitingProfile = profile
+            } label: {
+                LuminousRoundGlyph(symbol: "qrcode", size: 42,
+                                   tint: canInvite ? LuminousPalette.cyan : LuminousPalette.inkTertiary)
+            }
+            .buttonStyle(LuminousPressStyle(scale: 0.9))
+            .disabled(!canInvite)
+            .accessibilityLabel("Generate invite for \(profile.name)")
         }
+        .padding(.leading, 14)
+        .padding(.trailing, 10)
+        .padding(.vertical, 12)
+        .luminousPanel(radius: LuminousPalette.cardRadius, glow: revoked ? nil : tint, glowStrength: 0.45)
     }
 
     private func summary(for profile: GuestProfile) -> String {
@@ -241,17 +241,25 @@ struct ProfilesAccessView: View {
         Button {
             showCreateSheet = true
         } label: {
-            Label("New Profile", systemImage: "plus.circle.fill")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(HuePalette.amber)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 14)
-                .background(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(HuePalette.amber.opacity(0.12))
-                )
+            HStack(spacing: 14) {
+                Image(systemName: "plus")
+                    .font(.system(size: 16, weight: .heavy))
+                    .foregroundStyle(LuminousPalette.void)
+                    .frame(width: 36, height: 36)
+                    .background(Circle().fill(LuminousPalette.signalGradient))
+                    .shadow(color: LuminousPalette.cyan.opacity(0.5), radius: 8)
+                Text("New Profile")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(LuminousPalette.ink)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .frame(minHeight: 60)
+            .luminousGlass(radius: LuminousPalette.cardRadius, accent: LuminousPalette.cyan, selected: true)
+            .contentShape(RoundedRectangle(cornerRadius: LuminousPalette.cardRadius, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(LuminousPressStyle())
     }
 
     /// Phase 4 diagnostic: the whitelist runtime probe, one row per active
@@ -263,37 +271,14 @@ struct ProfilesAccessView: View {
         // owner (BridgeKeysView also refuses removal there).
         let activeBridges = bridges.filter { $0.isActive && !orchestrator.isGuestGrantedBridge($0.id) }
         if !activeBridges.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("KEYS ON YOUR BRIDGES")
-                    .font(.system(size: 11, weight: .semibold))
-                    .tracking(0.8)
-                    .foregroundStyle(.white.opacity(0.45))
-                    .padding(.leading, 4)
-                ForEach(activeBridges) { bridge in
+            LuminousGroup(title: "Keys on your bridges") {
+                ForEach(Array(activeBridges.enumerated()), id: \.element.id) { idx, bridge in
                     NavigationLink(destination: BridgeKeysView(bridge: bridge)) {
-                        GlassmorphicCard(isActive: false, glowColor: HuePalette.amber) {
-                            HStack(spacing: 12) {
-                                Image(systemName: "key.horizontal.fill")
-                                    .font(.system(size: 15, weight: .medium))
-                                    .foregroundStyle(HuePalette.amber)
-                                    .frame(width: 36, height: 36)
-                                    .background(Circle().fill(HuePalette.amber.opacity(0.15)))
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(bridge.name)
-                                        .font(.system(size: 15, weight: .regular))
-                                        .foregroundStyle(.white)
-                                    Text("See every app key this bridge holds")
-                                        .font(.system(size: 12))
-                                        .foregroundStyle(.white.opacity(0.45))
-                                }
-                                Spacer()
-                                Image(systemName: "chevron.right")
-                                    .font(.system(size: 12, weight: .semibold))
-                                    .foregroundStyle(.white.opacity(0.28))
-                            }
-                        }
+                        LuminousRow(symbol: "key.horizontal.fill", tint: LuminousPalette.amber, title: bridge.name,
+                                    subtitle: "See every app key this bridge holds")
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(LuminousRowButtonStyle())
+                    if idx < activeBridges.count - 1 { LuminousRowDivider() }
                 }
             }
             .padding(.top, 8)
@@ -302,58 +287,21 @@ struct ProfilesAccessView: View {
 
     private var honestyFootnote: some View {
         Text("Room limits apply inside ChromaGlow on the guest's phone. The key itself can control the whole bridge from any Hue app — a Philips Hue limitation.")
-            .font(.system(size: 11))
-            .foregroundStyle(.white.opacity(0.35))
+            .font(.caption)
+            .foregroundStyle(LuminousPalette.inkSecondary)
             .fixedSize(horizontal: false, vertical: true)
-            .padding(.horizontal, 4)
     }
 
     // ──────────────────────────────────────────────
-    // MARK: - Empty state / background
+    // MARK: - Empty state
     // ──────────────────────────────────────────────
 
     private var emptyState: some View {
-        VStack(spacing: HueSpacing.xl) {
-            AmberRadialGlow(radius: 50)
-                .overlay {
-                    Image(systemName: "person.2")
-                        .font(.system(size: 36, weight: .light))
-                        .foregroundStyle(HuePalette.amber)
-                }
-                .frame(width: 80, height: 80)
-
-            VStack(spacing: HueSpacing.sm) {
-                Text("No Profiles")
-                    .font(HueFont.displaySmall)
-                    .foregroundStyle(HuePalette.Noir.textPrimary)
-                Text("Create a profile for each family member or guest, pick their rooms, then hand them a one-scan invite.")
-                    .font(HueFont.body)
-                    .foregroundStyle(HuePalette.Noir.textSecondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, HueSpacing.xl)
-            }
-
-            Button {
-                showCreateSheet = true
-            } label: {
-                Label("New Profile", systemImage: "plus.circle.fill")
-                    .font(HueFont.callout.weight(.semibold))
-                    .foregroundStyle(.black)
-                    .padding(.horizontal, HueSpacing.xxl)
-                    .padding(.vertical, HueSpacing.md)
-                    .background(HuePalette.amber)
-                    .clipShape(Capsule())
-            }
-            .buttonStyle(.plain)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private var background: some View {
-        LinearGradient(
-            colors: [Color(hex: "#141224"), Color(hex: "#0B0A14")],
-            startPoint: .top, endPoint: .bottom
-        )
+        LuminousEmptyState(symbol: "person.2",
+                           title: "No Profiles",
+                           message: "Create a profile for each family member or guest, pick their rooms, then hand them a one-scan invite.",
+                           actionTitle: "New Profile",
+                           action: { showCreateSheet = true })
     }
 
     // ──────────────────────────────────────────────

@@ -4,6 +4,8 @@
 //
 // Candidates for LuminousKit; kept here so the kit itself has one owner.
 //   • LuminousPage            — a pushed screen: ambience, title block, scroll.
+//   • LuminousSheetScaffold   — a sheet: the same, with Done and detents.
+//   • LuminousTitledCard      — a glass card with an icon + title line.
 //   • LuminousRowButtonStyle  — a row inside a glass group answers the finger.
 //   • LuminousToggleRow       — glowing icon, words, a signal-tinted switch.
 //   • LuminousTextBadge       — a tiny capsule word ("LIVE", "FIRMWARE").
@@ -63,6 +65,96 @@ extension View {
                 }
             }
             .preferredColorScheme(.dark)
+    }
+}
+
+// MARK: - Sheet
+
+/// A sheet in the Luminous language: its own navigation stack, the title
+/// block, the ambience, a Done in the signal colour, medium/large detents.
+struct LuminousSheetScaffold<Content: View>: View {
+    let title: String
+    var eyebrow: String? = nil
+    var eyebrowSymbol: String? = nil
+    var tint: Color = LuminousPalette.cyan
+    var subtitle: String? = nil
+    var ambience: [Color] = []
+    var detents: Set<PresentationDetent> = [.medium, .large]
+    @ViewBuilder let content: () -> Content
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 18) {
+                    LuminousScreenTitle(title: title, eyebrow: eyebrow, eyebrowSymbol: eyebrowSymbol,
+                                        eyebrowTint: tint, subtitle: subtitle)
+                    content()
+                }
+                .padding(.horizontal, HueSpacing.screenH)
+                .padding(.top, 4)
+                .padding(.bottom, 32)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .background { LuminousAmbience(colors: ambience.isEmpty ? [tint] : ambience, intensity: 0.65) }
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(.hidden, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Color.clear.frame(width: 1, height: 1).accessibilityHidden(true)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                        .fontWeight(.semibold)
+                        .foregroundStyle(LuminousPalette.cyan)
+                }
+            }
+        }
+        .presentationDetents(detents)
+        .presentationDragIndicator(.visible)
+        .presentationBackgroundInteraction(.enabled(upThrough: .medium))
+        .presentationBackground(LuminousPalette.void)
+        .preferredColorScheme(.dark)
+    }
+}
+
+/// A glass card headed by a glowing icon and a title — the Luminous
+/// successor of the old stage card, for sheets with a few distinct parts.
+struct LuminousTitledCard<Content: View>: View {
+    let symbol: String
+    let title: String
+    var subtitle: String? = nil
+    var tint: Color = LuminousPalette.cyan
+    var glow: Color? = nil
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                LuminousIconBadge(symbol: symbol, tint: tint, size: 30)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                        .font(LuminousType.cardTitle)
+                        .foregroundStyle(LuminousPalette.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let subtitle {
+                        Text(subtitle)
+                            .font(.caption)
+                            .foregroundStyle(LuminousPalette.inkSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isHeader)
+            content()
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .luminousPanel(radius: LuminousPalette.panelRadius, glow: glow, glowStrength: 0.4)
     }
 }
 

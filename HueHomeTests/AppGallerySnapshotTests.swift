@@ -224,6 +224,46 @@ final class AppGallerySnapshotTests: XCTestCase {
         try await renderTall(ShareInviteSheet(), named: "lane-more-share-invite", height: 1100)
     }
 
+    /// Profiles & Access with two people on it (inserted for the render
+    /// only, then removed — the container is shared by the whole class).
+    func testLaneMoreProfilesWithPeople() async throws {
+        let context = try container().mainContext
+        let mia = GuestProfile(name: "Mia", icon: "figure.child", colorHex: "#FF9ECF",
+                               allowedGroupIDs: ["demo-room-living", "demo-room-kitchen"])
+        mia.lastInviteAt = Date().addingTimeInterval(-3 * 86_400)
+        let sam = GuestProfile(name: "Sam (guest)", icon: "person.fill", colorHex: "#40D9BF",
+                               allowedGroupIDs: [], features: [GuestFeature.onOff])
+        context.insert(mia)
+        context.insert(sam)
+        try context.save()
+        defer {
+            context.delete(mia)
+            context.delete(sam)
+            try? context.save()
+        }
+        try await renderTall(NavigationStack { ProfilesAccessView() }, named: "lane-more-profiles-people", height: 1300)
+    }
+
+    func testLaneMoreProfileEditor() async throws {
+        try await renderTall(GuestProfileEditorView(profile: nil), named: "lane-more-profile-editor", height: 1500)
+    }
+
+    func testLaneMoreJoinSharedHome() async throws {
+        let payload = HomeJoinPayload(
+            bridges: [SharedBridgeJoin(bid: "001788FFFE000001", host: "192.168.1.20", port: 443,
+                                       name: "Main Bridge", pinPK: "demo")],
+            homeName: "My Home", issuedAt: Date())
+        try await renderTall(JoinSharedHomeView(payload: payload, isAddingAdditional: true),
+                             named: "lane-more-join-home", height: 1000)
+    }
+
+    func testLaneMoreGuestInviteMint() async throws {
+        let spec = GuestInviteSpec(profileID: "demo-profile", profileName: "Mia",
+                                   allowedGroupIDs: ["demo-room-living"], features: GuestFeature.all,
+                                   isRevoked: false)
+        try await renderTall(GuestInviteMintSheet(spec: spec), named: "lane-more-guest-mint", height: 1000)
+    }
+
     func testLaneMoreMusicPicker() async throws {
         try await renderTall(MusicSourcePicker(), named: "lane-more-music-picker", height: 1000)
     }

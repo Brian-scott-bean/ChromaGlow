@@ -58,7 +58,13 @@ struct GuestInviteMintSheet: View {
     }
 
     var body: some View {
-        StageSheetScaffold(title: "Invite \(spec.profileName)") {
+        LuminousSheetScaffold(title: "Invite \(spec.profileName)",
+                              eyebrow: "Profiles & Access",
+                              eyebrowSymbol: "person.badge.key.fill",
+                              tint: LuminousPalette.amber,
+                              subtitle: "Their own key on each bridge, handed over as a one-scan code.",
+                              ambience: [LuminousPalette.amber, LuminousPalette.magenta],
+                              detents: [.large]) {
             if spec.isRevoked {
                 revokedCard
             } else if spec.allowedGroupIDs.isEmpty {
@@ -68,6 +74,12 @@ struct GuestInviteMintSheet: View {
 
                 ForEach(targets) { target in
                     bridgeCard(target)
+                }
+
+                if targets.isEmpty && excluded.isEmpty {
+                    LuminousEmptyState(symbol: "wifi.router",
+                                       title: "No bridge to invite to",
+                                       message: "None of your paired bridges carries a room in \(spec.profileName)'s profile yet.")
                 }
 
                 if let render {
@@ -131,111 +143,91 @@ struct GuestInviteMintSheet: View {
     // ──────────────────────────────────────────────
 
     private var explainerCard: some View {
-        StageCard(icon: "person.badge.key.fill", title: "How this works") {
-            Text("Each bridge below issues \(spec.profileName) their own key — press the round button on the bridge, then Mint. The code that appears carries that key: \(spec.profileName) scans it once and is in, no button press needed on their side.")
-                .font(HueFont.stageStatus)
-                .foregroundStyle(StagePalette.muted)
-                .fixedSize(horizontal: false, vertical: true)
-        }
+        LuminousNotice(text: "Each bridge below issues \(spec.profileName) their own key — press the round button on the bridge, then Mint. The code that appears carries that key: \(spec.profileName) scans it once and is in, no button press needed on their side.",
+                       symbol: "person.badge.key.fill", tint: LuminousPalette.cyan)
     }
 
     private var revokedCard: some View {
-        StageCard(icon: "nosign", title: "Access revoked") {
-            Text("\(spec.profileName)'s access was revoked, so their invite can't be shown or re-issued. Create a new profile to invite them again.")
-                .font(HueFont.stageStatus)
-                .foregroundStyle(StagePalette.muted)
-                .fixedSize(horizontal: false, vertical: true)
-        }
+        LuminousEmptyState(symbol: "nosign", title: "Access revoked",
+                           message: "\(spec.profileName)'s access was revoked, so their invite can't be shown or re-issued. Create a new profile to invite them again.")
     }
 
     private var noRoomsCard: some View {
-        StageCard(icon: "square.dashed", title: "No rooms selected") {
-            Text("Pick at least one room for \(spec.profileName) before generating their invite — an invite to nothing helps nobody.")
-                .font(HueFont.stageStatus)
-                .foregroundStyle(StagePalette.muted)
-                .fixedSize(horizontal: false, vertical: true)
-        }
+        LuminousEmptyState(symbol: "square.dashed", title: "No rooms selected",
+                           message: "Pick at least one room for \(spec.profileName) before generating their invite — an invite to nothing helps nobody.")
     }
 
     private func bridgeCard(_ target: MintTarget) -> some View {
         let state = mintStates[target.record.id] ?? .idle
-        return StageCard(
-            icon: state == .minted ? "checkmark.seal.fill" : "wifi.router",
+        let minted = state == .minted
+        return LuminousTitledCard(
+            symbol: minted ? "checkmark.seal.fill" : "wifi.router",
             title: target.record.name,
-            subtitle: "\(target.allowedGroups.count) room\(target.allowedGroups.count == 1 ? "" : "s") shared"
+            subtitle: "\(target.allowedGroups.count) room\(target.allowedGroups.count == 1 ? "" : "s") shared",
+            tint: minted ? LuminousPalette.live : LuminousPalette.amber,
+            glow: minted ? LuminousPalette.live : nil
         ) {
-            VStack(alignment: .leading, spacing: HueSpacing.sm) {
+            VStack(alignment: .leading, spacing: 10) {
                 switch state {
                 case .minted:
                     Label("Key issued for \(spec.profileName)", systemImage: "checkmark.circle.fill")
-                        .font(HueFont.stageChip)
-                        .foregroundStyle(.green)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(LuminousPalette.live)
                 case .minting:
-                    HStack(spacing: HueSpacing.sm) {
-                        ProgressView()
+                    HStack(spacing: 10) {
+                        ProgressView().tint(LuminousPalette.amber)
                         Text("Asking the bridge for a key…")
-                            .font(HueFont.stageStatus)
-                            .foregroundStyle(StagePalette.muted)
+                            .font(.footnote)
+                            .foregroundStyle(LuminousPalette.inkSecondary)
                     }
                 case .idle, .failed:
                     if case .failed(let message) = state {
                         Text(message)
-                            .font(HueFont.stageStatus)
-                            .foregroundStyle(.orange)
+                            .font(.footnote.weight(.medium))
+                            .foregroundStyle(LuminousPalette.amber)
                             .fixedSize(horizontal: false, vertical: true)
                     } else {
                         Text("Press the round button on \(target.record.name), then tap Mint.")
-                            .font(HueFont.stageStatus)
-                            .foregroundStyle(StagePalette.muted)
+                            .font(.footnote)
+                            .foregroundStyle(LuminousPalette.inkSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    Button {
+                    LuminousPrimaryButton(title: "Mint Key", symbol: "key.fill", compact: false) {
                         mint(target)
-                    } label: {
-                        Label("Mint Key", systemImage: "key.fill")
-                            .font(HueFont.stageChip)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 12)
-                            .background(
-                                RoundedRectangle(cornerRadius: HueRadius.lg)
-                                    .fill(HuePalette.amber.opacity(0.15))
-                            )
                     }
-                    .buttonStyle(.plain)
-                    .tint(HuePalette.amber)
                 }
             }
         }
     }
 
     private func qrCard(_ render: Render) -> some View {
-        StageCard(icon: "qrcode", title: "Show this to \(spec.profileName)") {
-            VStack(spacing: HueSpacing.sm) {
+        LuminousTitledCard(symbol: "qrcode", title: "Show this to \(spec.profileName)", tint: LuminousPalette.amber,
+                           glow: LuminousPalette.amber) {
+            VStack(spacing: 12) {
                 TimelineView(.periodic(from: .now, by: 1)) { context in
                     let remaining = render.expiresAt.timeIntervalSince(context.date)
-                    VStack(spacing: HueSpacing.sm) {
+                    VStack(spacing: 12) {
                         Image(uiImage: render.image)
                             .resizable()
                             .interpolation(.none)
                             .scaledToFit()
-                            .frame(maxWidth: 260)
-                            .padding(HueSpacing.md)
-                            .background(
-                                RoundedRectangle(cornerRadius: HueRadius.lg, style: .continuous)
-                                    .fill(.white)
-                            )
+                            .frame(maxWidth: 240)
+                            .padding(14)
+                            .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(.white))
+                            .shadow(color: LuminousPalette.amber.opacity(remaining > 0 ? 0.45 : 0), radius: 22)
                             .opacity(remaining > 0 ? 1 : 0.25)
+                            .frame(maxWidth: .infinity)
                             .accessibilityLabel("Guest invite QR code for \(spec.profileName)")
 
                         if remaining > 0 {
                             Text("Code expires in \(Self.countdown(remaining))")
-                                .font(HueFont.stageChip)
-                                .foregroundStyle(HuePalette.amber)
+                                .font(LuminousType.value)
+                                .foregroundStyle(LuminousPalette.amber)
                                 .monospacedDigit()
                         } else {
                             Text("Code expired — generate a new one.")
-                                .font(HueFont.stageChip)
-                                .foregroundStyle(.orange)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(LuminousPalette.danger)
                         }
                     }
                 }
@@ -243,49 +235,40 @@ struct GuestInviteMintSheet: View {
                 Text(render.bridgeNames.count == 1
                      ? "Grants access on \(render.bridgeNames[0])."
                      : "Grants access on \(render.bridgeNames.joined(separator: ", ")).")
-                    .font(HueFont.stageStatus)
-                    .foregroundStyle(StagePalette.muted)
+                    .font(.footnote)
+                    .foregroundStyle(LuminousPalette.inkSecondary)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity)
 
-                Button {
+                LuminousSecondaryButton(title: "New Code", symbol: "arrow.clockwise") {
                     regenerate()
-                } label: {
-                    Label("New Code", systemImage: "arrow.clockwise")
-                        .font(HueFont.stageChip)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .background(
-                            RoundedRectangle(cornerRadius: HueRadius.lg)
-                                .fill(Color.white.opacity(0.07))
-                        )
                 }
-                .buttonStyle(.plain)
-                .tint(.white)
             }
         }
     }
 
     private var warningCard: some View {
-        StageCard(icon: "exclamationmark.triangle.fill", title: "This code IS the key") {
+        LuminousTitledCard(symbol: "exclamationmark.triangle.fill", title: "This code IS the key",
+                           tint: LuminousPalette.danger, glow: LuminousPalette.danger) {
             Text("Show it directly to \(spec.profileName) — anyone who photographs it can control the shared rooms' bridges until you revoke access. The countdown limits how long the code can be redeemed; the key itself keeps working after it.")
-                .font(HueFont.stageStatus)
-                .foregroundStyle(StagePalette.muted)
+                .font(.footnote)
+                .foregroundStyle(LuminousPalette.ink.opacity(0.8))
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
 
     private var excludedCard: some View {
-        StageCard(icon: "exclamationmark.triangle", title: "Not in this invite") {
-            VStack(alignment: .leading, spacing: HueSpacing.xs) {
+        LuminousTitledCard(symbol: "exclamationmark.triangle.fill", title: "Not in this invite", tint: LuminousPalette.amber) {
+            VStack(alignment: .leading, spacing: 6) {
                 ForEach(excluded, id: \.id) { record in
                     Text(record.name)
-                        .font(HueFont.stageControl)
-                        .foregroundStyle(StagePalette.ink)
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(LuminousPalette.ink)
                 }
                 Text("These bridges were paired before secure-identity capture existed. Re-pair one in Bridge Manager to make it shareable.")
-                    .font(HueFont.stageStatus)
-                    .foregroundStyle(StagePalette.muted)
+                    .font(.footnote)
+                    .foregroundStyle(LuminousPalette.inkSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
