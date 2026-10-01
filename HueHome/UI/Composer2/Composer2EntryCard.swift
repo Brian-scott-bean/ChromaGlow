@@ -238,7 +238,7 @@ struct Composer2EntryCard: View {
             } label: { Label("Delete", systemImage: "trash") }
         }
         .accessibilityLabel("\(composition.name)\(playingThis ? ", playing" : "")")
-        .accessibilityHint(selectedRoom.map { Composer2Copy.playIn(room: $0.name) } ?? "Choose a room in Studio first")
+        .accessibilityHint(selectedRoom.map { Composer2Copy.playIn(room: $0.name) } ?? "Choose a room in Studio Classic first")
     }
 
     /// One tap: play a saved look in the selected room, applied (it keeps

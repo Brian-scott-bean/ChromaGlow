@@ -111,7 +111,7 @@ struct Composer2View: View {
             Button("Save") { saveAsNew() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Saved compositions appear in Quick mode and on the Studio card, separate from your Composer looks.")
+            Text("Your saved looks live under Yours in the Composer, and can be played from any room.")
         }
         .confirmationDialog("Discard your changes?", isPresented: $showDiscardOnClose, titleVisibility: .visible) {
             Button("Discard changes", role: .destructive) { dismiss() }

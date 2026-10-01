@@ -19,12 +19,15 @@ import SwiftUI
 /// (`HuePalette.amber`) and live green (`HuePalette.Noir.success`) stay the
 /// accent sources of truth; these fill the neutral surface roles.
 enum StagePalette {
-    /// #0B0B0F — the stage itself (screen background).
-    static let stage = Color(hex: "#0B0B0F")
-    /// #16161D — card / tray surface.
-    static let surface = Color(hex: "#16161D")
-    /// #1E1E27 — raised elements (tracks, wells) on a surface.
-    static let raised = Color(hex: "#1E1E27")
+    // Luminous: the stage sits in the same night-blue room as the rest of
+    // the app (was neutral #0B0B0F / #16161D / #1E1E27); ink and muted
+    // were already the Luminous values.
+    /// #06070F — the stage itself (screen background).
+    static let stage = Color(hex: "#06070F")
+    /// #121420 — card / tray surface.
+    static let surface = Color(hex: "#121420")
+    /// #1B1E2D — raised elements (tracks, wells) on a surface.
+    static let raised = Color(hex: "#1B1E2D")
     /// #F2F0EA — primary ink.
     static let ink = Color(hex: "#F2F0EA")
     /// #8F8C99 — secondary/muted text.
