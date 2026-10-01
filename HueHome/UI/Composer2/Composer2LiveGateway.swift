@@ -73,6 +73,13 @@ protocol Composer2LiveGateway: AnyObject {
     func retireNowPlaying(roomID: String, bridgeID: String?)
     /// Installs (or clears) the stop route Dashboard taps reach before Studio's.
     func installStopHandler(_ handler: (@MainActor (_ bridgeID: String?, _ roomID: String) async -> Bool)?)
+    /// Names of the room's lights the bridge said it could not reach on
+    /// their last command (off at the wall, out of range).
+    func unresponsiveLightNames(roomID: String, bridgeID: String?) -> [String]
+}
+
+extension Composer2LiveGateway {
+    func unresponsiveLightNames(roomID: String, bridgeID: String?) -> [String] { [] }
 }
 
 // MARK: - Production adapter
@@ -122,6 +129,14 @@ final class Composer2OrchestratorGateway: Composer2LiveGateway {
     func lightItems(room: RoomDisplayItem) -> [LightDisplayItem] {
         if orchestrator.isDemoMode { return DemoDataProvider.lights(for: room.id) }
         return orchestrator.cachedLightItems(for: room)
+    }
+
+    func unresponsiveLightNames(roomID: String, bridgeID: String?) -> [String] {
+        let ids = orchestrator.unresponsiveLightIDs
+        guard !ids.isEmpty, !orchestrator.isDemoMode,
+              let room = rooms().first(where: { $0.id == roomID && $0.bridgeID == bridgeID })
+        else { return [] }
+        return lightItems(room: room).filter { ids.contains($0.id) }.map(\.name).sorted()
     }
 
     func rooms() -> [RoomDisplayItem] {

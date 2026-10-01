@@ -196,6 +196,12 @@ enum Composer2Copy {
     static let liveEndedElsewhere = "Stopped — another look took over this room."
     static let liveEndedLost = "Stopped — the lights stopped answering. Try Live again."
     static let liveSeveralAreas = "Several Entertainment Areas cover this room. Choose one in Studio to stream; playing in Room mode."
+    /// The bridge accepted the command but cannot reach these bulbs.
+    static func liveUnresponsive(_ names: [String]) -> String {
+        names.count == 1
+            ? "\(names[0]) isn't responding — check it's switched on."
+            : "\(names.count) lights aren't responding — check they're switched on."
+    }
     static let micDenied = "Microphone access is off, so audio reactions are paused."
     static let micCaptureFailed = "The microphone couldn't start, so audio reactions are paused. Try again in a moment."
     static let micListening = "Listening…"

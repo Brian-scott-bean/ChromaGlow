@@ -123,6 +123,7 @@ struct Composer2PerformanceBar: View {
             var text = center.statusText
             if ownSession?.isAudition == true { text += " · " + Composer2Copy.auditionHint }
             if center.severalAreas, ownSession?.playMode == .roomMode { text = Composer2Copy.liveSeveralAreas }
+            if !center.unresponsiveLights.isEmpty { text = Composer2Copy.liveUnresponsive(center.unresponsiveLights) }
             return text
         default:
             return center.statusText
