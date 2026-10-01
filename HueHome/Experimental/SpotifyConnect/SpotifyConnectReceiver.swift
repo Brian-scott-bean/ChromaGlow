@@ -190,6 +190,7 @@ final class SpotifyConnectReceiver {
             if generation == 0 {
                 self.update { $0.phase = .failed; $0.message = "The receiver refused to start." }
                 self.isEnabled = false
+                self.output.stop()
                 return
             }
             self.lastFrames = 0
