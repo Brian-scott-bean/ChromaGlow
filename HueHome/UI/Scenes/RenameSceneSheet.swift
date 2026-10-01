@@ -1,9 +1,8 @@
 // RenameSceneSheet.swift
-// ChromaGlow — Scenes Browser
+// ChromaGlow — Scenes (Luminous)
 //
-// Rename sheet for a scene (metadata.name PUT via the orchestrator).
-// Extracted verbatim from ScenesTabView.swift (Phase 0 of the Scenes
-// overhaul) — no behavior change.
+// Rename a scene (metadata.name PUT via the orchestrator). The bridge caps
+// scene names at 32 characters, like every other scene-name field.
 
 import SwiftUI
 
@@ -14,7 +13,6 @@ struct RenameSceneSheet: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var text: String
-    private let glowColor = HuePalette.amber
 
     init(scene: GlobalSceneItem, initialName: String, onRename: @escaping (String) -> Void) {
         self.scene       = scene
@@ -23,50 +21,45 @@ struct RenameSceneSheet: View {
         _text            = State(initialValue: initialName)
     }
 
+    private var trimmed: String { text.trimmingCharacters(in: .whitespaces) }
+
     var body: some View {
         NavigationStack {
-            ZStack {
-                StagePalette.stage.ignoresSafeArea()
-                VStack(spacing: 24) {
-                    TextField("Scene name", text: $text)
-                        .font(.system(size: 18, weight: .medium))
-                        .foregroundStyle(.white)
-                        .tint(glowColor)
-                        .onChange(of: text) { _, newValue in
-                            // Hue bridge limits scene names to 32 characters
-                            // (same cap as every other scene-name field).
-                            if newValue.count > 32 { text = String(newValue.prefix(32)) }
-                        }
-                        .padding(16)
-                        .background(
-                            RoundedRectangle(cornerRadius: 14)
-                                .fill(.white.opacity(0.07))
-                                .overlay(RoundedRectangle(cornerRadius: 14)
-                                    .strokeBorder(.white.opacity(0.12), lineWidth: 1))
-                        )
-                        .padding(.horizontal, 24)
-                    Spacer()
-                }
-                .padding(.top, 32)
+            VStack(alignment: .leading, spacing: 18) {
+                LuminousScreenTitle(title: "Rename",
+                                    eyebrow: scene.name,
+                                    eyebrowSymbol: scene.icon,
+                                    eyebrowTint: LuminousScenePalette.accent(for: scene))
+                LuminousTextField(placeholder: "Scene name", text: $text, symbol: "pencil",
+                                  tint: LuminousScenePalette.accent(for: scene), limit: 32,
+                                  autofocus: true, onSubmit: save)
+                Spacer(minLength: 0)
             }
-            .navigationTitle("Rename Scene")
-            .navigationBarTitleDisplayMode(.inline)
+            .padding(.horizontal, HueSpacing.screenH)
+            .padding(.top, 8)
+            .background { LuminousAmbience(colors: LuminousScenePalette.colors(for: scene)) }
+            .luminousNavigationChrome()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }.foregroundStyle(.white.opacity(0.65))
+                    Button("Cancel") { dismiss() }
+                        .foregroundStyle(LuminousPalette.ink.opacity(0.75))
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        let trimmed = String(text.trimmingCharacters(in: .whitespaces).prefix(32))
-                        if !trimmed.isEmpty { onRename(trimmed) }
-                        dismiss()
-                    }
-                    .foregroundStyle(text.trimmingCharacters(in: .whitespaces).isEmpty
-                        ? glowColor.opacity(0.35) : glowColor)
-                    .disabled(text.trimmingCharacters(in: .whitespaces).isEmpty)
+                    Button("Save", action: save)
+                        .fontWeight(.bold)
+                        .foregroundStyle(trimmed.isEmpty ? LuminousPalette.inkTertiary : LuminousPalette.cyan)
+                        .disabled(trimmed.isEmpty)
                 }
             }
-            .preferredColorScheme(.dark)
         }
+        .presentationDetents([.medium])
+        .luminousSheet()
+    }
+
+    private func save() {
+        let name = String(trimmed.prefix(32))
+        guard !name.isEmpty else { return }
+        onRename(name)
+        dismiss()
     }
 }

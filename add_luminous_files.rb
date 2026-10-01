@@ -56,6 +56,7 @@ APP_FILES = {
   'HueHome/UI/RoomDetail/RoomLightTile.swift'            => ['HueHome', 'UI', 'RoomDetail'],
   'HueHome/UI/RoomDetail/RoomLooksSection.swift'         => ['HueHome', 'UI', 'RoomDetail'],
   'HueHome/UI/Scenes/LuminousSceneCard.swift'            => ['HueHome', 'UI', 'Scenes'],
+  'HueHome/UI/Components/LuminousScenesParts.swift'      => ['HueHome', 'UI', 'Components'],
 }
 
 TEST_FILES = {

@@ -240,6 +240,7 @@
 		A67C791A634B04D6E89E5472 /* Composer2EditorScaffold.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89C6318E487E520FF479954A /* Composer2EditorScaffold.swift */; };
 		A7BD1376D851530EABD6F2BB /* LookPreviewMathTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 153817FECE5A8809EC68A1E0 /* LookPreviewMathTests.swift */; };
 		A91D0D5834FFB0EC82B65CA2 /* ProfilesAccessView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A567F3B8EE7A0AF00E29DAF0 /* ProfilesAccessView.swift */; };
+		A9377D01432AD5685CB79EB1 /* LuminousScenesParts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A53150EEE3B39A3DA052977 /* LuminousScenesParts.swift */; };
 		A95DF050FC3DEB539D31A007 /* AutomationHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C70C1F68EEBD0C03E0A62BD /* AutomationHandler.swift */; };
 		A962B474DA2EF6034928154A /* StudioParamStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBD73B2ED375BB08875A8E1E /* StudioParamStoreTests.swift */; };
 		AA02264459933E2791FC556C /* SpotifySource.swift in Sources */ = {isa = PBXBuildFile; fileRef = 518DAB81C6B02AE1FF0936E8 /* SpotifySource.swift */; };
@@ -683,6 +684,7 @@
 		97A4BFC853D4B084C38A7B3D /* Composer2Document.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = Composer2Document.swift; path = ./HueHome/UI/Composer2/Composer2Document.swift; sourceTree = "<group>"; };
 		97C5411E94E20889EA76A1B9 /* Composer2MiniPreviews.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = Composer2MiniPreviews.swift; path = ./HueHome/UI/Composer2/Composer2MiniPreviews.swift; sourceTree = "<group>"; };
 		98DD9ECC2BC7B6BB5012428A /* LightControlView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = LightControlView.swift; path = HueHome/UI/LightControl/LightControlView.swift; sourceTree = "<group>"; };
+		9A53150EEE3B39A3DA052977 /* LuminousScenesParts.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = LuminousScenesParts.swift; path = HueHome/UI/Components/LuminousScenesParts.swift; sourceTree = "<group>"; };
 		9AA5BB797C7BF24CC5061F0A /* ApplicationKeyMinterTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ApplicationKeyMinterTests.swift; path = ./HueHomeTests/ApplicationKeyMinterTests.swift; sourceTree = "<group>"; };
 		9C70C1F68EEBD0C03E0A62BD /* AutomationHandler.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AutomationHandler.swift; path = HueHome/Core/Services/AutomationHandler.swift; sourceTree = "<group>"; };
 		9C79FF00C4642AFCDC55029F /* HueDataModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueDataModels.swift; path = ./HueHome/Core/Models/HueDataModels.swift; sourceTree = "<group>"; };
@@ -1355,6 +1357,7 @@
 				1DD9B031AA616F488B3EA1B8 /* LuminousKit.swift */,
 				540FB73F3C001E313FA4DE9B /* LuminousStage.swift */,
 				680CF7002E599272C00EDB17 /* PhotosensitivityNotice.swift */,
+				9A53150EEE3B39A3DA052977 /* LuminousScenesParts.swift */,
 			);
 			name = Components;
 			sourceTree = "<group>";
@@ -2391,6 +2394,7 @@
 				1081F71B110663BD40BC3B98 /* HomeRoomCard.swift in Sources */,
 				751DC69BE901691CD8786222 /* HomeNowPlaying.swift in Sources */,
 				C155B99EC5016AB6034374D8 /* LuminousSceneCard.swift in Sources */,
+				A9377D01432AD5685CB79EB1 /* LuminousScenesParts.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

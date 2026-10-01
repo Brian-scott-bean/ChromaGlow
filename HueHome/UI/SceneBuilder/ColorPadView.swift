@@ -40,11 +40,11 @@ struct ColorPadView: View {
                 Canvas { context, canvasSize in
                     drawGradient(context: context, size: canvasSize, hue: hue)
                 }
-                .clipShape(RoundedRectangle(cornerRadius: 14))
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
 
                 // ── Border ───────────────────────────────────
-                RoundedRectangle(cornerRadius: 14)
-                    .strokeBorder(.white.opacity(0.12), lineWidth: 1)
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(.white.opacity(0.16), lineWidth: 1)
 
                 // ── Puck ─────────────────────────────────────
                 let puckX = saturation * size.width

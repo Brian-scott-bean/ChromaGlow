@@ -237,4 +237,35 @@ final class AppGallerySnapshotTests: XCTestCase {
         .background { LuminousAmbience(colors: [LuminousPalette.violet]) }
         try await renderScenesPage(grid, named: "gallery-scene-cards", height: 1000)
     }
+
+    /// The speed sheet for a dynamic scene.
+    func testSceneSpeedSheet() async throws {
+        let party = GlobalSceneItem(id: "demo-bridge:ds-pt-2", bridgeSceneID: "ds-pt-2", name: "Party",
+                                    roomID: "demo-room-patio", bridgeID: "demo-bridge",
+                                    isActive: false, isDynamic: true, speed: 0.6)
+        try await renderScenesPage(SceneSpeedSheet(scene: party, onSpeedChange: { _ in }, onActivate: {}),
+                                   named: "gallery-scene-speed", height: 560)
+    }
+
+    /// The color builder on the demo living room's lights.
+    func testSceneColorBuilder() async throws {
+        let lights = DemoDataProvider.lights(for: "demo-room-living")
+        XCTAssertFalse(lights.isEmpty)
+        try await renderScenesPage(SceneColorBuilderView(roomID: "demo-room-living", roomRType: "room",
+                                                         bridgeID: "demo-bridge", existingSceneID: nil,
+                                                         existingSceneName: nil, initialLights: lights,
+                                                         onSave: {}),
+                                   named: "gallery-scene-builder", height: 1900, settle: 1.5)
+    }
+
+    /// Capture Room Look, Build Colors' room picker and Rename.
+    func testSceneCreationSheets() async throws {
+        try await renderScenesPage(CreateGlobalSceneView(), named: "gallery-scene-capture", height: 874)
+        try await renderScenesPage(SceneBuilderLauncherView(), named: "gallery-scene-build-launcher", height: 874)
+        let scene = GlobalSceneItem(id: "demo-bridge:ds-lv-3", bridgeSceneID: "ds-lv-3", name: "Movie Night",
+                                    roomID: "demo-room-living", bridgeID: "demo-bridge",
+                                    isActive: true, isDynamic: false, speed: 0.5)
+        try await renderScenesPage(RenameSceneSheet(scene: scene, initialName: scene.name) { _ in },
+                                   named: "gallery-scene-rename", height: 500)
+    }
 }

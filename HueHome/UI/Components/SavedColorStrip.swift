@@ -1,10 +1,12 @@
 // SavedColorStrip.swift
-// ChromaGlow — Scenes overhaul Phase 3
+// ChromaGlow — Luminous "My Colors" strip
 //
 // Horizontal "My Colors" swatch strip, shared by LightControlView,
-// SceneColorBuilderView, and RoomDetailView. The host decides what a tap
-// means (apply immediately, or arm-then-apply) and whether a save chip is
-// shown. Rename/Delete live on each swatch's context menu.
+// SceneColorBuilderView, and RoomDetailView. Each saved color is drawn as a
+// small glowing orb — the same light the rest of the app draws. The host
+// decides what a tap means (apply immediately, or arm-then-apply) and
+// whether a save chip is shown. Rename/Delete live on each swatch's context
+// menu.
 
 import SwiftUI
 
@@ -57,16 +59,19 @@ struct SavedColorStrip: View {
         } label: {
             ZStack {
                 Circle()
+                    .fill(Color.white.opacity(0.05))
+                    .frame(width: 32, height: 32)
+                Circle()
                     .strokeBorder(Color.white.opacity(0.35),
                                   style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
                     .frame(width: 32, height: 32)
                 Image(systemName: "plus")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.7))
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(LuminousPalette.ink.opacity(0.8))
             }
             .frame(width: 40, height: 40)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(LuminousPressStyle(scale: 0.88))
         .stageTapTarget(visual: 40)
         .accessibilityLabel("Save current color")
     }
@@ -77,22 +82,26 @@ struct SavedColorStrip: View {
             onTapSwatch(saved)
         } label: {
             ZStack {
+                // A small lamp: hot white core, the color at the rim, a glow.
                 Circle()
-                    .fill(saved.displayColor)
+                    .fill(RadialGradient(colors: [Color.white.opacity(0.8), saved.displayColor],
+                                         center: .init(x: 0.38, y: 0.32), startRadius: 0, endRadius: 20))
                     .frame(width: 32, height: 32)
-                    .shadow(color: saved.displayColor.opacity(isArmed ? 0.9 : 0.5),
-                            radius: isArmed ? 8 : 4)
+                    .overlay(Circle().strokeBorder(Color.white.opacity(0.25), lineWidth: 1))
+                    .shadow(color: saved.displayColor.opacity(isArmed ? 0.95 : 0.6),
+                            radius: isArmed ? 12 : 7)
                 if isArmed {
                     Circle()
-                        .stroke(.white, lineWidth: 2.5)
-                        .frame(width: 38, height: 38)
+                        .strokeBorder(LuminousPalette.signalGradient, lineWidth: 2.5)
+                        .frame(width: 40, height: 40)
+                        .shadow(color: LuminousPalette.cyan.opacity(0.6), radius: 6)
                 }
             }
             .frame(width: 40, height: 40)
             .scaleEffect(isArmed ? 1.1 : 1.0)
             .animation(.spring(response: 0.25, dampingFraction: 0.6), value: isArmed)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(LuminousPressStyle(scale: 0.9))
         .stageTapTarget(visual: 40)
         // Drag a swatch straight onto a light card (RoomDetail's cards are
         // dropDestinations). Tap-to-apply stays as the accessible path.
