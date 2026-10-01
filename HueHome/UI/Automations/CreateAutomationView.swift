@@ -166,6 +166,13 @@ struct CreateAutomationView: View {
                               title: { $0 == .preset ? "Mood" : "Effect" },
                               symbol: { $0 == .preset ? "sun.max.fill" : "sparkles" },
                               accessibilityLabel: "Action type")
+            // Say where it lands before Save — there is no room picker, and
+            // a schedule changes every room on every bridge (M-11).
+            Label("Runs in every room, on every bridge.", systemImage: "house.fill")
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(LuminousPalette.inkSecondary)
+                .padding(.horizontal, 6)
+                .accessibilityLabel("This schedule runs in every room, on every bridge")
             if actionType == .preset {
                 presetPicker
             } else {

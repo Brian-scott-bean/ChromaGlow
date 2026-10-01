@@ -156,6 +156,12 @@ struct AutomationsView: View {
                 Text("\(automation.timeLabel) · \(automation.daysLabel)")
                     .font(.footnote.monospacedDigit())
                     .foregroundStyle(LuminousPalette.inkSecondary)
+                // A schedule acts on every room — the row used to give no
+                // hint whether 8 AM "Energize" touched the whole house (M-11).
+                Label("\(automation.action.displayName) · every room", systemImage: "house.fill")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(LuminousPalette.inkTertiary)
+                    .lineLimit(1)
 
                 // Static signature strip for dynamic effects (Automations is
                 // a calm surface — no animation by design). Mood/gradual
