@@ -160,3 +160,44 @@ same groups and rows.
 | Lists | `LuminousGroup { LuminousRow … LuminousRowDivider() … }` |
 | States | `LuminousLiveBadge`, `LuminousFactBadge`, `LuminousNotice`, `LuminousEmptyState` |
 | Real light | `LuminousLight.color(of:)`, `.palette(of:)`, `.frames(for:)`; stages in `LuminousStage.swift` |
+
+## What was built (2026-10-01, build 60)
+
+One integration branch, `experiment/luminous-app-redesign`, assembled from the lead's foundation and three parallel
+lanes (`experiment/luminous-lane-room`, `-scenes`, `-more`, merged with `--no-ff` so each lane stays readable):
+
+| Surface | Files | Notes |
+|---|---|---|
+| Kit | `LuminousKit.swift`, `LuminousStage.swift`, `PhotosensitivityNotice.swift` | Lane-local parts live in `LuminousRoomParts.swift`, `LuminousScenesParts.swift`, `LuminousMoreParts.swift`; `LuminousTextField` was invented twice and is now one kit component |
+| Shell | `MainTabView.swift` | Home · Scenes · Composer · More; Studio Classic mounted off-bar with a way back |
+| Composer tab | `ComposerLibraryHome.swift` | today's showpiece, music strip, live library, build your own, More tools |
+| Home | `DashboardView.swift`, `HomeRoomCard.swift`, `HomeNowPlaying.swift` | rooms as stages, Now Playing, moods |
+| Room / Light | `RoomDetailView.swift`, `RoomLightTile.swift`, `ComposerRoomLooks.swift`, `LightControlView.swift`, sheets/docks | Lights · Scenes · Looks; Looks hidden on guest-only phones and granted bridges |
+| Scenes | `ScenesTabView.swift`, `LuminousSceneCard.swift`, every scene sheet, the color builder, share/scan/import | On now, Favorites, rooms, From Studio Classic |
+| More / setup | More, Settings, Bridges, Keys, Devices, Automations, Profiles, Invite, Entertainment Areas, Physical Controls, music picker, toasts, guest banner | all legal items L1–L11 kept |
+| Onboarding / tour | `SplashView.swift`, `BridgeSetupView.swift`, `WelcomeTourView.swift`, `TutorialIllustrationView.swift`, `TutorialCatalog.swift` | the stage that lights up as you pair; tour copy tells the new story |
+| Studio Classic | unchanged code | StagePalette surfaces moved to the night-blue room; the Composer's notices name it |
+
+### Deliberate behaviour changes (all small, all listed)
+- Room: Delete Room/Zone now asks for confirmation (it deleted on one tap); the Light Console is DEBUG-only; the
+  Light screen's power sits beside its brightness, matching the Room page.
+- Scenes: the full-width cards toggle moved into the sort menu (same storage key); Capture Room Look saves from a
+  primary button; the Studio scenes shelf is "From Studio Classic" at the bottom.
+- More/Settings: Demo Mode no longer shows the duplicate Exit row; the Devices subtitle says what it counts;
+  Automations keeps your schedules visible while the bridge loads and says so when the bridge read fails.
+- Copy: one spelling (color) app-wide; the Composer's notices name Studio Classic; the tour no longer claims a
+  card tap switches a room.
+- Fixes found on the way: `archetypeIcon` returned a non-existent symbol for studio rooms (`music.mike`); the
+  app-wide toast icon was a non-existent symbol (`exclamationmark.wifi`); the one-tap takeover question could be
+  raised from a hidden tab (now only the surface on screen asks).
+
+### Not verified on hardware
+Everything above is verified by build, the registered suite and rendered gallery images in Demo Mode. Nothing has
+run on Brian's phone or bridge yet. Watch in particular: the Home room-card slider inside a scrolling grid (scroll
+vs drag), the Room stage's tap-a-lamp targeting, Studio Classic's back button, the Composer tab's one-tap Play,
+and frame rate with the ambience on Home + Composer.
+
+### Follow-ups (the end state)
+Move bulb effects into each room's Looks, Perform and the AI composer into the Composer, import v1 looks once,
+give Siri a Composer entity, then delete Studio Classic. Fold the three lane parts files into the kit. Widgets and
+the watch app still wear the older amber styling.

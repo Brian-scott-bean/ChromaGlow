@@ -4,13 +4,21 @@
 
 ---
 
-## Current Status Snapshot (updated 2026-09-30)
+## Current Status Snapshot (updated 2026-10-01)
 
 ### Pointers
 - Canonical agent context: `AGENTS.md`. Claude Code entry point: `CLAUDE.md` points there.
 - Live shared handoff: append-only entries in this `DEVLOG.md`. Git is the shared memory between tools.
 
 ### iOS — where we are RIGHT NOW
+- **LUMINOUS APP REDESIGN — THE WHOLE APP IN THE COMPOSER'S LANGUAGE, BUILD 60, ISOLATED EXPERIMENT, NOT MERGED
+  (2026-10-01).** Branch `experiment/luminous-app-redesign` (worktree `~/Developer/huehome-luminous-app`, from the
+  build-59 redesign tip `dcb3df4`; rollback tag `checkpoint/pre-luminous-app-redesign`). Tabs become Home · Scenes ·
+  Composer · More; the Composer is a tab (its library is the front page); Studio stays mounted as **Studio Classic**
+  (reached from the Composer) because it still owns Siri/QR drains, bulb effects, Perform and its stop hooks. Every
+  screen — Home, Room, Light, Scenes, More, Settings, setup, onboarding, the tour — rebuilt on one kit
+  (`LuminousKit`/`LuminousStage`). Full suite **2451/2451**, guards green. **Hardware NOT verified.** Entry below;
+  design record `docs/ios/luminous-app-redesign/README.md`.
 - **DEVICE ROUND ON THE REAL BRIDGE → BUILD 58 (fixes) / 59 (this redesign branch), NOT MERGED (2026-09-30).**
   Claude drove build 57 on Brian's iPhone (iPhone Mirroring + live console + bridge replies) and fixed 7 bugs (paced
   Room-mode Composer, unreachable-bulb notice, 8-light stage, honest header, restore on Stop, brightness rounding,
@@ -694,6 +702,65 @@
 ```
 
 ---
+
+## 2026-10-01 - [Claude] Luminous app redesign — the whole app in the Composer's language (build 60)
+
+### Branch
+- `experiment/luminous-app-redesign` (from `experiment/composer-2-v2.2-ui-ux` @ `dcb3df4`, build 59), worktree
+  `~/Developer/huehome-luminous-app`. Rollback tag `checkpoint/pre-luminous-app-redesign`. Lanes
+  `experiment/luminous-lane-{room,scenes,more}` merged with `--no-ff`. **Experiment — no PR, no merge, not pushed,
+  `main` untouched.**
+
+### Did
+Brian asked how the app would look, flow and feel if everything followed Composer 2, and to build it. The answer
+and its reasons are in `docs/ios/luminous-app-redesign/README.md`; in short:
+- **Structure:** four tabs for the four jobs, in order of frequency — Home (control) · Scenes (a still mood) ·
+  Composer (light that moves) · More (setup). `HueTab.composer` is new; `.studio` stays mounted and prewarmed but
+  off the bar (Studio Classic, opened from the Composer library's More tools, with a "‹ Composer" way back; the bar
+  lights Composer while it shows). Siri/QR still land in it. Guest-only phones hide both.
+- **One kit:** `LuminousKit.swift` (ambience tinted by the light on screen, glass, the Composer's title block,
+  round-glass headers, chips, segmented selector, glow slider, signal/live buttons, groups/rows, notices, text field)
+  and `LuminousStage.swift` (the Composer's stage painter fed with REAL lamp state — rooms, lamps and looks are one
+  picture). Lane parts files: `Luminous{Room,Scenes,More}Parts.swift`.
+- **Screens:** Home (rooms as stages of their lamps, Now Playing with its own Stop, mood tiles), the Composer tab
+  (`ComposerLibraryHome`: today's showpiece, music strip, live library, build your own), Room (stage · Lights |
+  Scenes | Looks, tap a lamp on the stage), Light (one lamp as a big orb), Scenes (on now / favorites / rooms, orb-arc
+  cards, every sheet and the color builder, share/scan/import), More + Settings + Bridges/Keys + Devices + Automations
+  + Profiles + Invite + Entertainment Areas + Physical Controls + music picker + toasts/banners, onboarding (a stage
+  of lamps that lights up as you pair) and the Welcome Tour (copy rewritten for the new structure; Composer art).
+- **Smaller fixes on the way:** one spelling (color) app-wide; the Composer's notices name Studio Classic; the
+  one-tap takeover question is asked only by the surface on screen (it was bound on three always-mounted surfaces);
+  off lamps draw as neutral glass; `archetypeIcon` (`music.mike`) and the toast icon (`exclamationmark.wifi`) were
+  non-existent SF Symbols; Delete Room now confirms; StageKit surfaces moved to the night-blue room; dead
+  `HueComponents.swift`, `CreateSceneView`, `ShimmerComponents` removed.
+- Build bumped to **60** (all 12 entries).
+
+### Working
+- Every behaviour contract of the redesigned screens is kept (same VM/orchestrator calls, guest gates, the Room
+  `.task` seed/SSE contract, commit-once sliders, paced bulk writes, legal items L1–L11 from the inventory).
+
+### Left
+- **Hardware: none run, none claimed.** Check on the phone: Home room-card slider vs scrolling, tapping lamps on a
+  room's stage, Studio Classic's back button, the Composer tab's one-tap Play (and its takeover prompt), frame rate
+  with the ambience on Home/Composer, the splash (gallery capture can't show its fade-in).
+- End state (follow-ups): bulb effects → each room's Looks; Perform + AI composer → the Composer; one-time v1 look
+  import; a Siri Composer entity; then delete Studio Classic. Fold the lane parts files into the kit. Widgets/watch
+  still wear the older amber styling.
+
+### Validation
+- `./Scripts/hardening_guards.sh`: all guards passed.
+- Full registered suite (2 workers): **2451/2451**, 0 failed, 0 skipped (gallery renders included; build 59 was
+  2418). After the dead-code removal: build + StudioScrollStability/HueTokens/Composer2LabGuard/TutorialCatalog
+  53/53.
+
+### Gotchas
+- The Mac's disk filled mid-session (ENOSPC): `~/Library/Developer/XCTestDevices` held 67 stale parallel-testing
+  clones. Removed with `xcrun simctl --set testing delete <ids>` (shut-down clones only) plus this session's own
+  lane simulators and caches; ~9.5 GB free afterwards.
+- The gallery's `render()` pumps the run loop and starves a view's main-actor `.task` (the old Room render showed
+  "0 bulbs"); the lane helpers `await Task.sleep` instead.
+- Composer-tab code that builds `Composer2Document`/`Composer2LiveOutput` must live under `HueHome/UI/Composer2/`
+  (Composer2LabGuardTests allowlist) — that's why `ComposerLibraryHome`/`ComposerRoomLooks` live there.
 
 ## 2026-09-30 - [Claude] Device round on Brian's real bridge (build 57) → 7 bugs fixed (builds 58 / 59)
 
