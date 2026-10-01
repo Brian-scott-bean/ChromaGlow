@@ -2482,6 +2482,11 @@ final class StudioViewModel {
 
     /// Whether the current stop is an explicit user action (turn off) vs internal switch.
     private var isExplicitStop = false
+    /// How each room looked before Studio first touched it — what an
+    /// explicit Stop puts back (build-61, regression M-6). Taken on a fresh
+    /// start only: a replacement keeps the original, so the final Stop
+    /// returns the room to how it was before the first look, not between two.
+    @ObservationIgnored private var stopRestoreSnapshots: [StudioSelectionKey: Composer2RoomSnapshot] = [:]
 
     /// Send per-light commands in throttled batches to avoid 429 rate limiting.
     /// The bridge accepts ~7 simultaneous per-light PUTs before throttling.
@@ -3230,6 +3235,13 @@ final class StudioViewModel {
         let carriedCompositionBox = takeCompositionCarry(to: StudioSelectionKey(room: room),
                                                          for: card)
 
+        // ── Remember the room as it is, before the first look touches it ──
+        if runningEffect(for: room) == nil, !orchestrator.isDemoMode {
+            let snapshot = await Composer2OrchestratorGateway(orchestrator: orchestrator)
+                .captureRoomState(room: room)
+            stopRestoreSnapshots[StudioSelectionKey(room: room)] = snapshot
+        }
+
         // ── Stop any effect already running on THIS room ─────────────
         if let existing = runningEffect(for: room) {
             let existingCard = existing.card
@@ -3727,6 +3739,13 @@ final class StudioViewModel {
 
         debugLog("[Studio] Stopping '\(effect.card.name)' on \(effect.room.name) (glID: \(groupedLightID ?? "nil")) explicit=\(isExplicitStop)")
 
+        // An explicit Stop puts the room back as it was (M-6). Bulb effects
+        // and Studio's compositions used to switch it OFF, and Live looks sent
+        // nothing — the lights froze on the last frame (Main bathroom was
+        // left at a dim blue 4.7%). The room only goes dark when no snapshot
+        // could be taken.
+        let restore = isExplicitStop ? stopRestoreSnapshots.removeValue(forKey: rowKey) : nil
+
         switch effect.card.strategy {
         case .bridgeNative:
             // Clean up per-light effects (the ONLY way to clear them)
@@ -3740,8 +3759,9 @@ final class StudioViewModel {
                 debugLog("[Handoff] Per-light no_effect cleanup + settle delay complete for \(effect.room.name)")
             }
 
-            if isExplicitStop, let api, let groupedLightID {
-                // User tapped Stop — turn off the room (1 PUT)
+            if isExplicitStop, restore == nil, let api, let groupedLightID {
+                // User tapped Stop and there is nothing to put back — turn
+                // off the room (1 PUT).
                 try? await api.setGroupedLight(id: groupedLightID, on: false)
             }
 
@@ -3759,12 +3779,16 @@ final class StudioViewModel {
             // Keyed by the STOPPING row's EXACT bridge + room (round 4e) — the
             // room-id removal used to evict another bridge's same-room-id box.
             evictCompositionState(at: rowKey)
-            if isExplicitStop, let api, let groupedLightID {
+            if isExplicitStop, restore == nil, let api, let groupedLightID {
                 // Ensure composition cards (including bridge one-shot tier)
                 // fully release control and don't appear "stuck on".
                 try? await api.setGroupedLight(id: groupedLightID, on: false)
             }
             try? await Task.sleep(for: .milliseconds(200))
+        }
+
+        if let restore {
+            await Composer2OrchestratorGateway(orchestrator: orchestrator).restoreRoomState(restore)
         }
 
         // Identity-matched removal. This function suspends several times, so a
