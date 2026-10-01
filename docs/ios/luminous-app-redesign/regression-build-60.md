@@ -239,3 +239,28 @@ To go back to the TestFlight copy, reinstall it from the TestFlight app.
 - One orange swatch was added to My Colors and is still there.
 - Leaving home → enabled → disabled again (it was off).
 - Main bathroom is left on "Test 1". Every other room was never sent a command.
+
+## Appendix: read-only code audit (layout clipping), not reproduced at default text size on a Pro Max
+
+- **Tab bar height:** the bar is 50 + 7×2 + 8 = **72pt**, but `MainTabView.swift:442` reserves only 64pt (the comment at :441 is stale). The bar's `.contentShape(Rectangle())` (:658) also swallows taps across the full-width strip.
+- **Insets don't stack:** a tab screen's own `.safeAreaInset` does not add to MainTabView's (DEVLOG ~5491-5496, ~5521). That is the root of H-1.
+- **Bulk Brightness sheet:** `BulkActionBar.swift:71-98` offers only `.fraction(0.34)` with a non-scrolling VStack of about 217pt. Apply clips on an SE and at AX2+ text. Fix: add `.medium`, or a ScrollView.
+- **SceneSpeedSheet:** `SceneSpeedSheet.swift:29-74` is a non-scrolling VStack of about 441pt at `.medium`. "Activate Scene" falls off-screen on an SE.
+- **`lineLimit(2)` caps:**
+  - `LuminousScreenTitle` subtitle (LuminousKit.swift:403) truncates the manual-IP help (BridgeSetupView.swift:540), the Bridge Manager hint (BridgeManagerView.swift:34), and others.
+  - `LuminousRow` subtitle (LuminousKit.swift:980) truncates the Clean Bridge Resources results (SettingsView.swift:273, :527-546), the location anchor (:622) and the MusicSourcePicker descriptions (:203).
+  - The Composer dock status line (Composer2PerformanceBar.swift:85).
+- **Studio Classic:**
+  - The AI prompt with the keyboard up spills under the music bar (StudioView.swift:1016-1033, :1085-1087, card :2712-2722; `minimumHeight` at :2658 is never enforced).
+  - "Details & Setup" doesn't scroll (StudioLookBrowserView.swift:38-61).
+  - Caveats are capped at `lineLimit(3)` in a column about 117pt wide (StudioBoardView.swift:170, :286; ComposerLayerSheet.swift:273; StudioLookBrowserView.swift:306).
+  - A badge set to `.lineLimit(1).fixedSize()` runs off the "Choose area" sheet (StageKit.swift:394-402, used at StudioView.swift:3069).
+  - The MixerTray badge lane has a fixed `.frame(height: 28)` (MixerTrayView.swift:261).
+  - Knob typing on an SE (MixerTrayView.swift:68-75).
+- **Smaller items:**
+  - Light names in the area builder are capped at `lineLimit(1)` (EntertainmentConfigBuilderView.swift:261). Its error notice sits below the grid while Create is in the toolbar (:132-134).
+  - The tab bar rides up on the keyboard (MainTabView.swift:450); it should hide while the keyboard is up.
+  - "Add Another Bridge" (BridgeManagerView.swift:77) and the Profiles empty state (ProfilesAccessView.swift:63) have only a few points of bottom padding.
+  - Studio's music bar pads 70 against the bar's 72 (NowPlayingBar.swift:194).
+  - The New Profile swatch row overflows by about 11pt on an SE (GuestProfileEditorView.swift:71-92).
+  - The Composer hero badges truncate (Composer2HeroCard.swift:97).
