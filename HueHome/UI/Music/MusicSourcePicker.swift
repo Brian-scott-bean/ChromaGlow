@@ -148,6 +148,10 @@ struct MusicSourcePicker: View {
                         }
                     }
 
+                    #if CHROMAGLOW_EXPERIMENTAL_SPOTIFY
+                    SpotifyConnectExperimentSection()
+                    #endif
+
                     LuminousGroup(footer: MusicSourceCatalog.pandoraFootnote) {
                         LuminousToggleRow(symbol: "metronome.fill", tint: LuminousPalette.amber,
                                           title: MusicSourceCatalog.tempoLookupTitle,

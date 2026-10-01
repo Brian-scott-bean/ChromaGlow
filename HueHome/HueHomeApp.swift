@@ -88,6 +88,9 @@ struct HueHomeApp: App {
         CompositionStore.onPersist = {
             HueAppShortcuts.updateAppShortcutParameters()
         }
+        #if CHROMAGLOW_EXPERIMENTAL_SPOTIFY
+        SpotifyConnectReceiver.autoStartIfRequested()
+        #endif
     }
 
     var body: some Scene {

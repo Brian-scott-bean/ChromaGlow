@@ -33,6 +33,7 @@
 		128A982C8FF6C370FE1231BB /* ArtworkPaletteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C372DFAC100ABA770B3001AF /* ArtworkPaletteTests.swift */; };
 		147279184ADBA85652E2F6B8 /* Composer2Ambience.swift in Sources */ = {isa = PBXBuildFile; fileRef = A22C0128DFE9A19729CEB446 /* Composer2Ambience.swift */; };
 		165A93C9D3A27F1DC6FA735A /* SceneQRRendererTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52220E1EF597845B5B7ED8E0 /* SceneQRRendererTests.swift */; };
+		16FBD1CDF33135513E1E62E0 /* SpotifyPCMSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = 213642F7D9DEF3CF44330534 /* SpotifyPCMSource.swift */; };
 		17B38DAEE68E25F798E2F817 /* SceneDisplayItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = D23CB308132549DB8EABD0A0 /* SceneDisplayItem.swift */; };
 		18D9D9DDF64FEBF63D82EBEF /* CreateSceneRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DE4E9E93C4062E27EC6C4CC /* CreateSceneRequest.swift */; };
 		1AEB21FCBCC16453814C0D31 /* Composer2SpaceEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64D82B811F32CC9FC4340A05 /* Composer2SpaceEditor.swift */; };
@@ -176,6 +177,7 @@
 		8CB81EA7042A2B28682E8249 /* Composer2LabThemeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3AC2496879097465197C009 /* Composer2LabThemeTests.swift */; };
 		8E8081E3E2C4BAA4EBCB1DB3 /* LookPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B72C845E850934EF911770D /* LookPreview.swift */; };
 		8EA3E1268CE349AD5EB99269 /* Composer2EntryCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CAEC326499343E6AEC34D36 /* Composer2EntryCard.swift */; };
+		8FCDC5C1D0460C0A18F76D66 /* SpotifyConnectExperimentSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = A36A7390F67D54F36BDEA43E /* SpotifyConnectExperimentSection.swift */; };
 		908536D8EF4210E3E2D75D3F /* MusicUISnapshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10DDCF04E66CB7F1A2A96513 /* MusicUISnapshotTests.swift */; };
 		9104ED28E648C70654A53BC6 /* NowPlayingBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 450C00831509B188AC9710FD /* NowPlayingBar.swift */; };
 		91A44ACA5E6CD5A45629A2B4 /* CreateAutomationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7FA271B19432BA4813305C8A /* CreateAutomationView.swift */; };
@@ -274,6 +276,7 @@
 		BB580EB55B2297B55762B180 /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A605D920B86B15037E86EE5F /* DashboardView.swift */; };
 		BBF207CC94E61B0ADAB0C9FB /* DemoDataProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF677E03890391D6C1A26444 /* DemoDataProvider.swift */; };
 		BC8AE53272967CB94303D19E /* HueSSEService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A4E5AC65C9D7C704980C395 /* HueSSEService.swift */; };
+		BD80D97202029B9FF0085D6B /* SpotifyPCMExperimentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7EC1CF98A39CF92F173DD39F /* SpotifyPCMExperimentTests.swift */; };
 		BD911DBE93356F3D40E251D0 /* GuestInviteSpec.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1AA4CC7E83E29A5E252517C9 /* GuestInviteSpec.swift */; };
 		BDE3DEDDDBD3A3597A8DDC26 /* GuestAccessPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 973E4888B569F710B4DBD1EA /* GuestAccessPolicy.swift */; };
 		BEEDA5A33CDEF68667AA839D /* Composer2LabLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33E64F664F1AF89C16CF5760 /* Composer2LabLifecycleTests.swift */; };
@@ -362,6 +365,7 @@
 		C5D93FFD211A2A6CAB0CF38A /* TransportVocabulary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19BE9C1668BB96CB3AF94716 /* TransportVocabulary.swift */; };
 		C667A3740C1F4609DAEE8844 /* MusicSourcePickerModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4583A15C5D9DBCA7A69C0D48 /* MusicSourcePickerModelTests.swift */; };
 		C6D8E1256E9325A4EDEA1610 /* LightingPreset.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E654DBE7E9915ECC497D13F /* LightingPreset.swift */; };
+		C96EC13B8326800617CAD3F9 /* SpotifyConnectReceiver.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6B87346AE35F98FE57213DE /* SpotifyConnectReceiver.swift */; };
 		C9FD3C95694034D599E442F8 /* KeychainManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AE302747F21A3DDFB547CD1 /* KeychainManager.swift */; };
 		CB70C04CB7E8C3323F671045 /* BridgeAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 013FAA50126AA7261FA6A3BD /* BridgeAPIClient.swift */; };
 		CC0CANVAS00000000000001 /* StudioCardCanvas.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0CANVAS00000000000002 /* StudioCardCanvas.swift */; };
@@ -402,6 +406,7 @@
 		E275CFEF516DA09533486DAE /* MicrophoneAudioSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3EDB42DE4C045BBCFE43711 /* MicrophoneAudioSource.swift */; };
 		E3ED0638F1205B9278E91308 /* HueGroupedLight.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24361D8C8182346A011E7B60 /* HueGroupedLight.swift */; };
 		E444AED249DFD8A56611DBB4 /* Composer2Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = B231A0F12EA123E2536AE559 /* Composer2Theme.swift */; };
+		E4927FD14340445700C072DD /* SpotifyPlaybackOutput.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAEF2D953761BF88451A8F37 /* SpotifyPlaybackOutput.swift */; };
 		E5BC0523002D8EC8CF6ED71B /* Composer2MiniPreviews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97C5411E94E20889EA76A1B9 /* Composer2MiniPreviews.swift */; };
 		E700C76BDEEA78ED4F43B367 /* GlassmorphicCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E98CBC294974551DDC0EB0E /* GlassmorphicCard.swift */; };
 		E7E3A96EF4C6A57CE58A17D2 /* Composer2LabPrimitiveTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 379E56374960FE23A42DB9C0 /* Composer2LabPrimitiveTests.swift */; };
@@ -552,6 +557,7 @@
 		2012CD98060D08E30E82007D /* MusicSourcePicker.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MusicSourcePicker.swift; path = ./HueHome/UI/Music/MusicSourcePicker.swift; sourceTree = "<group>"; };
 		206B58A9E34CFAA4FC9F602A /* ScenePayloadCodecTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ScenePayloadCodecTests.swift; path = ./HueHomeTests/ScenePayloadCodecTests.swift; sourceTree = "<group>"; };
 		21321408C5BE6B88E10BBD55 /* ComposerLibraryHome.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ComposerLibraryHome.swift; path = HueHome/UI/Composer2/ComposerLibraryHome.swift; sourceTree = "<group>"; };
+		213642F7D9DEF3CF44330534 /* SpotifyPCMSource.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SpotifyPCMSource.swift; path = ./HueHome/Experimental/SpotifyConnect/SpotifyPCMSource.swift; sourceTree = "<group>"; };
 		21BE543D4BC624B5BC51CC2D /* HueDataModelsTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueDataModelsTests.swift; path = ./HueHomeTests/HueDataModelsTests.swift; sourceTree = "<group>"; };
 		222FAB7A86D789E6EC2C8099 /* Composer2RESTCharacterizationTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = Composer2RESTCharacterizationTests.swift; path = HueHomeTests/Composer2RESTCharacterizationTests.swift; sourceTree = "<group>"; };
 		22C98C1882D62720B3B58BD1 /* GuestAccessModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GuestAccessModels.swift; path = ./HueHome/Core/Models/GuestAccessModels.swift; sourceTree = "<group>"; };
@@ -657,6 +663,7 @@
 		79CB619727FAB73BB5417A2E /* TempoProviders.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TempoProviders.swift; path = ./HueHome/Core/Music/TempoProviders.swift; sourceTree = "<group>"; };
 		7B06F0F76E068D42895691A4 /* CompositionEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CompositionEngine.swift; path = ./HueHome/UI/Studio/CompositionEngine.swift; sourceTree = "<group>"; };
 		7B72C845E850934EF911770D /* LookPreview.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = LookPreview.swift; path = ./HueHome/UI/Components/LookPreview.swift; sourceTree = "<group>"; };
+		7EC1CF98A39CF92F173DD39F /* SpotifyPCMExperimentTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SpotifyPCMExperimentTests.swift; path = ./HueHomeTests/SpotifyPCMExperimentTests.swift; sourceTree = "<group>"; };
 		7F678EF918001EEDBFFC3F18 /* SceneUsageStoreTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SceneUsageStoreTests.swift; path = ./HueHomeTests/SceneUsageStoreTests.swift; sourceTree = "<group>"; };
 		7FA271B19432BA4813305C8A /* CreateAutomationView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CreateAutomationView.swift; path = HueHome/UI/Automations/CreateAutomationView.swift; sourceTree = "<group>"; };
 		7FA3B26B221A448BAF662456 /* ComposerColorSection.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ComposerColorSection.swift; path = HueHome/UI/Composer/ComposerColorSection.swift; sourceTree = "<group>"; };
@@ -741,6 +748,7 @@
 		A222893F005E038ECF6D3A85 /* Composer2Presets+Seasons.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = "Composer2Presets+Seasons.swift"; path = "./HueHome/Core/Composer2/Composer2Presets+Seasons.swift"; sourceTree = "<group>"; };
 		A22C0128DFE9A19729CEB446 /* Composer2Ambience.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = Composer2Ambience.swift; path = ./HueHome/UI/Composer2/Composer2Ambience.swift; sourceTree = "<group>"; };
 		A2386EBB36B78EB6A3160432 /* SavedColorStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SavedColorStore.swift; path = ./HueHome/Core/Models/SavedColorStore.swift; sourceTree = "<group>"; };
+		A36A7390F67D54F36BDEA43E /* SpotifyConnectExperimentSection.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SpotifyConnectExperimentSection.swift; path = ./HueHome/Experimental/SpotifyConnect/SpotifyConnectExperimentSection.swift; sourceTree = "<group>"; };
 		A38ACEC1527D7223CD105C53 /* BridgeManagerView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BridgeManagerView.swift; path = ./HueHome/UI/BridgeManager/BridgeManagerView.swift; sourceTree = "<group>"; };
 		A48446A2F5B16431E585E443 /* MockMusicSource.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MockMusicSource.swift; path = ./HueHome/Core/Music/MockMusicSource.swift; sourceTree = "<group>"; };
 		A567F3B8EE7A0AF00E29DAF0 /* ProfilesAccessView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ProfilesAccessView.swift; path = ./HueHome/UI/Profiles/ProfilesAccessView.swift; sourceTree = "<group>"; };
@@ -751,6 +759,7 @@
 		A763D664C9CF60BD06958931 /* SiriColorTable.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SiriColorTable.swift; path = ./HueHome/Intents/SiriColorTable.swift; sourceTree = "<group>"; };
 		A7885050FC8A417F31C0B04D /* HueLight.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueLight.swift; path = HueHome/Core/Models/HueLight.swift; sourceTree = "<group>"; };
 		AA1111111111111111111111 /* RoomDisplayItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HueHome/Core/Models/RoomDisplayItem.swift; sourceTree = SOURCE_ROOT; };
+		AAEF2D953761BF88451A8F37 /* SpotifyPlaybackOutput.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SpotifyPlaybackOutput.swift; path = ./HueHome/Experimental/SpotifyConnect/SpotifyPlaybackOutput.swift; sourceTree = "<group>"; };
 		AB000BRAND001 /* AppBrand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppBrand.swift; path = HueHome/Core/AppBrand.swift; sourceTree = "<group>"; };
 		ABEC9608CE446B81077C19AC /* Composer2Space.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = Composer2Space.swift; path = ./HueHome/Core/Composer2/Composer2Space.swift; sourceTree = "<group>"; };
 		AC9B34ED59C76D2F93085D37 /* Composer2LookCard.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = Composer2LookCard.swift; path = ./HueHome/UI/Composer2/Composer2LookCard.swift; sourceTree = "<group>"; };
@@ -770,6 +779,7 @@
 		B48BD4B2A1666C11CE73E4CF /* SceneCopyEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SceneCopyEngine.swift; path = ./HueHome/Core/Models/SceneCopyEngine.swift; sourceTree = "<group>"; };
 		B49C42A69FC79EABED9C77FC /* SceneColorBuilderView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SceneColorBuilderView.swift; path = HueHome/UI/SceneBuilder/SceneColorBuilderView.swift; sourceTree = "<group>"; };
 		B4DCC9F664B9558F01B87EC2 /* TutorialCatalogTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TutorialCatalogTests.swift; path = ./HueHomeTests/TutorialCatalogTests.swift; sourceTree = "<group>"; };
+		B6B87346AE35F98FE57213DE /* SpotifyConnectReceiver.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SpotifyConnectReceiver.swift; path = ./HueHome/Experimental/SpotifyConnect/SpotifyConnectReceiver.swift; sourceTree = "<group>"; };
 		B7582ACBB58FFCA96EE9AD40 /* Composer2LiveOutput.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = Composer2LiveOutput.swift; path = ./HueHome/Core/Composer2/Composer2LiveOutput.swift; sourceTree = "<group>"; };
 		B8E9735F4D59CFD34BFAF1A1 /* TutorialCatalog.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TutorialCatalog.swift; path = ./HueHome/Core/Models/TutorialCatalog.swift; sourceTree = "<group>"; };
 		B983F6E356486FF116DE5D82 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
@@ -1587,6 +1597,14 @@
 			name = RoomDetail;
 			sourceTree = "<group>";
 		};
+		D1927855843BE0488F8A86EE /* Experimental */ = {
+			isa = PBXGroup;
+			children = (
+				FEB8D87702DC0676C502B72D /* SpotifyConnect */,
+			);
+			name = Experimental;
+			sourceTree = "<group>";
+		};
 		D23C38F26D465CA77223B8DF /* UI */ = {
 			isa = PBXGroup;
 			children = (
@@ -1766,6 +1784,7 @@
 				F1CB5759E124FFB9E98E1577 /* AppGallerySnapshotTests.swift */,
 				C3AC2496879097465197C009 /* Composer2LabThemeTests.swift */,
 				409BDE56CC1784DD0892A3D6 /* AudioAnalysisSourceTests.swift */,
+				7EC1CF98A39CF92F173DD39F /* SpotifyPCMExperimentTests.swift */,
 			);
 			name = HueHomeTests;
 			sourceTree = "<group>";
@@ -1820,6 +1839,7 @@
 				654315C307638F717F3A2F27 /* Info.plist */,
 				7013FAA0255E9B99558A4C15 /* Assets.xcassets */,
 				F28B82EE2641C08C4C0CE7F0 /* Intents */,
+				D1927855843BE0488F8A86EE /* Experimental */,
 			);
 			name = HueHome;
 			sourceTree = "<group>";
@@ -1853,6 +1873,17 @@
 				4F267BE6A95CAC48A0AD9063 /* StudioIntents.swift */,
 			);
 			name = Intents;
+			sourceTree = "<group>";
+		};
+		FEB8D87702DC0676C502B72D /* SpotifyConnect */ = {
+			isa = PBXGroup;
+			children = (
+				213642F7D9DEF3CF44330534 /* SpotifyPCMSource.swift */,
+				B6B87346AE35F98FE57213DE /* SpotifyConnectReceiver.swift */,
+				A36A7390F67D54F36BDEA43E /* SpotifyConnectExperimentSection.swift */,
+				AAEF2D953761BF88451A8F37 /* SpotifyPlaybackOutput.swift */,
+			);
+			name = SpotifyConnect;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -1972,6 +2003,7 @@
 				DD4BB4D62F8C6AF300BED513 /* Embed Foundation Extensions */,
 				DDC82F462FA1140C00324E29 /* Embed Watch Content */,
 				B1LDINJ1000000000000001 /* Inject Build Metadata */,
+				C3721ABB1FF2828F446A1E5B /* Spotify Experiment Plist */,
 			);
 			buildRules = (
 			);
@@ -2129,6 +2161,26 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "\"${SRCROOT}/Scripts/inject_build_metadata.sh\"\ntouch \"${DERIVED_FILE_DIR}/chromaglow-inject-metadata.stamp\"\n";
+		};
+		C3721ABB1FF2828F446A1E5B /* Spotify Experiment Plist */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)",
+			);
+			name = "Spotify Experiment Plist";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/chromaglow-spotify-experiment-plist.stamp",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${SRCROOT}/Scripts/inject_spotify_experiment_plist.sh\"\ntouch \"${DERIVED_FILE_DIR}/chromaglow-spotify-experiment-plist.stamp\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -2410,6 +2462,10 @@
 				C508B9750453B0493ABCEA4A /* LuminousMoreParts.swift in Sources */,
 				D91FFA78851EF631916761E7 /* AudioAnalysisSource.swift in Sources */,
 				E275CFEF516DA09533486DAE /* MicrophoneAudioSource.swift in Sources */,
+				16FBD1CDF33135513E1E62E0 /* SpotifyPCMSource.swift in Sources */,
+				C96EC13B8326800617CAD3F9 /* SpotifyConnectReceiver.swift in Sources */,
+				8FCDC5C1D0460C0A18F76D66 /* SpotifyConnectExperimentSection.swift in Sources */,
+				E4927FD14340445700C072DD /* SpotifyPlaybackOutput.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -2538,6 +2594,7 @@
 				205FA61450F673A59715AA8D /* AppGallerySnapshotTests.swift in Sources */,
 				8CB81EA7042A2B28682E8249 /* Composer2LabThemeTests.swift in Sources */,
 				7BD3FC84F3C550AF16866A0A /* AudioAnalysisSourceTests.swift in Sources */,
+				BD80D97202029B9FF0085D6B /* SpotifyPCMExperimentTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -2667,6 +2724,126 @@
 				VALIDATE_PRODUCT = YES;
 			};
 			name = Release;
+		};
+		3996D44BEA5F9CDE44A3D302 /* Debug-SpotifyExperimental */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CODE_SIGN_ENTITLEMENTS = HueHomeWidgetExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 62;
+				DEVELOPMENT_TEAM = 2H9J347H3T;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = HueHomeWidget/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = ChromaGlow;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "© 2026 Brian Bean";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.huehome.pro.widget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = "Debug-SpotifyExperimental";
+		};
+		42AA64126EDD2AF85B9CDA8B /* Debug-SpotifyExperimental */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CODE_SIGN_ENTITLEMENTS = "LightShadeWatchApp Watch App/LightShadeWatchApp Watch App.entitlements";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 62;
+				DEVELOPMENT_TEAM = 2H9J347H3T;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = ChromaGlow;
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "ChromaGlow uses your local network to control your Philips Hue lights.";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.huehome.pro;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.huehome.pro.watchkitapp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 26.4;
+			};
+			name = "Debug-SpotifyExperimental";
+		};
+		5C5A4F6D14E51028C4D6C8ED /* Debug-SpotifyExperimental */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CODE_SIGN_ENTITLEMENTS = LightShadeWatch/LightShadeWatch.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 62;
+				DEVELOPMENT_TEAM = 2H9J347H3T;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = LightShadeWatch/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = ChromaGlow;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "© 2026 Brian Bean";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.huehome.pro.watchkitapp.watch;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 26.4;
+			};
+			name = "Debug-SpotifyExperimental";
 		};
 		6DACD504AD3301687CF45FE8 /* Release */ = {
 			isa = XCBuildConfiguration;
@@ -2825,6 +3002,61 @@
 			};
 			name = Release;
 		};
+		A0C5B1C3F3989C211F44FECC /* Debug-SpotifyExperimental */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = C0F1C0DE0000000000000001 /* Base.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_ENTITLEMENTS = HueHome/HueHome.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 62;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = 2H9J347H3T;
+				ENABLE_DEBUG_DYLIB = NO;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				INFOPLIST_FILE = HueHome/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/Experimental/SpotifyReceiver/build/$(PLATFORM_NAME)",
+				);
+				MARKETING_VERSION = 1.0.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				ONLY_ACTIVE_ARCH = YES;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lchromaglow_spotify",
+					"-liconv",
+					"-framework",
+					Security,
+					"-framework",
+					CoreFoundation,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.huehome.pro;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG CHROMAGLOW_EXPERIMENTAL_SPOTIFY";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_INCLUDE_PATHS = "$(inherited) $(SRCROOT)/Experimental/SpotifyReceiver/include";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.9;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = "Debug-SpotifyExperimental";
+		};
 		A11DB52F66195EFD74B81087 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = C0F1C0DE0000000000000001 /* Base.xcconfig */;
@@ -2865,6 +3097,53 @@
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
+		};
+		B02C8ECB0763C017D4D426B2 /* Debug-SpotifyExperimental */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.huehome.pro.tests;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphonesimulator iphoneos";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) CHROMAGLOW_EXPERIMENTAL_SPOTIFY";
+				SWIFT_INCLUDE_PATHS = "$(inherited) $(SRCROOT)/Experimental/SpotifyReceiver/include";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.9;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/HueHome.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/HueHome";
+			};
+			name = "Debug-SpotifyExperimental";
+		};
+		DCFA5C8A0888AFE1E0C2BF39 /* Debug-SpotifyExperimental */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 62;
+				DEVELOPMENT_TEAM = 2H9J347H3T;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GENERATE_INFOPLIST_FILE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.huehome.pro.watchappUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				TEST_TARGET_NAME = "LightShadeWatchApp Watch App";
+				WATCHOS_DEPLOYMENT_TARGET = 26.4;
+			};
+			name = "Debug-SpotifyExperimental";
 		};
 		DD4BB4D72F8C6AF300BED513 /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -3220,6 +3499,98 @@
 			};
 			name = Release;
 		};
+		E27C93BC8FC45CDDCF2A117D /* Debug-SpotifyExperimental */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 62;
+				DEVELOPMENT_TEAM = 2H9J347H3T;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GENERATE_INFOPLIST_FILE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.huehome.pro.watchappTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/LightShadeWatchApp Watch App.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/LightShadeWatchApp Watch App";
+				WATCHOS_DEPLOYMENT_TARGET = 26.4;
+			};
+			name = "Debug-SpotifyExperimental";
+		};
+		F6BD2D92246486D3CE705602 /* Debug-SpotifyExperimental */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.9;
+			};
+			name = "Debug-SpotifyExperimental";
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -3228,6 +3599,7 @@
 			buildConfigurations = (
 				6FF7CCC72043DC213B90E1CE /* Debug */,
 				97D86E6E8FD33F204BC7C515 /* Release */,
+				F6BD2D92246486D3CE705602 /* Debug-SpotifyExperimental */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -3237,6 +3609,7 @@
 			buildConfigurations = (
 				6DACD504AD3301687CF45FE8 /* Release */,
 				A11DB52F66195EFD74B81087 /* Debug */,
+				A0C5B1C3F3989C211F44FECC /* Debug-SpotifyExperimental */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -3246,6 +3619,7 @@
 			buildConfigurations = (
 				23C04301B398D3D9D7657757 /* Release */,
 				04AA42E47C3895B901BFC504 /* Debug */,
+				B02C8ECB0763C017D4D426B2 /* Debug-SpotifyExperimental */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -3255,6 +3629,7 @@
 			buildConfigurations = (
 				DD4BB4D72F8C6AF300BED513 /* Debug */,
 				DD4BB4D82F8C6AF300BED513 /* Release */,
+				3996D44BEA5F9CDE44A3D302 /* Debug-SpotifyExperimental */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -3264,6 +3639,7 @@
 			buildConfigurations = (
 				DDC82E942FA0879000324E29 /* Debug */,
 				DDC82E952FA0879000324E29 /* Release */,
+				5C5A4F6D14E51028C4D6C8ED /* Debug-SpotifyExperimental */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -3273,6 +3649,7 @@
 			buildConfigurations = (
 				DDC82F472FA1140C00324E29 /* Debug */,
 				DDC82F482FA1140C00324E29 /* Release */,
+				42AA64126EDD2AF85B9CDA8B /* Debug-SpotifyExperimental */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -3282,6 +3659,7 @@
 			buildConfigurations = (
 				DDC82F492FA1140C00324E29 /* Debug */,
 				DDC82F4A2FA1140C00324E29 /* Release */,
+				E27C93BC8FC45CDDCF2A117D /* Debug-SpotifyExperimental */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -3291,6 +3669,7 @@
 			buildConfigurations = (
 				DDC82F4B2FA1140C00324E29 /* Debug */,
 				DDC82F4C2FA1140C00324E29 /* Release */,
+				DCFA5C8A0888AFE1E0C2BF39 /* Debug-SpotifyExperimental */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
