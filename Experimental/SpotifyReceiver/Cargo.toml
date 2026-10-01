@@ -61,3 +61,8 @@ strip = "debuginfo"
 # on iOS. Vendored with a one-line build.rs fix — see patches/dns-sd-0.1.3/build.rs.
 [patch.crates-io]
 dns-sd = { path = "patches/dns-sd-0.1.3" }
+
+# librespot-core, patched in place (runtime platform persona) — see
+# patches/librespot-core/Cargo.toml for the exact, marked changes. Same pinned rev.
+[patch."https://github.com/librespot-org/librespot"]
+librespot-core = { path = "patches/librespot-core" }

@@ -1,6 +1,6 @@
 //! macOS host harness for the receiver's C ABI — drives exactly the functions
 //! the iOS app calls. Usage:
-//!   cargo run --example harness -- "<device name>" <seconds> [restarts]
+//!   cargo run --example harness -- "<device name>" <seconds> [restarts] [desktop|native]
 //! Prints a status line per second and PCM stats from the callback. With
 //! `restarts` > 0 it stops and restarts the receiver that many times
 //! (zombie-session check: `dns-sd -B _spotify-connect._tcp` must show one
@@ -11,7 +11,8 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use chromaglow_spotify::{
-    cg_spotify_librespot_revision, cg_spotify_start, cg_spotify_status, cg_spotify_stop, CGSpotifyStatus,
+    cg_spotify_copy_log, cg_spotify_librespot_revision, cg_spotify_set_persona, cg_spotify_start,
+    cg_spotify_status, cg_spotify_stop, CGSpotifyStatus,
 };
 
 static FRAMES: AtomicU64 = AtomicU64::new(0);
@@ -42,6 +43,9 @@ fn main() {
     let name = args.get(1).cloned().unwrap_or_else(|| "ChromaGlow Sync (Mac harness)".into());
     let seconds: u64 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(30);
     let restarts: u32 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(0);
+    let desktop = args.get(4).map(|s| s != "native").unwrap_or(true);
+    cg_spotify_set_persona(desktop);
+    println!("persona: {}", if desktop { "desktop-speaker" } else { "native" });
     let rev = unsafe { CStr::from_ptr(cg_spotify_librespot_revision()) };
     println!("revision: {}", rev.to_string_lossy());
 
@@ -83,6 +87,10 @@ fn main() {
         let st = status().unwrap();
         println!("round {round}: stopped in {:?}, final state={} frames={}", t1.elapsed(), st.state, st.frames_delivered);
     }
+    let mut log = vec![0 as std::os::raw::c_char; 64 * 1024];
+    let n = unsafe { cg_spotify_copy_log(log.as_mut_ptr(), log.len()) };
+    println!("---- copied receiver log ({n} bytes) ----");
+    println!("{}", unsafe { CStr::from_ptr(log.as_ptr()) }.to_string_lossy());
     let leftovers = std::fs::read_dir(&tmp).map(|d| d.count()).unwrap_or(0);
     println!("temp files left in {}: {leftovers}", tmp.display());
 }

@@ -16,6 +16,7 @@ import SwiftUI
 struct SpotifyConnectExperimentSection: View {
     @State private var sourceKind: AudioAnalysisSourceKind = .microphone
     @State private var isSwitching = false
+    @State private var copied = false
 
     private var receiver: SpotifyConnectReceiver { .shared }
 
@@ -140,6 +141,15 @@ struct SpotifyConnectExperimentSection: View {
                 }
             }
 
+            identityRow
+
+            if s.phase == .waiting || s.phase == .connecting {
+                Text("Best: keep ChromaGlow open and pick “\(SpotifyConnectReceiver.deviceName)” from Spotify on your Mac or another device. From Spotify on this phone, come back here within ~30 s — iOS pauses ChromaGlow in the background.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(HuePalette.amber)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             pcmRow(s)
             analysisBars
             analyzerHint(s)
@@ -156,12 +166,61 @@ struct SpotifyConnectExperimentSection: View {
                 .foregroundStyle(StagePalette.muted.opacity(0.8))
                 .fixedSize(horizontal: false, vertical: true)
 
+            if !receiver.logTail.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(Array(receiver.logTail.enumerated()), id: \.offset) { _, line in
+                        Text(line)
+                            .font(.system(size: 9, design: .monospaced))
+                            .foregroundStyle(StagePalette.muted)
+                            .lineLimit(2)
+                    }
+                }
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 8).fill(StagePalette.stage))
+            }
+
+            Button {
+                UIPasteboard.general.string = receiver.diagnosticsReport()
+                copied = true
+                Task {
+                    try? await Task.sleep(for: .seconds(2))
+                    copied = false
+                }
+            } label: {
+                Label(copied ? "Copied" : "Copy diagnostics", systemImage: copied ? "checkmark" : "doc.on.doc")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(HuePalette.amber)
+                    .frame(minHeight: 36)
+            }
+            .buttonStyle(.plain)
+
             Text("Local experiment. Needs Spotify Premium. Audio is analyzed in memory and never saved; nothing plays out of this phone yet.")
                 .font(.system(size: 10))
                 .foregroundStyle(StagePalette.muted)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(14)
+    }
+
+    private var identityRow: some View {
+        HStack(spacing: 8) {
+            Text("Identify as")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(StagePalette.muted)
+            ForEach(SpotifyConnectReceiver.Identity.allCases, id: \.self) { identity in
+                let selected = receiver.identity == identity
+                Button(identity.title) { receiver.setIdentity(identity) }
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(selected ? .black : StagePalette.ink)
+                    .padding(.horizontal, 12)
+                    .frame(minHeight: 32)
+                    .background(Capsule().fill(selected ? HuePalette.amber : StagePalette.raised))
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(selected ? .isSelected : [])
+            }
+            Spacer(minLength: 0)
+        }
     }
 
     private func pcmRow(_ s: SpotifyConnectReceiver.Snapshot) -> some View {

@@ -41,6 +41,20 @@ final class SpotifyConnectReceiver {
         case idle, loading, playing, paused
     }
 
+    /// How the receiver introduces itself to Spotify. librespot on iOS
+    /// otherwise impersonates the Spotify iPhone app — its least-used path;
+    /// the desktop speaker identity is what every Raspberry Pi install uses.
+    enum Identity: String, CaseIterable, Equatable {
+        case desktopSpeaker, iPhoneApp
+
+        var title: String {
+            switch self {
+            case .desktopSpeaker: "Desktop speaker"
+            case .iPhoneApp: "iPhone app"
+            }
+        }
+    }
+
     /// Everything the panel renders, swapped as one value so a poll that
     /// changes nothing invalidates nothing.
     struct Snapshot: Equatable {
@@ -70,6 +84,10 @@ final class SpotifyConnectReceiver {
     private(set) var levels = AudioFeatures.silent
     /// Wants the receiver running (Start pressed, Stop not yet).
     private(set) var isEnabled = false
+    /// Identity used for the next start (a change restarts a running receiver).
+    private(set) var identity: Identity = .desktopSpeaker
+    /// The newest receiver log lines (sanitised in Rust), for the live tail.
+    private(set) var logTail: [String] = []
 
     let librespotRevision = String(cString: cg_spotify_librespot_revision())
 
@@ -131,6 +149,7 @@ final class SpotifyConnectReceiver {
             await previous?.value
             guard self.isEnabled else { return }
             let directory = Self.resetStreamDirectory()
+            cg_spotify_set_persona(self.identity == .desktopSpeaker)
             let generation = await Task.detached(priority: .userInitiated) {
                 Self.startReceiver(name: name, temporaryDirectory: directory.path)
             }.value
@@ -172,6 +191,39 @@ final class SpotifyConnectReceiver {
                 $0.message = "Receiver stopped."
             }
         }
+    }
+
+    /// Switch identity; a running receiver restarts so Spotify sees the new one.
+    func setIdentity(_ next: Identity) {
+        guard next != identity else { return }
+        identity = next
+        guard isEnabled else { return }
+        stop()
+        start()
+    }
+
+    /// A sanitised diagnostics report: build, identity, the current status
+    /// snapshot and the receiver's recent log (account names, credential
+    /// blobs and tokens are redacted in Rust before they reach the buffer).
+    func diagnosticsReport() -> String {
+        let info = Bundle.main.infoDictionary
+        let build = info?["CFBundleVersion"] as? String ?? "?"
+        let s = snapshot
+        var lines = [
+            "ChromaGlow Spotify experiment diagnostics",
+            "build \(build) · \(librespotRevision) · identity \(identity.rawValue)",
+            "phase=\(s.phase) playback=\(s.playback) port=\(s.zeroconfPort) frames=\(s.framesDelivered) hops=\(s.hopsAnalyzed) play→PCM=\(s.firstPCMMilliseconds)ms",
+            "message: \(s.message)",
+            "---- receiver log ----",
+        ]
+        lines.append(Self.copyLog())
+        return lines.joined(separator: "\n")
+    }
+
+    nonisolated static func copyLog(capacity: Int = 64 * 1024) -> String {
+        var buffer = [CChar](repeating: 0, count: capacity)
+        let count = buffer.withUnsafeMutableBufferPointer { cg_spotify_copy_log($0.baseAddress, capacity) }
+        return String(decoding: buffer.prefix(count).map { UInt8(bitPattern: $0) }, as: UTF8.self)
     }
 
     /// Restart a receiver that died underneath us (Wi-Fi change, suspension).
@@ -298,6 +350,8 @@ final class SpotifyConnectReceiver {
         next.analyzerOnSpotify = engine.sourceKind == .spotifyConnect
         if next != snapshot { snapshot = next }
         levels = AudioAnalysisEngine.latestFeatures()
+        let tail = Array(Self.copyLog(capacity: 4096).split(separator: "\n").suffix(8).map(String.init))
+        if tail != logTail { logTail = tail }
 
         if now - lastConsoleAt >= 1 {
             lastConsoleAt = now

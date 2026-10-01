@@ -8,6 +8,7 @@
 #define CHROMAGLOW_SPOTIFY_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -82,6 +83,15 @@ void cg_spotify_set_playback(bool enabled, uint32_t target_frames);
 /// Phase 2, render thread: pull up to `frames` interleaved stereo frames into
 /// `out` (zero-fills the remainder). Real-time safe. Returns frames read.
 uint32_t cg_spotify_read_playback(float *out, uint32_t frames);
+
+/// Identity for the NEXT start: true = librespot's desktop-Linux speaker
+/// (default), false = the build target's own identity (iPhone on iOS).
+void cg_spotify_set_persona(bool desktop_linux);
+
+/// Copy the recent sanitised receiver log (newest lines kept when truncated).
+/// NUL-terminated; returns bytes copied excluding the NUL. No account names,
+/// credential blobs or tokens ever reach it.
+size_t cg_spotify_copy_log(char *out, size_t capacity);
 
 /// Static string naming the pinned librespot revision.
 const char *cg_spotify_librespot_revision(void);

@@ -22,7 +22,7 @@ use std::os::raw::c_char;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -51,6 +51,8 @@ pub const LIBRESPOT_REVISION: &str = "939dc5ee9d833e1980f9495241219d9d4868a061";
 static REVISION_C: &[u8] = b"librespot dev@939dc5ee9d833e1980f9495241219d9d4868a061\0";
 
 const SHUTDOWN_STEP_TIMEOUT: Duration = Duration::from_secs(2);
+/// Login + Connect setup normally takes 1–3 s; a hang becomes an explicit error.
+const SESSION_SETUP_TIMEOUT: Duration = Duration::from_secs(40);
 const RECONNECT_WINDOW: Duration = Duration::from_secs(60);
 const RECONNECT_LIMIT: usize = 4;
 
@@ -63,6 +65,9 @@ static NEXT_GENERATION: AtomicU64 = AtomicU64::new(0);
 static RUNNER: Mutex<Option<Runner>> = Mutex::new(None);
 static CURRENT: Mutex<Option<Arc<Shared>>> = Mutex::new(None);
 static PLUMBING: OnceLock<Arc<PlaybackPlumbing>> = OnceLock::new();
+/// true = log in as librespot's desktop-Linux speaker; false = the build
+/// target's own identity (iPhone on iOS). Read at each start.
+static PERSONA_DESKTOP: AtomicBool = AtomicBool::new(true);
 
 fn plumbing() -> &'static Arc<PlaybackPlumbing> {
     PLUMBING.get_or_init(|| Arc::new(PlaybackPlumbing::new()))
@@ -72,11 +77,15 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// Stable per-name device id so Spotify doesn't accumulate ghost devices.
-fn device_id_for(name: &str) -> String {
+/// Stable per-name, per-persona device id so Spotify doesn't accumulate ghost
+/// devices or mix up the two identities.
+fn device_id_for(name: &str, desktop_persona: bool) -> String {
     let mut h = Sha1::new();
     h.update(b"chromaglow-local-spotify-experiment:");
     h.update(name.as_bytes());
+    if desktop_persona {
+        h.update(b":desktop-linux");
+    }
     hex::encode(h.finalize())
 }
 
@@ -226,6 +235,40 @@ pub unsafe extern "C" fn cg_spotify_read_playback(out: *mut f32, frames: u32) ->
     got_frames
 }
 
+/// Choose how the receiver identifies itself to Spotify for the NEXT start:
+/// true = librespot's desktop-Linux speaker (keymaster client id, Linux
+/// client-token data — the identity every Raspberry Pi install uses);
+/// false = the build target's own identity (iPhone on iOS). Default: true.
+#[no_mangle]
+pub extern "C" fn cg_spotify_set_persona(desktop_linux: bool) {
+    PERSONA_DESKTOP.store(desktop_linux, Ordering::Release);
+}
+
+/// Copy the recent sanitised log (oldest first, newline-separated, UTF-8,
+/// NUL-terminated, truncated at a char boundary to fit). Returns the bytes
+/// copied excluding the NUL. Account names, credential blobs and tokens are
+/// redacted before they ever reach this buffer.
+///
+/// # Safety
+/// `out` must point to `capacity` writable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn cg_spotify_copy_log(out: *mut c_char, capacity: usize) -> usize {
+    if out.is_null() || capacity == 0 {
+        return 0;
+    }
+    let text = logger::recent_lines();
+    // Keep the newest lines when the buffer is too small.
+    let mut start = text.len().saturating_sub(capacity - 1);
+    while start < text.len() && !text.is_char_boundary(start) {
+        start += 1;
+    }
+    let bytes = &text.as_bytes()[start..];
+    let dst = std::slice::from_raw_parts_mut(out as *mut u8, capacity);
+    dst[..bytes.len()].copy_from_slice(bytes);
+    dst[bytes.len()] = 0;
+    bytes.len()
+}
+
 /// Static, NUL-terminated description of the pinned librespot revision.
 #[no_mangle]
 pub extern "C" fn cg_spotify_librespot_revision() -> *const c_char {
@@ -268,11 +311,21 @@ async fn run(
     mut shutdown: oneshot::Receiver<()>,
 ) -> Option<Arc<Player>> {
     shared.set_state(ReceiverState::Starting);
+    let desktop = PERSONA_DESKTOP.load(Ordering::Acquire);
+    // Must precede SessionConfig::default(): the persona picks the client id.
+    librespot_core::config::set_platform_persona(desktop);
     let session_config = SessionConfig {
-        device_id: device_id_for(&name),
+        device_id: device_id_for(&name, desktop),
         tmp_dir,
         ..SessionConfig::default()
     };
+    log::info!(
+        "persona={} (platform {}) client_id={}… device_id={}…",
+        if desktop { "desktop-speaker" } else { "native" },
+        librespot_core::config::os(),
+        &session_config.client_id[..6],
+        &session_config.device_id[..8],
+    );
 
     let backend = match librespot_discovery::find(Some("dns-sd")) {
         Ok(b) => b,
@@ -339,7 +392,7 @@ async fn run(
             _ = &mut shutdown => break,
             next = discovery.next() => match next {
                 Some(c) => {
-                    log::info!("credentials received over zeroconf");
+                    log::info!("stage 1/3: zeroconf hand-off received (addUser OK)");
                     shutdown_spirc(&mut spirc, &mut spirc_task).await;
                     if !session.is_invalid() {
                         session.shutdown();
@@ -363,8 +416,19 @@ async fn run(
                     player.set_session(session.clone());
                 }
                 let creds = credentials.clone().unwrap_or_default();
-                match Spirc::new(connect_config.clone(), session.clone(), creds, player.clone(), mixer.clone()).await {
+                log::info!("stage 2/3: logging in to Spotify and starting Connect");
+                shared.set_message("Logging in to Spotify…");
+                let setup = tokio::time::timeout(
+                    SESSION_SETUP_TIMEOUT,
+                    Spirc::new(connect_config.clone(), session.clone(), creds, player.clone(), mixer.clone()),
+                ).await;
+                let setup = match setup {
+                    Ok(result) => result.map_err(|e| e.to_string()),
+                    Err(_) => Err(format!("timed out after {} s (see log for the last step)", SESSION_SETUP_TIMEOUT.as_secs())),
+                };
+                match setup {
                     Ok((s, task)) => {
+                        log::info!("stage 3/3: Spotify Connect ready — device should show as connected");
                         spirc = Some(s);
                         spirc_task = Some(Box::pin(task));
                         shared.set_message("Connected — play something in Spotify");
@@ -469,14 +533,42 @@ mod tests {
 
     #[test]
     fn device_id_is_stable_and_name_scoped() {
-        assert_eq!(device_id_for("ChromaGlow Sync"), device_id_for("ChromaGlow Sync"));
-        assert_ne!(device_id_for("ChromaGlow Sync"), device_id_for("Other"));
-        assert_eq!(device_id_for("ChromaGlow Sync").len(), 40);
+        assert_eq!(device_id_for("ChromaGlow Sync", true), device_id_for("ChromaGlow Sync", true));
+        assert_ne!(device_id_for("ChromaGlow Sync", true), device_id_for("Other", true));
+        assert_ne!(device_id_for("ChromaGlow Sync", true), device_id_for("ChromaGlow Sync", false));
+        assert_eq!(device_id_for("ChromaGlow Sync", false).len(), 40);
     }
 
     #[test]
     fn revision_string_matches_pin() {
         let s = std::str::from_utf8(&REVISION_C[..REVISION_C.len() - 1]).unwrap();
         assert!(s.ends_with(LIBRESPOT_REVISION));
+    }
+}
+
+#[cfg(test)]
+mod persona_tests {
+    use super::*;
+
+    #[test]
+    fn persona_switches_the_librespot_identity() {
+        librespot_core::config::set_platform_persona(true);
+        assert_eq!(librespot_core::config::os(), "linux");
+        assert_eq!(SessionConfig::default().client_id, "65b708073fc0480ea92a077233ca87bd");
+        librespot_core::config::set_platform_persona(false);
+        assert_eq!(librespot_core::config::os(), std::env::consts::OS);
+    }
+
+    #[test]
+    fn copied_log_is_bounded_and_terminated() {
+        logger::install();
+        log::info!("persona_test line one");
+        log::info!("persona_test line two");
+        let mut buf = [1 as c_char; 32];
+        let n = unsafe { cg_spotify_copy_log(buf.as_mut_ptr(), buf.len()) };
+        assert!(n <= 31);
+        assert_eq!(buf[n], 0);
+        let text: Vec<u8> = buf[..n].iter().map(|c| *c as u8).collect();
+        assert!(String::from_utf8(text).unwrap().ends_with("line two\n"), "newest lines kept");
     }
 }
