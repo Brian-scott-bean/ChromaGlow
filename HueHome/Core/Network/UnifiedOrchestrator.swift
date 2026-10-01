@@ -1128,6 +1128,9 @@ final class UnifiedOrchestrator {
     /// bridge's confirmed state — SSE is the primary path but this is a reliable net.
     @ObservationIgnored
     private var pendingStateRefreshTask: Task<Void, Never>?
+    /// Bridges the pending refresh must re-read (union across a debounce).
+    @ObservationIgnored private var pendingRefreshBridges: Set<String> = []
+    @ObservationIgnored private var pendingRefreshAllBridges = false
 
     /// One shared URL session for all SSE streams.
     /// Created lazily so the cert delegate is retained for the orchestrator's lifetime.
@@ -1728,7 +1731,9 @@ final class UnifiedOrchestrator {
 
     /// Fetch rooms from every active bridge concurrently; merge results.
     /// Pass `cacheContext` to auto-write cache on success (nil = skip cache write).
-    func loadAll(cacheContext: ModelContext? = nil) async {
+    /// - Parameter bridges: re-read only these bridges (the rest keep their
+    ///   current rooms and zones); nil reads every bridge.
+    func loadAll(cacheContext: ModelContext? = nil, bridges: Set<String>? = nil) async {
         // Demo mode: load mock data synchronously, never hit the network
         if isDemoMode {
             loadDemoData()
@@ -1763,7 +1768,7 @@ final class UnifiedOrchestrator {
         // Fetch every bridge (per-bridge pin acquisition happens inside). Stuck
         // entertainment-session cleanup no longer shares this await — it is deferred
         // and throttled below so it never delays first paint or fires per toggle.
-        await fetchAndMergeAllBridges()
+        await fetchAndMergeAllBridges(only: bridges)
 
         // Yield so any pending main-thread interactions (e.g. tab bar) run before
         // large @Observable room list updates from rebuildAllRooms/Zones.
@@ -1924,13 +1929,13 @@ final class UnifiedOrchestrator {
 
     /// Per-bridge REST fetch + merge into `roomsByBridge` / `zonesByBridge` maps.
     /// Used by `loadAll` (may run concurrently with `deactivateStuckEntertainmentSessions`).
-    private func fetchAndMergeAllBridges() async {
+    private func fetchAndMergeAllBridges(only: Set<String>? = nil) async {
         // Return type: (bridgeID, rooms?, zones?, roomLightMap, zoneLightMap)
         // nil rooms/zones = fetch failed; keep existing data (stale-while-revalidate).
         await withTaskGroup(
             of: (String, [RoomDisplayItem]?, [RoomDisplayItem]?, [String: String], [String: String], [HueLight]?).self
         ) { group in
-            for (bridgeID, client) in clients {
+            for (bridgeID, client) in clients where only?.contains(bridgeID) ?? true {
                 group.addTask { [client, bridgeID] in
                     let __bridgeStart = Date()
                     do {
@@ -2136,7 +2141,7 @@ final class UnifiedOrchestrator {
         Task {
             do {
                 try await client.setGroupedLight(id: glID, on: desiredState)
-                scheduleStateRefresh()   // re-sync colors + confirmed state from bridge
+                scheduleStateRefresh(bridgeID: item.bridgeID)   // re-sync colors + confirmed state
             } catch {
                 // Rollback: revert to the opposite of what we tried
                 updateRoom(item.id, isOn: !desiredState)
@@ -2167,7 +2172,7 @@ final class UnifiedOrchestrator {
             do {
                 // Single PUT: on=true + brightness together — no "flash" at old brightness
                 try await client.setGroupedLightState(id: glID, on: true, brightness: clamped)
-                scheduleStateRefresh()   // re-sync colors + confirmed state from bridge
+                scheduleStateRefresh(bridgeID: item.bridgeID)   // re-sync colors + confirmed state
             } catch {
                 updateRoom(item.id, isOn: item.isOn, brightness: item.brightness)
                 log.error("Brightness failed for room \(item.id): \(error.localizedDescription)")
@@ -2357,12 +2362,20 @@ final class UnifiedOrchestrator {
     /// Schedules a full state refresh 1.5 s after the last successful state change.
     /// Debounced: rapid interactions (e.g. brightness slider) produce exactly one reload.
     /// This ensures dominant colors and confirmed bridge state always match the cards.
-    private func scheduleStateRefresh() {
+    ///
+    /// - Parameter bridgeID: the one bridge the change touched. Only that
+    ///   bridge is re-read — every tap used to reload BOTH bridges (9 GETs,
+    ///   ~60 KB; build-60 P-1). nil (house-wide actions) reloads them all.
+    private func scheduleStateRefresh(bridgeID: String? = nil) {
+        if let bridgeID { pendingRefreshBridges.insert(bridgeID) } else { pendingRefreshAllBridges = true }
         pendingStateRefreshTask?.cancel()
         pendingStateRefreshTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(1.5))
             guard !Task.isCancelled, let self else { return }
-            await self.loadAll()
+            let only: Set<String>? = self.pendingRefreshAllBridges ? nil : self.pendingRefreshBridges
+            self.pendingRefreshBridges = []
+            self.pendingRefreshAllBridges = false
+            await self.loadAll(bridges: only)
         }
     }
 
@@ -8042,7 +8055,7 @@ final class UnifiedOrchestrator {
         // Re-sync this room's card to the bridge's confirmed state — while the
         // composition ran, its SSE echoes were suppressed (isAppDrivenGroup), so
         // the card is frozen at its pre-composition color until a refresh lands.
-        scheduleStateRefresh()
+        scheduleStateRefresh(bridgeID: bridgeID)
         debugLog("[Handoff] Composer teardown complete for roomID=\(roomID)")
     }
 
@@ -11147,7 +11160,7 @@ final class UnifiedOrchestrator {
                 try? await Task.sleep(nanoseconds: 150_000_000)
             }
         }
-        scheduleStateRefresh()
+        scheduleStateRefresh(bridgeID: bridgeID)
     }
 
     /// The Scenes tab's "Studio scenes" shelf: turn a scene-like Composer
