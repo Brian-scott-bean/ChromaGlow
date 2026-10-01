@@ -30,6 +30,7 @@
 //   Light        LuminousLight (real lamp state → screen colour and stage frames)
 
 import SwiftUI
+import UIKit
 
 // MARK: - Tokens
 
@@ -682,24 +683,23 @@ struct LuminousGlowSlider: View {
                 }
                 .frame(height: 30)
                 .contentShape(Rectangle())
-                .gesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { g in
-                            guard isEnabled else { return }
-                            if !dragging {
-                                dragging = true
-                                onEditingChanged(true)
-                                HapticManager.shared.selection()
-                            }
-                            let f = max(0, min(1, Double((g.location.x - thumb / 2) / max(1, width - thumb))))
-                            value = range.lowerBound + f * (range.upperBound - range.lowerBound)
-                        }
-                        .onEnded { _ in
-                            guard dragging else { return }
-                            dragging = false
-                            onEditingChanged(false)
-                        }
-                )
+                .modifier(LuminousSliderInput(
+                    isEnabled: isEnabled,
+                    onBegan: {
+                        guard !dragging else { return }
+                        dragging = true
+                        onEditingChanged(true)
+                        HapticManager.shared.selection()
+                    },
+                    onChanged: { x in
+                        let f = max(0, min(1, Double((x - thumb / 2) / max(1, width - thumb))))
+                        value = range.lowerBound + f * (range.upperBound - range.lowerBound)
+                    },
+                    onEnded: {
+                        guard dragging else { return }
+                        dragging = false
+                        onEditingChanged(false)
+                    }))
                 .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.7), value: dragging)
             }
             .frame(height: 30)
@@ -718,6 +718,110 @@ struct LuminousGlowSlider: View {
             @unknown default: break
             }
             onEditingChanged(false)
+        }
+    }
+}
+
+/// How a glow slider takes the finger without stealing the page's scroll: a
+/// tap jumps the value, a sideways drag scrubs it, and an up/down swipe that
+/// starts on the track is left to the ScrollView. The old
+/// `DragGesture(minimumDistance: 0)` claimed every touch on the track, so
+/// swiping the page up over a slider moved the slider instead (build-60
+/// regression H-2). `onChanged` gets x in the track's own space.
+struct LuminousSliderInput: ViewModifier {
+    var isEnabled: Bool = true
+    let onBegan: () -> Void
+    let onChanged: (CGFloat) -> Void
+    let onEnded: () -> Void
+
+    /// iOS 17 fallback: which way the current drag was decided to go.
+    @State private var axis: Axis?
+
+    func body(content: Content) -> some View {
+        let tapped = content
+            .onTapGesture(coordinateSpace: .local) { point in
+                guard isEnabled else { return }
+                onBegan()
+                onChanged(point.x)
+                onEnded()
+            }
+        if #available(iOS 18.0, *) {
+            tapped.gesture(LuminousHorizontalPan(isEnabled: isEnabled, onBegan: onBegan,
+                                                 onChanged: onChanged, onEnded: onEnded))
+        } else {
+            // Simultaneous so the ScrollView still sees the swipe; the slider
+            // only follows a drag that set off sideways.
+            tapped.simultaneousGesture(
+                DragGesture(minimumDistance: 6)
+                    .onChanged { g in
+                        guard isEnabled else { return }
+                        if axis == nil {
+                            axis = abs(g.translation.width) > abs(g.translation.height) ? .horizontal : .vertical
+                            if axis == .horizontal { onBegan() }
+                        }
+                        guard axis == .horizontal else { return }
+                        onChanged(g.location.x)
+                    }
+                    .onEnded { _ in
+                        if axis == .horizontal { onEnded() }
+                        axis = nil
+                    }
+            )
+        }
+    }
+}
+
+/// A pan that only begins when the finger sets off more sideways than up or
+/// down; otherwise it fails at once and the page's scroll takes the touch.
+@available(iOS 18.0, *)
+struct LuminousHorizontalPan: UIGestureRecognizerRepresentable {
+    var isEnabled: Bool
+    let onBegan: () -> Void
+    let onChanged: (CGFloat) -> Void
+    let onEnded: () -> Void
+
+    func makeCoordinator(converter: CoordinateSpaceConverter) -> Coordinator { Coordinator() }
+
+    func makeUIGestureRecognizer(context: Context) -> UIPanGestureRecognizer {
+        let pan = UIPanGestureRecognizer()
+        pan.maximumNumberOfTouches = 1
+        pan.delegate = context.coordinator
+        return pan
+    }
+
+    func updateUIGestureRecognizer(_ recognizer: UIPanGestureRecognizer, context: Context) {
+        recognizer.isEnabled = isEnabled
+    }
+
+    func handleUIGestureRecognizerAction(_ recognizer: UIPanGestureRecognizer, context: Context) {
+        switch recognizer.state {
+        case .began:
+            onBegan()
+            onChanged(context.converter.localLocation.x)
+        case .changed:
+            onChanged(context.converter.localLocation.x)
+        case .ended, .cancelled, .failed:
+            onEnded()
+        default:
+            break
+        }
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            guard let pan = gestureRecognizer as? UIPanGestureRecognizer else { return true }
+            let t = pan.translation(in: pan.view)
+            if t.x != 0 || t.y != 0 { return abs(t.x) > abs(t.y) }
+            let v = pan.velocity(in: pan.view)
+            return abs(v.x) > abs(v.y)
+        }
+
+        /// A page scroll waits for this pan to decline, so a sideways drag
+        /// is never taken by the ScrollView first.
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                               shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+            otherGestureRecognizer.view is UIScrollView
         }
     }
 }

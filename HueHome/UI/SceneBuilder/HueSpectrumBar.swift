@@ -76,29 +76,30 @@ struct HueSpectrumBar: View {
             }
             .frame(height: 32)
             .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        if !isDragging {
-                            isDragging = true
-                            HapticManager.shared.medium()
-                        }
-                        let raw = value.location.x / width
-                        hue = min(1, max(0, raw))
+            // Sideways drags and taps only, so a swipe up the builder sheet
+            // that starts on the bar scrolls it (build-60 H-2).
+            .modifier(LuminousSliderInput(
+                onBegan: {
+                    guard !isDragging else { return }
+                    isDragging = true
+                    HapticManager.shared.medium()
+                },
+                onChanged: { x in
+                    hue = min(1, max(0, x / width))
 
-                        // Haptic notch every ~30° (1/12)
-                        let notch = Int(hue * 12)
-                        if notch != lastNotch {
-                            HapticManager.shared.soft()
-                            lastNotch = notch
-                        }
+                    // Haptic notch every ~30° (1/12)
+                    let notch = Int(hue * 12)
+                    if notch != lastNotch {
+                        HapticManager.shared.soft()
+                        lastNotch = notch
                     }
-                    .onEnded { _ in
-                        isDragging = false
-                        HapticManager.shared.heavy()
-                        onCommit(hue)
-                    }
-            )
+                },
+                onEnded: {
+                    guard isDragging else { return }
+                    isDragging = false
+                    HapticManager.shared.heavy()
+                    onCommit(hue)
+                }))
         }
         .frame(height: 32)
     }

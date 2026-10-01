@@ -121,22 +121,24 @@ struct Composer2GlowSlider: View {
                 }
                 .frame(height: 30)
                 .contentShape(Rectangle())
-                .gesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { g in
-                            if !dragging {
-                                dragging = true
-                                onEditingChanged(true)
-                                HapticManager.shared.selection()
-                            }
-                            let f = Composer2Math.clamp01(Double((g.location.x - thumb / 2) / max(1, width - thumb)))
-                            value = range.lowerBound + f * (range.upperBound - range.lowerBound)
-                        }
-                        .onEnded { _ in
-                            dragging = false
-                            onEditingChanged(false)
-                        }
-                )
+                // Sideways drags and taps only — an up/down swipe over the
+                // track scrolls the page (build-60 H-2).
+                .modifier(LuminousSliderInput(
+                    onBegan: {
+                        guard !dragging else { return }
+                        dragging = true
+                        onEditingChanged(true)
+                        HapticManager.shared.selection()
+                    },
+                    onChanged: { x in
+                        let f = Composer2Math.clamp01(Double((x - thumb / 2) / max(1, width - thumb)))
+                        value = range.lowerBound + f * (range.upperBound - range.lowerBound)
+                    },
+                    onEnded: {
+                        guard dragging else { return }
+                        dragging = false
+                        onEditingChanged(false)
+                    }))
                 .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.7), value: dragging)
             }
             .frame(height: 30)
