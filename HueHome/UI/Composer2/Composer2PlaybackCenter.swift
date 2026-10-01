@@ -57,6 +57,9 @@ final class Composer2PlaybackCenter {
     @ObservationIgnored private var box: CompositionParamBox?
     @ObservationIgnored private var gateway: Composer2LiveGateway?
     @ObservationIgnored private var heartbeatTask: Task<Void, Never>?
+    /// The live room as it was just before Go Live; a stop of OUR look puts
+    /// it back (build 58). Dropped when another look replaces ours.
+    @ObservationIgnored private var restoreSnapshot: Composer2RoomSnapshot?
     @ObservationIgnored private var retainedTasks: [Task<Void, Never>] = []
     @ObservationIgnored private var chainTail: Task<Void, Never>?
     @ObservationIgnored private var takeoverContinuation: CheckedContinuation<Bool, Never>?
@@ -224,11 +227,14 @@ final class Composer2PlaybackCenter {
         self.document = document
         document.onEdit = { [weak self] in self?.noteEdit() }
 
+        // Read the room BEFORE Go Live changes it, so Stop can put it back.
+        let captured = await gateway.captureRoomState(room: room)
         let outcome = await gateway.start(room: room, box: box, preferStreaming: availability.prefer,
                                           askTakeover: { [weak self] in await self?.askTakeover() ?? false })
         takeoverPending = false
         switch outcome {
         case .started(let mode):
+            restoreSnapshot = captured
             // The orchestrator's exact slots are the truth for labels and
             // positions from here on (Composer 2.1).
             if !box.renderSlots.isEmpty {
@@ -425,7 +431,14 @@ final class Composer2PlaybackCenter {
         let stillOurs = box.map { gateway?.isDriving(box: $0) ?? true } ?? true
         if stillOurs {
             await gateway?.stop(roomID: current.roomID, bridgeID: current.bridgeID)
+            // Put the room back as it was before Go Live. Only for a look
+            // that was still ours: a replacement owns the lights now.
+            if let snapshot = restoreSnapshot, snapshot.roomID == current.roomID,
+               snapshot.bridgeID == current.bridgeID {
+                await gateway?.restoreRoomState(snapshot)
+            }
         }
+        restoreSnapshot = nil
         unbind(releaseSource: true)
         session = nil
         gateway?.installStopHandler(nil)
@@ -561,6 +574,8 @@ final class Composer2PlaybackCenter {
 
     private func endSession(_ current: Session, text: String) {
         unresponsiveLights = []
+        // Replaced or lost: the lights are not ours to put back.
+        restoreSnapshot = nil
         heartbeatTask?.cancel()
         heartbeatTask = nil
         gateway?.retireNowPlaying(roomID: current.roomID, bridgeID: current.bridgeID)
