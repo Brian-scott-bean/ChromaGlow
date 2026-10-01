@@ -11,12 +11,14 @@
 - Live shared handoff: append-only entries in this `DEVLOG.md`. Git is the shared memory between tools.
 
 ### iOS — where we are RIGHT NOW
+- **BUILD 62 → TESTFLIGHT (2026-10-01):** build 61's fixes + long pages scroll their last line clear of the tab
+  bar (Brian's report). Entry below.
 - **BUILD 61 — THE BUILD-60 REGRESSION FIXES, RE-TESTED ON THE REAL BRIDGE (2026-10-01).** Same branch, rollback
   tag `checkpoint/pre-build-61-regression-fixes`. The Composer add-colour crash Brian reported, all 5 High and 11 of
   13 Medium fixed (one commit each), plus 4 bugs found while testing; P-1 (re-read only the touched bridge). The
   Composer now streams in Brian's home (its own Entertainment Area chooser). Verified on Brian's iPhone on the real
   bridge with the live log; full suite 2451/2451 after updating 3 tests pinned to deliberate changes. Debug build 61
-  on the phone; not uploaded to TestFlight. Brian: Studio Classic is out of device-test scope. Status table in
+  on the phone (build 62 went to TestFlight). Brian: Studio Classic is out of device-test scope. Status table in
   `docs/ios/luminous-app-redesign/regression-build-60.md`. Entry below.
 - **LUMINOUS APP REDESIGN — THE WHOLE APP IN THE COMPOSER'S LANGUAGE, BUILD 60, ISOLATED EXPERIMENT, NOT MERGED
   (2026-10-01).** Branch `experiment/luminous-app-redesign` (worktree `~/Developer/huehome-luminous-app`, from the
@@ -710,6 +712,29 @@
 ### Gotchas
 - ...
 ```
+
+---
+
+## 2026-10-01 - [Claude] Build 62 — pages scroll clear of the tab bar; TestFlight
+
+### Branch
+- `experiment/luminous-app-redesign`. Not merged, not pushed.
+
+### Did
+- Brian: scrolled to the bottom, the last text sat under the floating tab bar. MainTabView's clear inset never
+  reaches the scroll views inside each tab's NavigationStack, so tab content now carries
+  `.contentMargins(.bottom, HueTabBarMetrics.dockClearance, for: .scrollContent)` (environment-wide, pushed pages
+  included; Studio Classic keeps its own clearance). `a6e7e2b`, build bump `b9740fb`.
+- Release archive of build 62 → App Store Connect / TestFlight: "Upload succeeded" (06:44, processing). Archive in
+  Organizer: `~/Library/Developer/Xcode/Archives/2026-10-01/ChromaGlow 1.0.0 (62) Luminous.xcarchive`. Revert: TestFlight
+  build 60 (or 59); code tags `testflight/build-60` and `testflight/build-62` (local only, not pushed).
+
+### Working
+- Simulator layout check: Home's last card, More's last row and a Room page's last light end above the bar. Debug
+  build 62 installed on Brian's phone (mirroring was busy — Brian was using the phone — so not checked there).
+
+### Left
+- Brian to confirm on the phone that long pages (Home, Room, Scenes, More, Settings) end above the bar.
 
 ---
 
