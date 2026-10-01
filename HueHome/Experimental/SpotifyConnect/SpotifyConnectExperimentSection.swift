@@ -115,17 +115,27 @@ struct SpotifyConnectExperimentSection: View {
                     }
                 }
 
-                if s.phase == .connected {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(s.title.isEmpty ? playbackText(s.playback) : s.title)
-                            .font(LuminousType.cardTitle)
-                            .foregroundStyle(LuminousPalette.ink)
-                            .lineLimit(1)
-                        Text(trackSubtitle(s))
-                            .font(.footnote)
-                            .foregroundStyle(LuminousPalette.inkSecondary)
-                            .lineLimit(1)
+                if s.phase == .connected, s.handoff != .movedAway {
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(s.title.isEmpty ? playbackText(s.playback) : s.title)
+                                .font(LuminousType.cardTitle)
+                                .foregroundStyle(LuminousPalette.ink)
+                                .lineLimit(1)
+                            Text(trackSubtitle(s))
+                                .font(.footnote)
+                                .foregroundStyle(LuminousPalette.inkSecondary)
+                                .lineLimit(1)
+                        }
+                        Spacer(minLength: 0)
+                        if s.handoff == .active {
+                            transportControls(s)
+                        }
                     }
+                }
+
+                if s.phase == .connected, s.handoff == .movedAway {
+                    movedAwayNotice
                 }
 
                 if s.phase == .waiting || s.phase == .connecting {
@@ -133,18 +143,7 @@ struct SpotifyConnectExperimentSection: View {
                                    tint: LuminousPalette.amber)
                 }
 
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Identify to Spotify as")
-                        .font(LuminousType.captionStrong)
-                        .foregroundStyle(LuminousPalette.inkSecondary)
-                    LuminousSegmented(options: SpotifyConnectReceiver.Identity.allCases,
-                                      selection: Binding(get: { receiver.identity },
-                                                         set: { receiver.setIdentity($0) }),
-                                      title: { $0.title },
-                                      accessibilityLabel: "Receiver identity")
-                }
-
-                if !s.message.isEmpty {
+                if !s.message.isEmpty, s.handoff != .movedAway {
                     Text(s.message)
                         .font(.footnote)
                         .foregroundStyle(s.phase == .failed ? LuminousPalette.danger : LuminousPalette.inkSecondary)
@@ -155,9 +154,41 @@ struct SpotifyConnectExperimentSection: View {
         }
     }
 
+    /// Previous / play-pause / next, sent to Spotify Connect.
+    private func transportControls(_ s: SpotifyConnectReceiver.Snapshot) -> some View {
+        HStack(spacing: 8) {
+            LuminousRoundButton(symbol: "backward.fill", label: "Previous track") {
+                receiver.send(.previous)
+            }
+            LuminousRoundButton(symbol: s.playback == .playing ? "pause.fill" : "play.fill",
+                                label: s.playback == .playing ? "Pause" : "Play",
+                                size: 44, filled: true) {
+                receiver.send(.togglePlayPause)
+            }
+            LuminousRoundButton(symbol: "forward.fill", label: "Next track") {
+                receiver.send(.next)
+            }
+        }
+    }
+
+    /// Spotify moved the music elsewhere — almost always the phone's own
+    /// Spotify app reclaiming it after the speaker changed while it was open.
+    private var movedAwayNotice: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            LuminousNotice(
+                text: "Spotify moved the music to another device. This happens when the speaker changes while the Spotify app is open — after picking “\(SpotifyConnectReceiver.deviceName)”, close Spotify and choose speakers here.",
+                symbol: "arrow.uturn.backward.circle.fill",
+                tint: LuminousPalette.amber)
+            LuminousPrimaryButton(title: "Bring it back here", symbol: "arrow.down.to.line", compact: true) {
+                receiver.send(.bringHere)
+            }
+            .accessibilityLabel("Bring Spotify playback back to ChromaGlow")
+        }
+    }
+
     private var waitingHint: String {
         if receiver.playsOnPhone {
-            "Open Spotify (here or on another device), tap the speaker icon and pick “\(SpotifyConnectReceiver.deviceName)”. ChromaGlow keeps listening in the background while the receiver is on."
+            "Open Spotify (here or on another device), tap the speaker icon and pick “\(SpotifyConnectReceiver.deviceName)”. Then close Spotify — the music keeps playing, the lock screen controls it, and speakers are picked here."
         } else {
             "Pick “\(SpotifyConnectReceiver.deviceName)” in Spotify. With playback off, come back to ChromaGlow within ~30 s — iOS pauses it in the background."
         }

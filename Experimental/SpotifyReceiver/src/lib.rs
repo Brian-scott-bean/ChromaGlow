@@ -41,7 +41,7 @@ use librespot_playback::player::{Player, PlayerEvent, PlayerEventChannel};
 use sha1::{Digest, Sha1};
 use tokio::sync::oneshot;
 
-pub use state::{CGSpotifyStatus, PcmCallback, PlaybackState, ReceiverState};
+pub use state::{CGSpotifyStatus, Handoff, PcmCallback, PlaybackState, ReceiverState};
 
 use sink::{ChromaSink, PlaybackPlumbing};
 use state::{copy_c_string, Shared};
@@ -68,6 +68,17 @@ static PLUMBING: OnceLock<Arc<PlaybackPlumbing>> = OnceLock::new();
 /// true = log in as librespot's desktop-Linux speaker; false = the build
 /// target's own identity (iPhone on iOS). Read at each start.
 static PERSONA_DESKTOP: AtomicBool = AtomicBool::new(true);
+/// The live Connect handle, for transport commands from the app (lock screen,
+/// Control Center, the panel). Set while a Spirc exists; cleared on shutdown.
+static CONTROL: Mutex<Option<Arc<Spirc>>> = Mutex::new(None);
+
+/// `cg_spotify_command` codes — keep in lockstep with the header.
+pub const CG_SPOTIFY_CMD_PLAY: u32 = 1;
+pub const CG_SPOTIFY_CMD_PAUSE: u32 = 2;
+pub const CG_SPOTIFY_CMD_PLAY_PAUSE: u32 = 3;
+pub const CG_SPOTIFY_CMD_NEXT: u32 = 4;
+pub const CG_SPOTIFY_CMD_PREV: u32 = 5;
+pub const CG_SPOTIFY_CMD_BRING_HERE: u32 = 6;
 
 fn plumbing() -> &'static Arc<PlaybackPlumbing> {
     PLUMBING.get_or_init(|| Arc::new(PlaybackPlumbing::new()))
@@ -280,6 +291,30 @@ pub unsafe extern "C" fn cg_spotify_copy_log(out: *mut c_char, capacity: usize) 
     bytes.len()
 }
 
+/// Send a transport command to Spotify Connect. Returns false when there is
+/// no Connect session or the code is unknown. Non-blocking (queues onto the
+/// Connect task); Play/Pause/Next/Prev only act while this device is active,
+/// BRING_HERE transfers playback back to this device when it isn't.
+#[no_mangle]
+pub extern "C" fn cg_spotify_command(command: u32) -> bool {
+    let Some(spirc) = lock(&CONTROL).clone() else {
+        return false;
+    };
+    let result = match command {
+        CG_SPOTIFY_CMD_PLAY => spirc.play(),
+        CG_SPOTIFY_CMD_PAUSE => spirc.pause(),
+        CG_SPOTIFY_CMD_PLAY_PAUSE => spirc.play_pause(),
+        CG_SPOTIFY_CMD_NEXT => spirc.next(),
+        CG_SPOTIFY_CMD_PREV => spirc.prev(),
+        CG_SPOTIFY_CMD_BRING_HERE => spirc.transfer(None),
+        _ => return false,
+    };
+    if let Err(e) = &result {
+        log::warn!("command {command} not sent: {e}");
+    }
+    result.is_ok()
+}
+
 /// Static, NUL-terminated description of the pinned librespot revision.
 #[no_mangle]
 pub extern "C" fn cg_spotify_librespot_revision() -> *const c_char {
@@ -392,7 +427,7 @@ async fn run(
         ..ConnectConfig::default()
     };
 
-    let mut spirc: Option<Spirc> = None;
+    let mut spirc: Option<Arc<Spirc>> = None;
     let mut spirc_task: Option<SpircTask> = None;
     let mut credentials: Option<Credentials> = None;
     let mut connecting = false;
@@ -409,6 +444,7 @@ async fn run(
                         session.shutdown();
                     }
                     credentials = Some(c);
+                    shared.set_handoff(Handoff::None);
                     reconnects.clear();
                     connecting = true;
                     shared.set_message("Spotify picked this device — connecting");
@@ -440,6 +476,8 @@ async fn run(
                 match setup {
                     Ok((s, task)) => {
                         log::info!("stage 3/3: Spotify Connect ready — device should show as connected");
+                        let s = Arc::new(s);
+                        *lock(&CONTROL) = Some(s.clone());
                         spirc = Some(s);
                         spirc_task = Some(Box::pin(task));
                         shared.set_message("Connected — play something in Spotify");
@@ -464,6 +502,8 @@ async fn run(
             }, if spirc_task.is_some() && !connecting => {
                 spirc_task = None;
                 spirc = None;
+                *lock(&CONTROL) = None;
+                shared.set_handoff(Handoff::None);
                 shared.set_playback(PlaybackState::Idle);
                 reconnects.retain(|t| t.elapsed() < RECONNECT_WINDOW);
                 if credentials.is_some() && reconnects.len() < RECONNECT_LIMIT {
@@ -495,7 +535,8 @@ async fn run(
     Some(player)
 }
 
-async fn shutdown_spirc(spirc: &mut Option<Spirc>, task: &mut Option<SpircTask>) {
+async fn shutdown_spirc(spirc: &mut Option<Arc<Spirc>>, task: &mut Option<SpircTask>) {
+    *lock(&CONTROL) = None;
     if let Some(s) = spirc.take() {
         if let Err(e) = s.shutdown() {
             log::warn!("spirc shutdown: {e}");
@@ -510,8 +551,16 @@ async fn watch_player_events(mut events: PlayerEventChannel, shared: Arc<Shared>
     while let Some(event) = events.recv().await {
         match event {
             PlayerEvent::Loading { .. } => shared.set_playback(PlaybackState::Loading),
-            PlayerEvent::Playing { .. } => shared.set_playback(PlaybackState::Playing),
-            PlayerEvent::Paused { .. } => shared.set_playback(PlaybackState::Paused),
+            PlayerEvent::Playing { position_ms, .. } => {
+                shared.set_position(position_ms);
+                shared.set_playback(PlaybackState::Playing);
+            }
+            PlayerEvent::Paused { position_ms, .. } => {
+                shared.set_position(position_ms);
+                shared.set_playback(PlaybackState::Paused);
+            }
+            PlayerEvent::Seeked { position_ms, .. }
+            | PlayerEvent::PositionCorrection { position_ms, .. } => shared.set_position(position_ms),
             PlayerEvent::Stopped { .. } => shared.set_playback(PlaybackState::Idle),
             PlayerEvent::Unavailable { .. } => shared.set_message("Spotify says this track is unavailable here"),
             PlayerEvent::VolumeChanged { volume } => shared.set_volume(volume),
@@ -526,12 +575,25 @@ async fn watch_player_events(mut events: PlayerEventChannel, shared: Arc<Shared>
                     UniqueFields::Episode { show_name, .. } => show_name.clone(),
                     UniqueFields::Local { artists, .. } => artists.clone().unwrap_or_default(),
                 };
+                shared.set_duration(audio_item.duration_ms);
+                shared.set_position(0);
                 shared.set_track(audio_item.name.clone(), artist);
             }
             PlayerEvent::SessionClientChanged { client_name, .. } => shared.set_remote_client(client_name),
+            PlayerEvent::SessionConnected { .. } => {
+                shared.set_handoff(Handoff::Active);
+                shared.set_message("Spotify is playing on this device");
+            }
             PlayerEvent::SessionDisconnected { .. } => {
                 shared.set_playback(PlaybackState::Idle);
                 shared.set_remote_client(String::new());
+                // Our own Stop also disconnects; only a live receiver was
+                // moved away from.
+                if !shared.is_stopping() && shared.handoff() == Handoff::Active {
+                    log::info!("Spotify moved playback to another device");
+                    shared.set_handoff(Handoff::MovedAway);
+                    shared.set_message("Spotify moved the music to another device");
+                }
             }
             _ => {}
         }
@@ -561,6 +623,13 @@ mod tests {
         assert_ne!(device_id_for("ChromaGlow Sync", true), device_id_for("Other", true));
         assert_ne!(device_id_for("ChromaGlow Sync", true), device_id_for("ChromaGlow Sync", false));
         assert_eq!(device_id_for("ChromaGlow Sync", false).len(), 40);
+    }
+
+    #[test]
+    fn commands_without_a_session_are_refused() {
+        for code in [CG_SPOTIFY_CMD_PLAY, CG_SPOTIFY_CMD_NEXT, CG_SPOTIFY_CMD_BRING_HERE, 99] {
+            assert!(!cg_spotify_command(code));
+        }
     }
 
     #[test]

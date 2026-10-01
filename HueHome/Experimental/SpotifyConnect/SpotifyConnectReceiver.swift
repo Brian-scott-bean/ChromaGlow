@@ -46,6 +46,37 @@ final class SpotifyConnectReceiver {
         case idle, loading, playing, paused
     }
 
+    /// Whether Spotify is playing on this device right now.
+    enum Handoff: Equatable {
+        /// Not picked in this session yet.
+        case none
+        /// Spotify plays here.
+        case active
+        /// Was playing here, then Spotify moved the music to another device —
+        /// typically the phone's own Spotify app reclaiming it after the
+        /// iPhone's speaker was changed while Spotify was open.
+        case movedAway
+    }
+
+    /// Transport commands sent to Spotify Connect (lock screen, Control
+    /// Center, the panel).
+    enum Command {
+        case play, pause, togglePlayPause, next, previous
+        /// Transfer playback back to this device after Spotify moved it away.
+        case bringHere
+
+        var code: UInt32 {
+            switch self {
+            case .play: UInt32(CGSpotifyCommandPlay)
+            case .pause: UInt32(CGSpotifyCommandPause)
+            case .togglePlayPause: UInt32(CGSpotifyCommandPlayPause)
+            case .next: UInt32(CGSpotifyCommandNext)
+            case .previous: UInt32(CGSpotifyCommandPrevious)
+            case .bringHere: UInt32(CGSpotifyCommandBringHere)
+            }
+        }
+    }
+
     /// How the receiver introduces itself to Spotify. librespot on iOS
     /// otherwise impersonates the Spotify iPhone app — its least-used path;
     /// the desktop speaker identity is what every Raspberry Pi install uses.
@@ -68,6 +99,10 @@ final class SpotifyConnectReceiver {
         var title = ""
         var artist = ""
         var remoteClient = ""
+        var handoff: Handoff = .none
+        /// Track position (s) as of this poll, and the track length (s).
+        var position: Double = 0
+        var duration: Double = 0
         var message = ""
         var sampleRate = 0
         var channels = 0
@@ -173,6 +208,7 @@ final class SpotifyConnectReceiver {
         // Started from a tap, in the foreground: the session can activate
         // now, and the running output keeps the hand-off alive in background.
         if playsOnPhone { output.start() }
+        SpotifyNowPlaying.shared.activate(receiver: self)
         let name = Self.deviceName
         let previous = lifecycle
         lifecycle = Task { @MainActor in
@@ -193,6 +229,7 @@ final class SpotifyConnectReceiver {
                 self.update { $0.phase = .failed; $0.message = "The receiver refused to start." }
                 self.isEnabled = false
                 self.output.stop()
+                SpotifyNowPlaying.shared.deactivate()
                 return
             }
             self.lastFrames = 0
@@ -207,6 +244,7 @@ final class SpotifyConnectReceiver {
         // Instant invalidation: the gate closes before Rust is even asked.
         SpotifyPCMRouter.shared.setReceiverGeneration(0)
         output.stop()
+        SpotifyNowPlaying.shared.deactivate()
         update { $0.message = "Stopping…" }
         let previous = lifecycle
         lifecycle = Task { @MainActor in
@@ -223,6 +261,14 @@ final class SpotifyConnectReceiver {
                 $0.message = "Receiver stopped."
             }
         }
+    }
+
+    /// Send a transport command to Spotify. False when there is no Connect
+    /// session (nothing picked this device yet) — the command is dropped.
+    @discardableResult
+    func send(_ command: Command) -> Bool {
+        guard isEnabled else { return false }
+        return cg_spotify_command(command.code)
     }
 
     /// Turn on-phone playback on/off; a running receiver switches live.
@@ -273,6 +319,7 @@ final class SpotifyConnectReceiver {
             "build \(build) · \(librespotRevision) · identity \(identity.rawValue)",
             "phase=\(s.phase) playback=\(s.playback) port=\(s.zeroconfPort) frames=\(s.framesDelivered) hops=\(s.hopsAnalyzed) play→PCM=\(s.firstPCMMilliseconds)ms",
             "output=\(output.state) pulling=\(s.speakerPulling) route=\(output.routeName) airplay=\(output.routeIsAirPlay) latency=\(Int(output.routeLatency * 1000))ms queue=\(s.playbackQueuedMs)ms underruns=\(s.underruns) lightDelay=\(s.presentationDelayMs)ms offset=\(lightOffsetMs)ms",
+            "handoff=\(s.handoff) position=\(Int(s.position))/\(Int(s.duration))s",
             "message: \(s.message)",
             "---- receiver log ----",
         ]
@@ -394,6 +441,11 @@ final class SpotifyConnectReceiver {
         next.title = Self.string(status.title)
         next.artist = Self.string(status.artist)
         next.remoteClient = Self.string(status.remote_client)
+        next.handoff = Self.handoff(status.handoff)
+        next.duration = Double(status.duration_ms) / 1000
+        next.position = Self.position(
+            reportedMs: status.position_ms, ageMs: status.position_age_ms,
+            durationMs: status.duration_ms, playing: next.playback == .playing)
         next.message = Self.string(status.message)
         next.sampleRate = Int(status.sample_rate)
         next.channels = Int(status.channels)
@@ -412,6 +464,7 @@ final class SpotifyConnectReceiver {
         next.analyzerRunning = engine.isRunning
         next.analyzerOnSpotify = engine.sourceKind == .spotifyConnect
         if next != snapshot { snapshot = next }
+        SpotifyNowPlaying.shared.update(next)
         levels = AudioAnalysisEngine.latestFeatures()
         let tail = Array(Self.copyLog(capacity: 4096).split(separator: "\n").suffix(8).map(String.init))
         if tail != logTail { logTail = tail }
@@ -488,6 +541,22 @@ final class SpotifyConnectReceiver {
         case Int(CGSpotifyPlaybackPaused): .paused
         default: .idle
         }
+    }
+
+    private static func handoff(_ raw: UInt32) -> Handoff {
+        switch Int(raw) {
+        case Int(CGSpotifyHandoffActive): .active
+        case Int(CGSpotifyHandoffMovedAway): .movedAway
+        default: .none
+        }
+    }
+
+    /// Current track position: the last reported one, advanced by its age
+    /// while playing, clamped to the track.
+    nonisolated static func position(reportedMs: UInt32, ageMs: UInt32, durationMs: UInt32, playing: Bool) -> Double {
+        var ms = Double(reportedMs) + (playing ? Double(ageMs) : 0)
+        if durationMs > 0 { ms = min(ms, Double(durationMs)) }
+        return ms / 1000
     }
 
     /// Decode a fixed C char array (imported as a tuple), bounded by its size.

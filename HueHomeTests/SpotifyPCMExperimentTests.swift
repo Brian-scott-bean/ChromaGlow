@@ -257,9 +257,41 @@ final class SpotifyPCMExperimentTests: XCTestCase {
     // MARK: - C ABI / real receiver
 
     func testStatusLayoutMatchesTheRustDefinition() {
-        // src/state.rs `status_layout_is_pinned` asserts the same 976 bytes.
-        XCTAssertEqual(MemoryLayout<CGSpotifyStatus>.size, 976)
+        // src/state.rs `status_layout_is_pinned` asserts the same 992 bytes.
+        XCTAssertEqual(MemoryLayout<CGSpotifyStatus>.size, 992)
         XCTAssertEqual(MemoryLayout<CGSpotifyStatus>.alignment, 8)
+    }
+
+    // MARK: - Transport / lock screen
+
+    func testCommandsWithoutAConnectSessionAreRefused() {
+        XCTAssertFalse(cg_spotify_command(UInt32(CGSpotifyCommandPlay)))
+        XCTAssertFalse(cg_spotify_command(UInt32(CGSpotifyCommandBringHere)))
+        XCTAssertFalse(SpotifyConnectReceiver.shared.send(.next), "receiver not started")
+    }
+
+    func testTrackPositionAdvancesOnlyWhilePlaying() {
+        XCTAssertEqual(SpotifyConnectReceiver.position(reportedMs: 78_000, ageMs: 2_500, durationMs: 220_000, playing: true), 80.5)
+        XCTAssertEqual(SpotifyConnectReceiver.position(reportedMs: 78_000, ageMs: 2_500, durationMs: 220_000, playing: false), 78)
+        XCTAssertEqual(SpotifyConnectReceiver.position(reportedMs: 219_000, ageMs: 9_000, durationMs: 220_000, playing: true), 220,
+                       "clamped to the track")
+    }
+
+    func testLockScreenRepublishesOnlyOnVisibleChanges() {
+        typealias S = SpotifyNowPlaying.Sample
+        let base = S(title: "A", artist: "B", duration: 200, playing: true, position: 10, publishedAt: 100)
+        var later = base
+        later.publishedAt = 104
+        later.position = 14.2
+        XCTAssertFalse(SpotifyNowPlaying.needsPublish(last: base, next: later), "progress the lock screen extrapolates")
+        later.position = 40
+        XCTAssertTrue(SpotifyNowPlaying.needsPublish(last: base, next: later), "a seek")
+        var paused = base
+        paused.playing = false
+        XCTAssertTrue(SpotifyNowPlaying.needsPublish(last: base, next: paused))
+        var track = base
+        track.title = "C"
+        XCTAssertTrue(SpotifyNowPlaying.needsPublish(last: base, next: track))
     }
 
     func testLinkedReceiverReportsThePinnedRevision() {

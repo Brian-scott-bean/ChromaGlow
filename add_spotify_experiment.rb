@@ -66,6 +66,7 @@ APP_FILES = {
   'HueHome/Experimental/SpotifyConnect/SpotifyPCMSource.swift'             => %w[HueHome Experimental SpotifyConnect],
   'HueHome/Experimental/SpotifyConnect/SpotifyConnectReceiver.swift'       => %w[HueHome Experimental SpotifyConnect],
   'HueHome/Experimental/SpotifyConnect/SpotifyPlaybackOutput.swift'        => %w[HueHome Experimental SpotifyConnect],
+  'HueHome/Experimental/SpotifyConnect/SpotifyNowPlaying.swift'            => %w[HueHome Experimental SpotifyConnect],
   'HueHome/Experimental/SpotifyConnect/SpotifyConnectExperimentSection.swift' => %w[HueHome Experimental SpotifyConnect],
 }
 

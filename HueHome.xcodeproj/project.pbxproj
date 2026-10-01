@@ -400,6 +400,7 @@
 		DDC82F452FA1140C00324E29 /* LightShadeWatchApp Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = DDC82F252FA1140A00324E29 /* LightShadeWatchApp Watch App.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		DF53B7F566CE44DB82840A7B /* ComposerControlAvailabilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0903E5AA6A72447F8B40AD73 /* ComposerControlAvailabilityTests.swift */; };
 		E0F0218F5257FEE3A8C33899 /* Composer2LookCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC9B34ED59C76D2F93085D37 /* Composer2LookCard.swift */; };
+		E12A6661A3F1D7F2CC3CCECE /* SpotifyNowPlaying.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49379C4266C65BE48CB800F3 /* SpotifyNowPlaying.swift */; };
 		E1B00002AAAA000000000001 /* HueV1Client.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1B00001AAAA000000000001 /* HueV1Client.swift */; };
 		E1B00002AAAA000000000002 /* BridgeAnimationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1B00001AAAA000000000002 /* BridgeAnimationEngine.swift */; };
 		E1B00002AAAA000000000003 /* BridgeAnimationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1B00001AAAA000000000003 /* BridgeAnimationStore.swift */; };
@@ -594,6 +595,7 @@
 		468C7402382CCA5F09F9C65F /* MoreView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MoreView.swift; path = ./HueHome/UI/More/MoreView.swift; sourceTree = "<group>"; };
 		47B7FF7BBDB9A7FACD17098D /* GuestAccessBanner.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GuestAccessBanner.swift; path = ./HueHome/UI/Components/GuestAccessBanner.swift; sourceTree = "<group>"; };
 		47D8011899F8FB42484555C0 /* RoomColorPopover.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RoomColorPopover.swift; path = HueHome/UI/Dashboard/RoomColorPopover.swift; sourceTree = "<group>"; };
+		49379C4266C65BE48CB800F3 /* SpotifyNowPlaying.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SpotifyNowPlaying.swift; path = ./HueHome/Experimental/SpotifyConnect/SpotifyNowPlaying.swift; sourceTree = "<group>"; };
 		49424BD645034BAA8D449004 /* ComposerConvergenceTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ComposerConvergenceTests.swift; path = ./HueHomeTests/ComposerConvergenceTests.swift; sourceTree = "<group>"; };
 		49BA89D3358BA489DEF52EEF /* Composer2Engine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = Composer2Engine.swift; path = ./HueHome/Core/Composer2/Composer2Engine.swift; sourceTree = "<group>"; };
 		4A8399DFE0F87317D040E680 /* LuminousRoomParts.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = LuminousRoomParts.swift; path = HueHome/UI/Components/LuminousRoomParts.swift; sourceTree = "<group>"; };
@@ -1882,6 +1884,7 @@
 				B6B87346AE35F98FE57213DE /* SpotifyConnectReceiver.swift */,
 				A36A7390F67D54F36BDEA43E /* SpotifyConnectExperimentSection.swift */,
 				AAEF2D953761BF88451A8F37 /* SpotifyPlaybackOutput.swift */,
+				49379C4266C65BE48CB800F3 /* SpotifyNowPlaying.swift */,
 			);
 			name = SpotifyConnect;
 			sourceTree = "<group>";
@@ -2466,6 +2469,7 @@
 				C96EC13B8326800617CAD3F9 /* SpotifyConnectReceiver.swift in Sources */,
 				8FCDC5C1D0460C0A18F76D66 /* SpotifyConnectExperimentSection.swift in Sources */,
 				E4927FD14340445700C072DD /* SpotifyPlaybackOutput.swift in Sources */,
+				E12A6661A3F1D7F2CC3CCECE /* SpotifyNowPlaying.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

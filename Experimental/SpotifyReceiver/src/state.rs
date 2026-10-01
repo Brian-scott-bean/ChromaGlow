@@ -40,6 +40,19 @@ pub enum PlaybackState {
     Paused = 3,
 }
 
+/// Whether this device holds Spotify Connect playback (CGSpotifyStatus.handoff).
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Handoff {
+    /// Not yet picked in this session.
+    None = 0,
+    /// The active Connect device: Spotify plays here.
+    Active = 1,
+    /// Was active, then Spotify moved playback elsewhere (e.g. the phone's
+    /// own Spotify app reclaimed it when the iPhone's output route changed).
+    MovedAway = 2,
+}
+
 #[derive(Default)]
 struct Text {
     title: String,
@@ -66,6 +79,11 @@ pub struct Shared {
     /// first PCM chunk; 0 = none pending.
     pending_play_ns: AtomicU64,
     first_pcm_ms: AtomicU32,
+    handoff: AtomicU32,
+    position_ms: AtomicU32,
+    /// Nanoseconds (since `epoch`) when `position_ms` was reported.
+    position_at_ns: AtomicU64,
+    duration_ms: AtomicU32,
     epoch: Instant,
     text: Mutex<Text>,
 }
@@ -87,6 +105,10 @@ impl Shared {
             underruns: AtomicU64::new(0),
             pending_play_ns: AtomicU64::new(0),
             first_pcm_ms: AtomicU32::new(0),
+            handoff: AtomicU32::new(Handoff::None as u32),
+            position_ms: AtomicU32::new(0),
+            position_at_ns: AtomicU64::new(0),
+            duration_ms: AtomicU32::new(0),
             epoch: Instant::now(),
             text: Mutex::new(Text::default()),
         }
@@ -159,6 +181,29 @@ impl Shared {
         }
     }
 
+    pub fn set_handoff(&self, handoff: Handoff) {
+        self.handoff.store(handoff as u32, Ordering::Release);
+    }
+
+    pub fn handoff(&self) -> Handoff {
+        match self.handoff.load(Ordering::Acquire) {
+            1 => Handoff::Active,
+            2 => Handoff::MovedAway,
+            _ => Handoff::None,
+        }
+    }
+
+    /// Track position as of now (librespot reports it on play/pause/seek).
+    pub fn set_position(&self, position_ms: u32) {
+        self.position_ms.store(position_ms, Ordering::Release);
+        self.position_at_ns
+            .store(self.epoch.elapsed().as_nanos() as u64, Ordering::Release);
+    }
+
+    pub fn set_duration(&self, duration_ms: u32) {
+        self.duration_ms.store(duration_ms, Ordering::Release);
+    }
+
     pub fn set_port(&self, port: u16) {
         self.zeroconf_port.store(u32::from(port), Ordering::Release);
     }
@@ -200,6 +245,12 @@ impl Shared {
         out.underruns = self.underruns.load(Ordering::Relaxed);
         out.playback_queued_frames = ring_queued_frames;
         out.first_pcm_ms = self.first_pcm_ms.load(Ordering::Relaxed);
+        out.handoff = self.handoff.load(Ordering::Acquire);
+        out.position_ms = self.position_ms.load(Ordering::Acquire);
+        let now = self.epoch.elapsed().as_nanos() as u64;
+        let age_ms = now.saturating_sub(self.position_at_ns.load(Ordering::Acquire)) / 1_000_000;
+        out.position_age_ms = age_ms.min(u64::from(u32::MAX)) as u32;
+        out.duration_ms = self.duration_ms.load(Ordering::Acquire);
         let text = self.text.lock().unwrap_or_else(|e| e.into_inner());
         copy_c_string(&text.title, &mut out.title);
         copy_c_string(&text.artist, &mut out.artist);
@@ -222,6 +273,13 @@ pub struct CGSpotifyStatus {
     pub playback_queued_frames: u32,
     /// Play request → first PCM chunk, last measured (ms; 0 = none yet).
     pub first_pcm_ms: u32,
+    /// `Handoff` as u32.
+    pub handoff: u32,
+    /// Track position when last reported, and how long ago that was; the
+    /// current position is `position_ms + position_age_ms` while playing.
+    pub position_ms: u32,
+    pub position_age_ms: u32,
+    pub duration_ms: u32,
     pub frames_delivered: u64,
     pub chunks_delivered: u64,
     pub underruns: u64,
@@ -298,12 +356,35 @@ mod latency_tests {
 }
 
 #[cfg(test)]
+mod handoff_tests {
+    use super::{CGSpotifyStatus, Handoff, Shared};
+
+    #[test]
+    fn handoff_and_position_reach_the_status() {
+        let shared = Shared::new(3, None);
+        let mut st: CGSpotifyStatus = unsafe { std::mem::zeroed() };
+        shared.fill_status(&mut st, 0);
+        assert_eq!(st.handoff, Handoff::None as u32);
+        shared.set_handoff(Handoff::Active);
+        shared.set_duration(200_000);
+        shared.set_position(78_000);
+        std::thread::sleep(std::time::Duration::from_millis(12));
+        shared.fill_status(&mut st, 0);
+        assert_eq!(st.handoff, Handoff::Active as u32);
+        assert_eq!((st.position_ms, st.duration_ms), (78_000, 200_000));
+        assert!(st.position_age_ms >= 12);
+        shared.set_handoff(Handoff::MovedAway);
+        assert_eq!(shared.handoff(), Handoff::MovedAway);
+    }
+}
+
+#[cfg(test)]
 mod layout_tests {
     #[test]
     fn status_layout_is_pinned() {
         // HueHomeTests/SpotifyPCMExperimentTests asserts the same numbers from
         // the Swift import of include/chromaglow_spotify.h.
-        assert_eq!(std::mem::size_of::<super::CGSpotifyStatus>(), 976);
+        assert_eq!(std::mem::size_of::<super::CGSpotifyStatus>(), 992);
         assert_eq!(std::mem::align_of::<super::CGSpotifyStatus>(), 8);
     }
 }

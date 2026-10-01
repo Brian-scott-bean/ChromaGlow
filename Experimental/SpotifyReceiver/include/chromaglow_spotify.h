@@ -33,6 +33,23 @@ enum {
     CGSpotifyPlaybackPaused = 3,
 };
 
+/// Connect hand-off (CGSpotifyStatus.handoff).
+enum {
+    CGSpotifyHandoffNone = 0,       // not picked in this session
+    CGSpotifyHandoffActive = 1,     // Spotify plays on this device
+    CGSpotifyHandoffMovedAway = 2,  // was active; Spotify moved playback elsewhere
+};
+
+/// cg_spotify_command codes.
+enum {
+    CGSpotifyCommandPlay = 1,
+    CGSpotifyCommandPause = 2,
+    CGSpotifyCommandPlayPause = 3,
+    CGSpotifyCommandNext = 4,
+    CGSpotifyCommandPrevious = 5,
+    CGSpotifyCommandBringHere = 6,  // transfer playback back to this device
+};
+
 typedef struct CGSpotifyStatus {
     uint64_t generation;
     uint32_t state;
@@ -44,6 +61,10 @@ typedef struct CGSpotifyStatus {
     uint32_t track_serial;        // bumps on every track change
     uint32_t playback_queued_frames;
     uint32_t first_pcm_ms;        // play request → first PCM chunk (ms; 0 = n/a)
+    uint32_t handoff;             // CGSpotifyHandoff*
+    uint32_t position_ms;         // track position when last reported…
+    uint32_t position_age_ms;     // …and how long ago (add while playing)
+    uint32_t duration_ms;
     uint64_t frames_delivered;    // frames handed to the PCM callback
     uint64_t chunks_delivered;
     uint64_t underruns;           // playback pulls that came up short
@@ -95,6 +116,11 @@ void cg_spotify_set_persona(bool desktop_linux);
 /// NUL-terminated; returns bytes copied excluding the NUL. No account names,
 /// credential blobs or tokens ever reach it.
 size_t cg_spotify_copy_log(char *out, size_t capacity);
+
+/// Send a CGSpotifyCommand*. Non-blocking. False without a Connect session or
+/// for an unknown code. Play/Pause/Next/Previous act only while this device is
+/// active; BringHere transfers playback back to it when it isn't.
+bool cg_spotify_command(uint32_t command);
 
 /// Static string naming the pinned librespot revision.
 const char *cg_spotify_librespot_revision(void);
