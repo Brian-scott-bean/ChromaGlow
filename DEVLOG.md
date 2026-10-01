@@ -750,8 +750,13 @@ per room). Recipe in Claude's memory `device-drive-via-mirroring`.
 - Fix 5: Stop restored all 8 bulbs to the pre-Go-Live state exactly (bridge read-back: ON 5.9 % mirek 490); all
   restore writes landed after the last look frame.
 - Fix 6: every card reads 6 % after Sleep (bridge 5.93 %). Fix 7: "YOUR LOOKS" under the Composer card.
-- Fix 2 (unreachable-bulb notice) NOT exercised on hardware — needs a bulb switched off at the wall. Build 58
-  (fixes-only) was not installed; its shared fixes are the same commits.
+- Fix 2: Brian cut power to the Hallway (2 bulbs); Go Live there → every PUT 207 `communication_error`, sweeps now
+  report failures=2 (build 57 said 0), and the dock read "2 lights aren't responding — check they're switched on."
+- Build 59 (`experiment/composer-2-v2.2-ui-ux`) archived Release and **uploaded to App Store Connect / TestFlight**
+  at Brian's request (2026-09-30 23:13, "Upload succeeded", processing). Build 58 (fixes-only) was not installed
+  or uploaded; its shared fixes are the same commits.
+- Noted, not changed: with dead bulbs the Room-mode sweep keeps retrying them (~6 cmd/s for 2 bulbs) because a
+  failed rotation never quiesces — paced, but wasted traffic; a back-off for unreachable lights is a follow-up.
 
 ### Still NOT verified on hardware
 Before the build-59 check above: everything in this round's fixes: the paced Room-mode rate and bridge latency,
