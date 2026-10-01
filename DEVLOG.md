@@ -13837,3 +13837,29 @@ as its own output; ChromaGlow "device became inactive"). Auto Detect Song + Spot
   `HueHome 1` Debug builds with the experiment compiled out. Full suite not run this round.
 - Unverified on hardware: everything above — hand-off survives speaker changes once Spotify is
   closed, lock-screen controls, multi-speaker AirPlay 2, light alignment on AirPlay.
+
+### 2026-10-01 (later) — [Claude] Device round driven over iPhone Mirroring: 904 then 905
+
+Hand-off done from the Mac's Spotify (the phone's Spotify device list never showed "ChromaGlow
+Sync" this time, though the Mac's `dns-sd` and Mac Spotify both saw it). Mirroring blocks the
+iPhone mic, so the Auto Detect crash path was only checked as far as "Auto-Detect selected →
+pick Spotify → Start → no crash".
+- **904 PASS:** connect; panel ⏮ ⏯ ⏭ (pause/play/skip, next track loads); track + artist in the
+  system route picker (Now Playing published); moved-away notice when Mac Spotify took the music,
+  **Bring it back here** transferred it back on the same track; **JBL Boombox 3 Wi-Fi over
+  AirPlay picked in ChromaGlow → music moved, Connect session stayed** (phone Spotify closed);
+  light delay 2311 ms (300 ring + 2023 reported AirPlay latency).
+- **904 FAIL → fixed `872e1d1`:** opening, then closing, the phone's Spotify app interrupted
+  ChromaGlow's output with no `.shouldResume` — silent until Tap to resume. Now auto-resumes
+  (Spotify playing here, no other audio, every 3 s). Also seen: Resume rebuilt AVAudioEngine on the
+  main thread (~800 ms hang) — gone in 905 (renderer).
+- **905 (`872e1d1` built, installed):** AirPlay route kept across reinstall; steady feed (ring
+  250 ms, 0 underruns); Beat Drop live (Room mode, Hallway) with the analyzer on Spotify,
+  ~155 BPM; **lights wait 3.2 s on AirPlay** (renderer timeline). Picker shows the multi-speaker
+  layout (JBL ✓, Odyssey TV selectable — not added). Pause from the panel works.
+- Still for Brian (can't be judged over mirroring — audio plays on the Mac / can't see lights):
+  whether 3.2 s matches what the JBL actually plays (if lights lead by ~2 s, the synchronizer
+  timeline does NOT include AirPlay latency), two AirPlay speakers at once, lock screen,
+  Bluetooth, the real Auto Detect crash path, a call interruption.
+- Small: the speaker row says "AirPlay" instead of the speaker's name in 905; Composer's Music strip
+  still says "Nothing playing" while Spotify plays (it shows the music *source*, not the receiver).
