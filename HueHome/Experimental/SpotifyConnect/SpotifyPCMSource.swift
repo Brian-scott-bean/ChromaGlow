@@ -69,6 +69,9 @@ final class SpotifyPCMRouter: @unchecked Sendable {
     private let hopper = InterleavedPCMHopper(hopFrames: 1024)
     private var userOffset: Double = 0
     private var outputLatency: Double = 0
+    /// The playback output's timeline while music plays on the phone; when
+    /// set, it alone decides when a chunk is heard (see route()).
+    private var playbackClock: SpotifyPlaybackClock?
     private var smoothedDelay: Double = 0
     private var hasDelay = false
     private var diagnostics = Diagnostics()
@@ -110,11 +113,20 @@ final class SpotifyPCMRouter: @unchecked Sendable {
         lock.unlock()
     }
 
-    /// Output latency of the playback route (Phase 2) — 0 while nothing is
-    /// playing, so analysis-only listening isn't delayed.
+    /// Output latency of the playback route — 0 while nothing is playing, so
+    /// analysis-only listening isn't delayed. Ignored while a playback clock
+    /// is set (the renderer's timeline already includes the route).
     func setOutputLatency(_ seconds: Double) {
         lock.lock()
         outputLatency = max(0, seconds)
+        lock.unlock()
+    }
+
+    /// The playback output's clock (nil = not playing on the phone).
+    func setPlaybackClock(_ clock: SpotifyPlaybackClock?) {
+        lock.lock()
+        playbackClock = clock
+        hasDelay = false
         lock.unlock()
     }
 
@@ -122,6 +134,16 @@ final class SpotifyPCMRouter: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return diagnostics
+    }
+
+    /// The playback output flushed (Spotify paused): drop the light hops
+    /// still waiting for audio that will now never be heard. Any thread.
+    func dropScheduledLights() {
+        lock.lock()
+        let sink = self.sink
+        hopper.reset()
+        lock.unlock()
+        sink?.publishSilence()
     }
 
     /// Paused / stalled stream: once no hop has arrived for `after` seconds
@@ -154,17 +176,24 @@ final class SpotifyPCMRouter: @unchecked Sendable {
             return
         }
         let rate = Double(sampleRate)
-        // Audio queued for playback is heard after the queue drains plus the
-        // route's own latency; analysis-only (Phase 1) has neither.
-        let playoutDelay = Double(queuedFrames) / rate + outputLatency
-        let target = max(0, playoutDelay + userOffset)
-        if !hasDelay || abs(target - smoothedDelay) > 0.25 {
-            smoothedDelay = target   // mode change / slider move: jump
+        let now = CACurrentMediaTime()
+        if let heard = playbackClock?.presentationHostTime(queuedFrames: queuedFrames, now: now) {
+            // Playing on the phone: this chunk is heard when the renderer's
+            // timeline reaches it (the timeline already includes the route —
+            // AirPlay too). Exact per chunk, so no smoothing.
+            smoothedDelay = max(0, heard - now + userOffset)
             hasDelay = true
         } else {
-            smoothedDelay += (target - smoothedDelay) * 0.05   // queue jitter: glide
+            // Analysis-only (Phase 1): nothing queued, no route.
+            let playoutDelay = Double(queuedFrames) / rate + outputLatency
+            let target = max(0, playoutDelay + userOffset)
+            if !hasDelay || abs(target - smoothedDelay) > 0.25 {
+                smoothedDelay = target   // mode change / slider move: jump
+                hasDelay = true
+            } else {
+                smoothedDelay += (target - smoothedDelay) * 0.05   // queue jitter: glide
+            }
         }
-        let now = CACurrentMediaTime()
         let presentation = now + smoothedDelay
         var hops: UInt64 = 0
         hopper.push(samples, frames: Int(frames), channels: Int(channels), sampleRate: rate) { mono, count, buffer in
