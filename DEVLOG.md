@@ -750,7 +750,11 @@ and its reasons are in `docs/ios/luminous-app-redesign/README.md`; in short:
 ### Validation
 - `./Scripts/hardening_guards.sh`: all guards passed.
 - Full registered suite (2 workers): **2451/2451**, 0 failed, 0 skipped (gallery renders included; build 59 was
-  2418). After the dead-code removal: build + StudioScrollStability/HueTokens/Composer2LabGuard/TutorialCatalog
+  2418).
+- **Installed on Brian's iPhone 17 Pro Max** (2026-10-01 01:15, Debug, `devicectl device info apps` → 1.0.0 / **60**).
+  ChromaGlow was NOT on the phone beforehand (fresh install — no app data to keep), so it opens on pairing. Live
+  console: first frame +200 ms, unpaired → setup at +922 ms, no errors; Brian started a scan; mDNS saw both bridges
+  but resolution timed out at 12 s (pre-existing) and cloud discovery found 192.168.40.117. After the dead-code removal: build + StudioScrollStability/HueTokens/Composer2LabGuard/TutorialCatalog
   53/53.
 
 ### Gotchas
