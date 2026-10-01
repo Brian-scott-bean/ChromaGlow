@@ -338,6 +338,12 @@ struct RoomDetailView: View {
         .onChange(of: vm.roomBrightness) { _, new in
             if !draggingRoomLevel { roomLevel = max(1, new) }
         }
+        // A Select dock belongs to its segment — switching away used to leave
+        // the lights dock floating over the Scenes list.
+        .onChange(of: segment) { _, new in
+            if new != .lights && vm.isSelecting { vm.exitSelectMode() }
+            if new != .scenes && vm.isSelectingScenes { vm.exitSceneSelectMode() }
+        }
         .preferredColorScheme(.dark)
         .overlay(alignment: .top) {
             if let msg = vm.toastMessage {
