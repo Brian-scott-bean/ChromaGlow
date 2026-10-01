@@ -355,7 +355,7 @@ struct SceneColorBuilderView: View {
                 .frame(width: 65)
 
             // Brightness
-            Text("\(Int(light.brightness))%")
+            Text("\(BrightnessDisplay.percent(light.brightness))%")
                 .font(.system(size: 9, weight: .medium))
                 .foregroundStyle(chipColor.opacity(0.8))
         }
@@ -547,7 +547,7 @@ struct SceneColorBuilderView: View {
 
     private var brightnessSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("BRIGHTNESS · \(Int(displayBrightness))%")
+            Text("BRIGHTNESS · \(BrightnessDisplay.percent(displayBrightness))%")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.45))
 

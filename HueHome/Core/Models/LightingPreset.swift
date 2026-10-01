@@ -46,3 +46,18 @@ struct LightingPreset: Identifiable, Equatable, Sendable {
         all.first { $0.id == id }
     }
 }
+
+// MARK: - Brightness on screen
+
+/// How a brightness (0–100, the bridge's own scale) reads on screen — one
+/// rule for the app, the widget and the watch (this file is compiled into
+/// all three). Rounds to the nearest percent: the bridge stores 254 steps,
+/// so the 6 % Sleep preset reads back as 5.93 and truncation showed 5 %;
+/// a slider at 49.6 showed 49 % while the bridge set 50 % (device round,
+/// build 58). A lit light never reads 0 %.
+enum BrightnessDisplay {
+    static func percent(_ brightness: Double) -> Int {
+        guard brightness.isFinite, brightness > 0 else { return 0 }
+        return min(100, max(1, Int(brightness.rounded())))
+    }
+}

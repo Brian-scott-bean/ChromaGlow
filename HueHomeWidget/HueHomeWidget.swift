@@ -665,7 +665,7 @@ struct LargeRoomRow: View {
             }
             .buttonStyle(.plain)
 
-            Text(room.isOn ? "\(Int(room.brightness))%" : "Off")
+            Text(room.isOn ? "\(BrightnessDisplay.percent(room.brightness))%" : "Off")
                 .font(.system(size: 10, weight: .medium, design: .monospaced))
                 .foregroundStyle(room.isOn ? amber.opacity(0.75) : .white.opacity(0.25))
                 .frame(width: 30)
@@ -849,7 +849,7 @@ struct FocusedSmallWidgetView: View {
             // systemSmall is 130pt wide inside its padding: a 34pt readout plus
             // two buttons caps each button near 30pt.
             HStack(alignment: .lastTextBaseline, spacing: 6) {
-                Text(room.isOn ? "\(Int(room.brightness))%" : "Off")
+                Text(room.isOn ? "\(BrightnessDisplay.percent(room.brightness))%" : "Off")
                     .font(.system(size: 34, weight: .bold, design: .rounded))
                     .foregroundStyle(room.isOn ? amber : .white.opacity(0.3))
                 Spacer()
@@ -953,7 +953,7 @@ struct FocusedMediumWidgetView: View {
                 }
                 .frame(maxWidth: .infinity)
 
-                Text(room.isOn ? "\(Int(room.brightness))%" : "Off")
+                Text(room.isOn ? "\(BrightnessDisplay.percent(room.brightness))%" : "Off")
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
                     .foregroundStyle(room.isOn ? amber.opacity(0.85) : .white.opacity(0.3))
                     .frame(width: 34, alignment: .trailing)
@@ -1201,7 +1201,7 @@ struct AccessoryRectangularView: View {
                     .lineLimit(1)
 
                 HStack(spacing: 6) {
-                    Text(room.isOn ? "\(Int(room.brightness))%" : "Off")
+                    Text(room.isOn ? "\(BrightnessDisplay.percent(room.brightness))%" : "Off")
                         .font(.system(size: 12, weight: .medium, design: .monospaced))
                         .foregroundStyle(.secondary)
                     Text(room.isZone ? "Zone" : "\(room.lightCount) bulb\(room.lightCount == 1 ? "" : "s")")
@@ -1246,7 +1246,7 @@ struct AccessoryRectangularView: View {
                             .foregroundStyle(room.isOn ? .primary : .secondary)
                             .lineLimit(1)
                         Spacer()
-                        Text(room.isOn ? "\(Int(room.brightness))%" : "—")
+                        Text(room.isOn ? "\(BrightnessDisplay.percent(room.brightness))%" : "—")
                             .font(.system(size: 11, design: .monospaced))
                             .foregroundStyle(.secondary)
                     }
@@ -1266,7 +1266,7 @@ struct AccessoryInlineView: View {
     var body: some View {
         if let room = entry.selectedRoom {
             Label(
-                room.isOn ? "\(room.name) \(Int(room.brightness))%" : "\(room.name) off",
+                room.isOn ? "\(room.name) \(BrightnessDisplay.percent(room.brightness))%" : "\(room.name) off",
                 systemImage: widgetArchetypeIcon(room.archetype)
             )
             .widgetAccentable(room.isOn)

@@ -139,7 +139,7 @@ struct BulkActionBar: View {
                     .font(.system(size: 14))
             }
 
-            Text("\(Int(bulkBrightness))%")
+            Text("\(BrightnessDisplay.percent(bulkBrightness))%")
                 .font(.system(size: 28, weight: .semibold, design: .rounded))
                 .foregroundStyle(.white)
                 .monospacedDigit()

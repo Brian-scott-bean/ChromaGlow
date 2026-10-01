@@ -63,7 +63,7 @@ struct RoomDetailView: View {
                     .lineLimit(1)
 
                 Text(currentRoom.isOn
-                     ? "\(Int(currentRoom.brightness))% · \(room.lightCount) bulb\(room.lightCount == 1 ? "" : "s")"
+                     ? "\(BrightnessDisplay.percent(currentRoom.brightness))% · \(room.lightCount) bulb\(room.lightCount == 1 ? "" : "s")"
                      : "Off")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
@@ -93,7 +93,7 @@ struct RoomDetailView: View {
 
                         HStack(spacing: 8) {
                             brightnessStepper("minus", delta: -Self.tapStep)
-                            Text("\(Int(brightness))%")
+                            Text("\(BrightnessDisplay.percent(brightness))%")
                                 .font(.system(size: 16, weight: .semibold, design: .rounded))
                                 .monospacedDigit()
                                 .frame(maxWidth: .infinity)
@@ -175,7 +175,7 @@ struct RoomDetailView: View {
                                 Text(preset.label)
                                     .font(.system(size: 13, weight: .medium))
                                 Spacer()
-                                Text("\(Int(preset.brightness))%")
+                                Text("\(BrightnessDisplay.percent(preset.brightness))%")
                                     .font(.system(size: 10, design: .monospaced))
                                     .foregroundStyle(.secondary)
                             }
