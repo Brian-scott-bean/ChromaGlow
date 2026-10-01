@@ -102,7 +102,7 @@ struct Composer2TuneView: View {
     // MARK: Colours
 
     private var colours: some View {
-        panel(title: "Colours", symbol: "paintpalette.fill") {
+        panel(title: "Colors", symbol: "paintpalette.fill") {
             if composition.layers.count > 1 {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
@@ -140,7 +140,7 @@ struct Composer2TuneView: View {
                         .shadow(color: Composer2Theme.magenta.opacity(0.5), radius: 10)
                 }
                 .buttonStyle(Composer2PressStyle())
-                .accessibilityLabel("Edit the colours of \(document.selectedLayer.name)")
+                .accessibilityLabel("Edit the colors of \(document.selectedLayer.name)")
             }
         }
     }

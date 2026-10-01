@@ -13,6 +13,12 @@ struct ComposerRoomLooks: View {
     let room: RoomDisplayItem
 
     @Environment(UnifiedOrchestrator.self) private var orchestrator
+
+    /// A prompt raised from a hidden tab is dropped by UIKit and swallows the
+
+    /// next presentation app-wide — only the surface on screen asks.
+
+    @Environment(\.isTabActive) private var isTabActive
     @State private var open: OpenRequest?
     @State private var notice: String?
 
@@ -104,7 +110,7 @@ struct ComposerRoomLooks: View {
         // A one-tap start that meets another app's show asks here; the
         // instrument's own prompt answers when it is on screen.
         .alert(EntertainmentConsentCopy.takeoverTitle, isPresented: Binding(
-            get: { center.takeoverPending && !center.hasAttachedScreen },
+            get: { center.takeoverPending && !center.hasAttachedScreen && isTabActive },
             set: { if !$0, center.takeoverPending { center.answerTakeover(false) } })) {
             Button(EntertainmentConsentCopy.keepExisting, role: .cancel) { center.answerTakeover(false) }
             Button(EntertainmentConsentCopy.takeOver) {

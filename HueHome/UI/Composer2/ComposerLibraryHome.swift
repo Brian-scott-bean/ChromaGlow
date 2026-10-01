@@ -15,6 +15,12 @@ struct ComposerLibraryHome: View {
     let onOpenStudioClassic: () -> Void
 
     @Environment(UnifiedOrchestrator.self) private var orchestrator
+
+    /// A prompt raised from a hidden tab is dropped by UIKit and swallows the
+
+    /// next presentation app-wide — only the surface on screen asks.
+
+    @Environment(\.isTabActive) private var isTabActive
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// The room looks play in — remembered between launches.
@@ -105,7 +111,7 @@ struct ComposerLibraryHome: View {
         // A one-tap start that meets another app's show asks here; the
         // instrument's own prompt answers when it is on screen.
         .alert(EntertainmentConsentCopy.takeoverTitle, isPresented: Binding(
-            get: { center.takeoverPending && !center.hasAttachedScreen },
+            get: { center.takeoverPending && !center.hasAttachedScreen && isTabActive },
             set: { if !$0, center.takeoverPending { center.answerTakeover(false) } })) {
             Button(EntertainmentConsentCopy.keepExisting, role: .cancel) { center.answerTakeover(false) }
             Button(EntertainmentConsentCopy.takeOver) {
@@ -489,7 +495,7 @@ struct ComposerLibraryHome: View {
                     Text("Build your own")
                         .font(LuminousType.cardTitle)
                         .foregroundStyle(LuminousPalette.ink)
-                    Text("Stack colour, motion, rhythm and moments into a look nobody else has.")
+                    Text("Stack color, motion, rhythm and moments into a look nobody else has.")
                         .font(.footnote)
                         .foregroundStyle(LuminousPalette.inkSecondary)
                         .fixedSize(horizontal: false, vertical: true)

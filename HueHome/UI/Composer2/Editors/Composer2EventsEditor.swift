@@ -56,7 +56,7 @@ struct Composer2EventsEditorContent: View {
                                            format: { $0 < 0.02 ? "at once" : composer2Seconds($0) })
                     }
                     if spec.shape == .firework || spec.shape == .twinkle {
-                        Composer2ChipRow(title: "Colours", options: Composer2EventsEditorContent.colourSets.map {
+                        Composer2ChipRow(title: "Colors", options: Composer2EventsEditorContent.colourSets.map {
                             ($0.name, $0.name, nil)
                         }, selection: Binding(
                             get: { Composer2EventsEditorContent.colourSets.first { $0.colors == spec.colors }?.name ?? "" },
@@ -119,7 +119,7 @@ struct Composer2EventsEditorContent: View {
                 }
                 Composer2EditorSection(title: "Effect") {
                     modulationToggle("Brightness flash", .brightness)
-                    modulationToggle("Colour flash", .color)
+                    modulationToggle("Color flash", .color)
                     modulationToggle("Kick the motion", .motion)
                     if events?.modulates.contains(.motion) == true {
                         Composer2SliderRow(title: "Kick strength", value: eventBinding(\.motionKick), range: -1...1,

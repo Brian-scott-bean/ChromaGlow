@@ -523,7 +523,7 @@ private struct ComposerArt: View {
         let saved = TourMotionMath.segment(p, from: 0.72, to: 0.84)
 
         VStack(spacing: 10) {
-            layerChip(tag: "COLOUR", reveal: l0) {
+            layerChip(tag: "COLOR", reveal: l0) {
                 LinearGradient(colors: [Color(hex: "#FF6B6B"), accent, Color(hex: "#40C9FF")],
                                startPoint: .leading, endPoint: .trailing)
                     .frame(height: 10)

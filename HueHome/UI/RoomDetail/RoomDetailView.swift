@@ -530,7 +530,7 @@ struct RoomDetailView: View {
     private var lightsSubtitle: String {
         if armedColor != nil { return "Tap a light to paint it." }
         if vm.isSelecting { return "Choose lights to change together." }
-        return "Tap a light for colour and warmth. Hold one for more."
+        return "Tap a light for color and warmth. Hold one for more."
     }
 
     @ViewBuilder

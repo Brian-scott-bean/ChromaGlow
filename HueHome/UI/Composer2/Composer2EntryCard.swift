@@ -13,6 +13,12 @@ struct Composer2EntryCard: View {
     let selectedRoom: RoomDisplayItem?
 
     @Environment(UnifiedOrchestrator.self) private var orchestrator
+
+    /// A prompt raised from a hidden tab is dropped by UIKit and swallows the
+
+    /// next presentation app-wide — only the surface on screen asks.
+
+    @Environment(\.isTabActive) private var isTabActive
     @State private var isPresented = false
     @State private var openComposition: Composer2Composition?
     @State private var renameTarget: Composer2Composition?
@@ -46,7 +52,7 @@ struct Composer2EntryCard: View {
         // Composer 2 screen's prompt is the only other answer, and it is not
         // on screen — the question used to wait forever and hold every stop.
         .alert(EntertainmentConsentCopy.takeoverTitle, isPresented: Binding(
-            get: { center.takeoverPending && !center.hasAttachedScreen },
+            get: { center.takeoverPending && !center.hasAttachedScreen && isTabActive },
             set: { if !$0, center.takeoverPending { center.answerTakeover(false) } })) {
             Button(EntertainmentConsentCopy.keepExisting, role: .cancel) { center.answerTakeover(false) }
             Button(EntertainmentConsentCopy.takeOver) {

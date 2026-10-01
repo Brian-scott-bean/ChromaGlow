@@ -46,10 +46,10 @@ struct RoomColorPopover: View {
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 20) {
                     LuminousScreenTitle(title: room.name,
-                                        eyebrow: "Colour wash",
+                                        eyebrow: "Color wash",
                                         eyebrowSymbol: "paintbrush.fill",
                                         eyebrowTint: washColors.first ?? LuminousPalette.cyan,
-                                        subtitle: "One colour for the whole room — or a harmony that spreads several across it.")
+                                        subtitle: "One color for the whole room — or a harmony that spreads several across it.")
 
                     // ── The wheel ────────────────────────────
                     ColorWheelView(hue: $hue, saturation: $saturation) { _, _ in

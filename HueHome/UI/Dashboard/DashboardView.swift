@@ -488,7 +488,7 @@ struct DashboardView: View {
     private var roomsSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             LuminousSectionHeader(title: "Rooms",
-                                  subtitle: "Tap a room to step in. Hold one to wash it in a colour.")
+                                  subtitle: "Tap a room to step in. Hold one to wash it in a color.")
             LazyVGrid(columns: gridColumns, spacing: Self.gridSpacing) {
                 ForEach(orchestrator.allRooms, id: \.id) { room in
                     roomCard(room)

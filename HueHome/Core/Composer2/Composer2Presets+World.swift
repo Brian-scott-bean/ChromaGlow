@@ -248,7 +248,7 @@ extension Composer2PresetLibrary {
             variation: .exact)
         let mirrorball = eventLayer(41, 2, "Mirror Ball",
                                     events: twinkles([Swatch.white], every: 0.3...0.8, lasting: 0.15...0.3))
-        return look(41, "Disco Fever", "Colour squares chasing, a mirror ball glinting.", [floor, mirrorball])
+        return look(41, "Disco Fever", "Color squares chasing, a mirror ball glinting.", [floor, mirrorball])
     }()
 
     static let neonNights: Composer2Composition = {
@@ -289,7 +289,7 @@ extension Composer2PresetLibrary {
             rhythm: Composer2Rhythm(shape: .steady, maxBrightness: 0.25),
             audio: Composer2AudioModulation(source: .bass, sensitivity: 0.75, intensity: 0.9, targets: [.brightness]),
             variation: .subtle)
-        return look(44, "Beat Drop", "Listens to the room — every hit changes colour.", [hits, bass])
+        return look(44, "Beat Drop", "Listens to the room — every hit changes color.", [hits, bass])
     }()
 
     static let clubPulse: Composer2Composition = {

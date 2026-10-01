@@ -1142,8 +1142,11 @@ enum LuminousLight {
     }
 
     /// Stage frames for the Composer's painter, one per light, in order.
+    /// An off lamp is neutral glass: the painter tints even a dark orb's rim
+    /// with its frame colour, and a lamp that is off shows no colour.
     static func frames(for lights: [LightDisplayItem]) -> [Composer2Frame] {
         lights.enumerated().map { i, light in
+            guard light.isOn else { return Composer2Frame(slot: i, x: 0.3127, y: 0.3290, brightness: 0) }
             let p = xy(of: light)
             return Composer2Frame(slot: i, x: p.x, y: p.y, brightness: level(of: light))
         }

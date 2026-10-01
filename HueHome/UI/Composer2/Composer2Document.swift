@@ -34,7 +34,7 @@ enum Composer2Editor: String, Identifiable, CaseIterable {
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .palette: return "Colour"
+        case .palette: return "Color"
         case .motion: return "Motion"
         case .rhythm: return "Rhythm"
         case .space: return "Space"

@@ -259,7 +259,7 @@ enum Composer2Copy {
         case .stepped: style = "stepped"
         case .softStepped: style = "soft steps"
         }
-        let base = n == 1 ? "1 colour · solid" : "\(n) colours · \(style)"
+        let base = n == 1 ? "1 color · solid" : "\(n) colors · \(style)"
         return color.drift > 0.05 ? base + " · drifting" : base
     }
 
@@ -351,7 +351,7 @@ enum Composer2Copy {
     static func targetName(_ target: Composer2AudioModulation.Target) -> String {
         switch target {
         case .brightness: return "brightness"
-        case .palettePosition: return "colour"
+        case .palettePosition: return "color"
         case .motionSpeed: return "speed"
         case .eventProbability: return "events"
         }

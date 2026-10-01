@@ -146,6 +146,6 @@ enum BridgeDynamicSceneExporter {
     static func successMessage(name: String, willAnimate: Bool) -> String {
         willAnimate
             ? "'\(name)' saved as a dynamic scene ✓ — find it in Scenes"
-            : "'\(name)' saved as a static scene ✓ — a single colour has nothing to cycle"
+            : "'\(name)' saved as a static scene ✓ — a single color has nothing to cycle"
     }
 }

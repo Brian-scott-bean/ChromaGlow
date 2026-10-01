@@ -45,7 +45,7 @@ struct Composer2AudioEditorContent: View {
                             ("Dimming when quiet", .dimWhenQuiet, "moon")
                         ], selection: document.layerBinding(\.audio.brightnessMode))
                     }
-                    targetToggle("Colour position", .palettePosition)
+                    targetToggle("Color position", .palettePosition)
                     targetToggle("Motion speed", .motionSpeed)
                     targetToggle("Event chance", .eventProbability)
                     if audio.source == .onset {
@@ -71,7 +71,7 @@ struct Composer2AudioEditorContent: View {
                             BeatStatusChip()
                             Spacer(minLength: 0)
                         }
-                        Composer2ChipRow(title: "Colour steps every", options: [
+                        Composer2ChipRow(title: "Color steps every", options: [
                             ("1 beat", 1.0, nil), ("2 beats", 2.0, nil), ("4 beats", 4.0, nil)
                         ], selection: document.layerBinding(\.audio.quantizeBeats))
                     }

@@ -43,8 +43,8 @@ struct LightControlView: View {
 
     private var capabilityText: String {
         switch (light.supportsColor, light.supportsColorTemp) {
-        case (true, true):  return "Colour and white"
-        case (true, false): return "Colour"
+        case (true, true):  return "Color and white"
+        case (true, false): return "Color"
         case (false, true): return "Warm to cool white"
         default:            return "Brightness only"
         }
@@ -169,7 +169,7 @@ struct LightControlView: View {
 
     private var colorSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            LuminousSectionHeader(title: "Colour", subtitle: "Drag across the wheel, or pick a colour below.")
+            LuminousSectionHeader(title: "Color", subtitle: "Drag across the wheel, or pick a color below.")
             VStack(spacing: 18) {
                 ColorWheelView(
                     hue: $liveHue,

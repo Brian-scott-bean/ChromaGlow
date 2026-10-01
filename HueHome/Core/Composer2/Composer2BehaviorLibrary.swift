@@ -32,7 +32,7 @@ enum Composer2BehaviorTemplate: String, CaseIterable, Identifiable {
         var subtitle: String {
             switch self {
             case .moments: return "Every so often, something happens."
-            case .motion: return "Colour travelling through the room."
+            case .motion: return "Color travelling through the room."
             case .glow: return "Light that breathes, flickers and settles."
             case .sound: return "Light that listens."
             }
@@ -75,7 +75,7 @@ enum Composer2BehaviorTemplate: String, CaseIterable, Identifiable {
         case .fog: return "Drifting fog"
         case .beatPulse: return "Beat pulse"
         case .bassGlow: return "Bass glow"
-        case .hitsColour: return "Colour on every hit"
+        case .hitsColour: return "Color on every hit"
         }
     }
 
@@ -83,17 +83,17 @@ enum Composer2BehaviorTemplate: String, CaseIterable, Identifiable {
         switch self {
         case .lightning: return "Real strikes: leader, strokes, afterglow."
         case .heatLightning: return "Silent flashes on the horizon."
-        case .fireworks: return "Coloured bursts that bloom and crackle."
+        case .fireworks: return "Colored bursts that bloom and crackle."
         case .sparkle: return "Quick glints on single lights."
         case .fireflies: return "Soft yellow-green blinks in the dark."
         case .ghost: return "A slow glow appears… and fades."
         case .shootingStar: return "A streak sweeping across the room."
-        case .stringChase: return "Classic multicolour bulbs stepping along."
+        case .stringChase: return "Classic multicolor bulbs stepping along."
         case .theaterChase: return "Every third bulb, racing."
         case .wave: return "A swell rolling through the room."
         case .aurora: return "Slow, flowing, never repeating."
         case .rainbow: return "The spectrum rolling past."
-        case .candyStripes: return "Two colours in stripes, turning."
+        case .candyStripes: return "Two colors in stripes, turning."
         case .candle: return "Sway, flicker, the odd gutter."
         case .fire: return "Bigger, hotter, hungrier flame."
         case .embers: return "Red points glowing up and fading."
@@ -104,7 +104,7 @@ enum Composer2BehaviorTemplate: String, CaseIterable, Identifiable {
         case .fog: return "Low mist moving slowly."
         case .beatPulse: return "Pulses on the beat — tap or listen."
         case .bassGlow: return "Swells with the low end."
-        case .hitsColour: return "Steps the colour on every hit."
+        case .hitsColour: return "Steps the color on every hit."
         }
     }
 

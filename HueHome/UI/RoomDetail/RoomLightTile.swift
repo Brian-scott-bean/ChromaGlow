@@ -43,7 +43,7 @@ struct RoomLightTile: View {
     }
 
     private var capabilityText: String {
-        if light.supportsColor { return "Colour" }
+        if light.supportsColor { return "Color" }
         if light.supportsColorTemp { return "White" }
         return "Dims"
     }

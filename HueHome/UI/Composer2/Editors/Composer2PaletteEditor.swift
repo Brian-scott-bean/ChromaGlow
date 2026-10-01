@@ -16,14 +16,14 @@ struct Composer2PaletteEditorContent: View {
 
     var body: some View {
         VStack(spacing: HueSpacing.md) {
-            Composer2EditorSection(title: "Colours", subtitle: "Up to eight. Tap a colour to edit it, use the arrows to reorder.") {
+            Composer2EditorSection(title: "Colors", subtitle: "Up to eight. Tap a color to edit it, use the arrows to reorder.") {
                 stopRow
                 if selectedStop < stops.count {
                     pad(for: selectedStop)
                     presets
                 }
             }
-            Composer2EditorSection(title: "Harmony", subtitle: "Build a set of colours from the selected one.") {
+            Composer2EditorSection(title: "Harmony", subtitle: "Build a set of colors from the selected one.") {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
                         ForEach(HarmonyRule.allCases.filter { $0 != .none }) { rule in
@@ -39,14 +39,14 @@ struct Composer2PaletteEditorContent: View {
                             }
                             .buttonStyle(.plain)
                             .accessibilityLabel("\(Self.harmonyName(rule)) harmony")
-                            .accessibilityHint("Replaces the colours with a \(Self.harmonyName(rule).lowercased()) set around colour \(selectedStop + 1)")
+                            .accessibilityHint("Replaces the colors with a \(Self.harmonyName(rule).lowercased()) set around color \(selectedStop + 1)")
                         }
                     }
                     .padding(.vertical, 2)
                 }
             }
             Composer2EditorSection(title: "Blend") {
-                Composer2ChipRow(title: "Between colours", options: [
+                Composer2ChipRow(title: "Between colors", options: [
                     ("Hue blend", Composer2ColorSource.Interpolation.hueArc, "circle.lefthalf.filled"),
                     ("Smooth", .linear, "circle.and.line.horizontal"),
                     ("Stepped", .stepped, "square.grid.3x1.below.line.grid.1x2"),
@@ -59,7 +59,7 @@ struct Composer2PaletteEditorContent: View {
                     ("Random pick", .randomPick, "dice"),
                     ("Follows brightness", .brightness, "sun.max.fill")
                 ], selection: document.layerBinding(\.color.distribution))
-                StageToggleRow(title: "Loop back to the first colour", isOn: document.layerBinding(\.color.cycle))
+                StageToggleRow(title: "Loop back to the first color", isOn: document.layerBinding(\.color.cycle))
             }
             Composer2EditorSection(title: "Character") {
                 Composer2SliderRow(title: "Saturation", value: document.layerBinding(\.color.saturation), range: 0...2,
@@ -90,7 +90,7 @@ struct Composer2PaletteEditorContent: View {
                         .frame(width: 44, height: 44)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Colour \(index + 1) of \(stops.count)")
+                .accessibilityLabel("Color \(index + 1) of \(stops.count)")
                 .accessibilityAddTraits(selected ? [.isSelected] : [])
             }
             if stops.count < Composer2ColorSource.maxStops {
@@ -109,7 +109,7 @@ struct Composer2PaletteEditorContent: View {
                         .frame(width: 44, height: 44)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Add colour")
+                .accessibilityLabel("Add color")
             }
             Spacer(minLength: 0)
             reorderButtons
@@ -124,21 +124,21 @@ struct Composer2PaletteEditorContent: View {
                 Image(systemName: "chevron.left").frame(width: 36, height: 36)
             }
             .disabled(selectedStop == 0)
-            .accessibilityLabel("Move colour left")
+            .accessibilityLabel("Move color left")
             Button {
                 move(by: 1)
             } label: {
                 Image(systemName: "chevron.right").frame(width: 36, height: 36)
             }
             .disabled(selectedStop >= stops.count - 1)
-            .accessibilityLabel("Move colour right")
+            .accessibilityLabel("Move color right")
             Button {
                 remove()
             } label: {
                 Image(systemName: "trash").frame(width: 36, height: 36)
             }
             .disabled(stops.count <= 1)
-            .accessibilityLabel("Remove colour")
+            .accessibilityLabel("Remove color")
         }
         .font(.system(size: 13, weight: .bold))
         .foregroundStyle(Composer2Theme.ink)
@@ -208,7 +208,7 @@ struct Composer2PaletteEditorContent: View {
         let stop = stops[index]
         let hsb = HueColorUtils.hsb(fromX: stop.x, y: stop.y, brightness: 100)
         return HueSaturationPad(
-            title: "Colour \(index + 1)",
+            title: "Color \(index + 1)",
             hue: hsb.h,
             saturation: hsb.s,
             gamut: .c,
