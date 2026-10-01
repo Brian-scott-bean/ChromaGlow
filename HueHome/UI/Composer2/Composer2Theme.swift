@@ -195,13 +195,17 @@ enum Composer2Copy {
     static let liveForeignController = "Another app is controlling these lights. Take over from Studio Classic, then try Live again."
     static let liveEndedElsewhere = "Stopped — another look took over this room."
     static let liveEndedLost = "Stopped — the lights stopped answering. Try Live again."
-    static let liveSeveralAreas = "Several Entertainment Areas cover this room. Choose one in Studio Classic to stream; playing in Room mode."
-    /// The header's promise before Go Live. Several Entertainment Areas
-    /// covering the room means Go Live plays in Room mode until one is
-    /// chosen in Studio Classic — the header said "streaming ready" and the dock
-    /// then said Room mode (device round, build 58).
+    static let liveSeveralAreas = "Playing in Room mode — choose an Entertainment Area to stream."
+    static let chooseArea = "Choose area"
+    static func streamsTo(_ area: String) -> String { "Go Live streams to \(area)." }
+    static func noAreaFor(_ room: String) -> String { "No Entertainment Area can stream to \(room)." }
+    /// The header's promise before Go Live. Until an area is chosen for a
+    /// room several areas cover (or whose only area reaches other rooms), Go
+    /// Live plays in Room mode — so the pill asks for the choice instead of
+    /// promising a stream (device rounds, builds 58 and 60).
     static func connectionText(_ availability: Composer2StreamAvailability) -> String {
-        availability.prefer && !availability.severalAreas ? "Bridge · streaming ready" : "Bridge · Room mode"
+        if availability.severalAreas { return "Bridge · choose an area" }
+        return availability.prefer ? "Bridge · streaming ready" : "Bridge · Room mode"
     }
 
     /// The bridge accepted the command but cannot reach these bulbs.

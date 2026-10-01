@@ -41,6 +41,8 @@ enum Composer2StartOutcome: Equatable {
 struct Composer2StreamAvailability: Equatable {
     var prefer: Bool
     var severalAreas: Bool
+    /// The area Go Live will stream to, when one is settled.
+    var areaName: String? = nil
 }
 
 /// What a room's lights looked like just before Go Live, so stopping the
@@ -143,8 +145,29 @@ final class Composer2OrchestratorGateway: Composer2LiveGateway {
     func streamAvailability(for room: RoomDisplayItem) -> Composer2StreamAvailability {
         let availability = orchestrator.entertainmentAvailability(for: room)
         var several = false
-        if case .choiceRequired = availability { several = true }
-        return Composer2StreamAvailability(prefer: availability.canStream, severalAreas: several)
+        var areaName: String?
+        switch availability {
+        case .choiceRequired: several = true
+        case .available(let name): areaName = name
+        default: break
+        }
+        return Composer2StreamAvailability(prefer: availability.canStream, severalAreas: several, areaName: areaName)
+    }
+
+    // The Composer's own area chooser (build-61 H-5). Concrete-gateway only:
+    // the playback center never chooses, it just streams where it is told.
+
+    func areaChoices(for room: RoomDisplayItem) async -> [UnifiedOrchestrator.EntertainmentAreaChoice] {
+        guard !orchestrator.isDemoMode else { return [] }
+        return await orchestrator.entertainmentAreaChoices(for: room)
+    }
+
+    func rememberedAreaID(for room: RoomDisplayItem) -> String? {
+        orchestrator.rememberedAreaID(for: room)
+    }
+
+    func chooseArea(_ configID: String?, for room: RoomDisplayItem) {
+        orchestrator.rememberAreaChoice(configID, for: room)
     }
 
     func warm(room: RoomDisplayItem) async {
@@ -173,7 +196,9 @@ final class Composer2OrchestratorGateway: Composer2LiveGateway {
 
     func captureRoomState(room: RoomDisplayItem) async -> Composer2RoomSnapshot? {
         guard !orchestrator.isDemoMode, let api = orchestrator.hueClient(for: room.bridgeID) else { return nil }
-        let ids = Set(lightItems(room: room).map(\.id))
+        // The room's lights plus any the chosen area reaches in other rooms:
+        // a stream drives them all, so Stop restores them all.
+        let ids = Set(lightItems(room: room).map(\.id)).union(orchestrator.streamAreaLightIDs(for: room))
         guard !ids.isEmpty, let all = try? await api.fetchLights() else { return nil }
         let lights = all.filter { ids.contains($0.id) }.map(Composer2RoomSnapshot.Light.init)
         return lights.isEmpty ? nil : Composer2RoomSnapshot(roomID: room.id, bridgeID: room.bridgeID, lights: lights)

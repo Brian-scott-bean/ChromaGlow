@@ -72,6 +72,9 @@ struct Composer2RoomContext: Equatable {
     var isDemo: Bool = false
     /// Compact connection line for the header ("Living Room · 5 lights").
     var connectionText: String = ""
+    /// The header's connection pill opens the area chooser (several areas,
+    /// or one already picked that can be changed).
+    var canChooseArea = false
 
     static let none = Composer2RoomContext()
 

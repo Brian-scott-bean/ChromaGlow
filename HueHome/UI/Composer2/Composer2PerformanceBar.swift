@@ -15,6 +15,8 @@ struct Composer2PerformanceBar: View {
     let onSave: () -> Void
     let onApply: () -> Void
     let onDismissNotice: () -> Void
+    /// Playing in Room mode only because no area was chosen: pick one.
+    var onChooseArea: (() -> Void)? = nil
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
@@ -85,6 +87,22 @@ struct Composer2PerformanceBar: View {
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
+            if isLiveHere, center.severalAreas, ownSession?.playMode == .roomMode, let onChooseArea {
+                Button {
+                    HapticManager.shared.light()
+                    onChooseArea()
+                } label: {
+                    Text(Composer2Copy.chooseArea)
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(Composer2Theme.cyan)
+                        .padding(.horizontal, 12)
+                        .frame(minHeight: 32)
+                        .background(Capsule().fill(Composer2Theme.cyan.opacity(0.14)))
+                        .overlay(Capsule().strokeBorder(Composer2Theme.cyan.opacity(0.4), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Choose the Entertainment Area to stream to")
+            }
             if isNotice {
                 Button {
                     onDismissNotice()

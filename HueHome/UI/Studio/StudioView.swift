@@ -3009,7 +3009,7 @@ private struct EntertainmentAreaChooserSheet: ViewModifier {
             StageSheetScaffold(title: EntertainmentAreaChoiceCopy.title) {
                 StageCard(icon: "sparkles.tv", title: request.room.name) {
                     VStack(alignment: .leading, spacing: HueSpacing.md) {
-                        Text(EntertainmentAreaChoiceCopy.message)
+                        Text(EntertainmentAreaChoiceCopy.message(choiceCount: request.choices.count))
                             .font(.system(size: 13))
                             .foregroundStyle(.white.opacity(0.75))
                             .fixedSize(horizontal: false, vertical: true)

@@ -13,6 +13,8 @@ struct Composer2Header: View {
     let rooms: [RoomDisplayItem]
     let onSelectRoom: (RoomDisplayItem) -> Void
     let onClose: () -> Void
+    /// Opens the Entertainment Area chooser from the connection pill.
+    var onChooseArea: (() -> Void)? = nil
 
     private var isLiveHere: Bool { center.isPlaying(document: document) }
 
@@ -39,6 +41,15 @@ struct Composer2Header: View {
                     .opacity(document.canRedo ? 1 : 0.35)
                 }
                 .transition(.scale.combined(with: .opacity))
+            } else if document.roomContext.canChooseArea, !isLiveHere, let onChooseArea {
+                Button {
+                    HapticManager.shared.light()
+                    onChooseArea()
+                } label: {
+                    stateChip
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Choose the Entertainment Area to stream to")
             } else {
                 stateChip
             }
@@ -92,6 +103,11 @@ struct Composer2Header: View {
                 .foregroundStyle(Composer2Theme.ink.opacity(0.85))
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
+            if document.roomContext.canChooseArea, !isLiveHere, onChooseArea != nil {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(Composer2Theme.muted)
+            }
         }
         .padding(.horizontal, 12)
         .frame(minHeight: 40)

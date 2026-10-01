@@ -864,6 +864,10 @@ final class StudioViewModel {
             return
         }
 
+        // Remembered for the room, so the Composer (and the next start here)
+        // streams to the same area without asking again (build-61 H-5).
+        orchestrator.rememberAreaChoice(choice.configID, for: request.room)
+
         let previewPrevious = runningEffect(for: request.room)?.identity
         // M1 (Preview Live): a deferred audition's replay is still the
         // AUDITION's apply — its replacement teardown must not consume the

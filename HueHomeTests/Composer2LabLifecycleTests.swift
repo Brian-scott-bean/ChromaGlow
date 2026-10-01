@@ -413,7 +413,7 @@ final class Composer2LabLifecycleTests: XCTestCase {
     /// several Entertainment Areas over the room it plays in Room mode.
     func testHeaderPromisesStreamingOnlyWhenGoLiveWillStream() {
         XCTAssertEqual(Composer2Copy.connectionText(.init(prefer: true, severalAreas: false)), "Bridge · streaming ready")
-        XCTAssertEqual(Composer2Copy.connectionText(.init(prefer: true, severalAreas: true)), "Bridge · Room mode")
+        XCTAssertEqual(Composer2Copy.connectionText(.init(prefer: true, severalAreas: true)), "Bridge · choose an area")
         XCTAssertEqual(Composer2Copy.connectionText(.init(prefer: false, severalAreas: false)), "Bridge · Room mode")
     }
 

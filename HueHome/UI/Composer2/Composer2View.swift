@@ -31,6 +31,8 @@ struct Composer2View: View {
     /// Increments per room request; a slower, older request never overwrites
     /// a newer one's context.
     @State private var roomRequest = 0
+    /// The Entertainment Area chooser, when open (build-61 H-5).
+    @State private var areaSheet: Composer2AreaSheet?
 
     private let center = Composer2PlaybackCenter.shared
 
@@ -65,7 +67,8 @@ struct Composer2View: View {
                 VStack(alignment: .leading, spacing: 18) {
                     Composer2Header(document: document, center: center, rooms: gateway?.rooms() ?? [],
                                     onSelectRoom: { room in Task { await selectRoom(room) } },
-                                    onClose: requestClose)
+                                    onClose: requestClose,
+                                    onChooseArea: openAreaChooser)
                     Composer2HeroCard(document: document, center: center, feed: feed, previewOn: previewOn,
                                       onTapLights: { document.activeEditor = .space })
                     Composer2TitleBlock(document: document)
@@ -82,7 +85,12 @@ struct Composer2View: View {
         .safeAreaInset(edge: .bottom) {
             Composer2PerformanceBar(document: document, center: center, previewOn: $previewOn,
                                     onLive: toggleLive, onSave: promptSave, onApply: apply,
-                                    onDismissNotice: { center.clearNotice(); localNotice = nil })
+                                    onDismissNotice: { center.clearNotice(); localNotice = nil },
+                                    onChooseArea: openAreaChooser)
+        }
+        .sheet(item: $areaSheet) { sheet in
+            Composer2AreaChooser(sheet: sheet) { choice in pickArea(choice, room: sheet.room) }
+                .presentationDetents([.medium, .large])
         }
         .overlay(alignment: .top) {
             if let localNotice {
@@ -211,6 +219,7 @@ struct Composer2View: View {
             case .ready:
                 let availability = gw.streamAvailability(for: room)
                 context.connectionText = Composer2Copy.connectionText(availability)
+                context.canChooseArea = availability.severalAreas || gw.rememberedAreaID(for: room) != nil
             case .demo: context.connectionText = Composer2Copy.demoHome
             case .noBridge: context.connectionText = "Bridge unavailable"
             case .noRoom: context.connectionText = ""
@@ -267,6 +276,39 @@ struct Composer2View: View {
     }
 
     // MARK: Actions
+
+    // MARK: Entertainment Area
+
+    private func openAreaChooser() {
+        guard let gw = gateway, let room = document.roomContext.room else { return }
+        Task {
+            let choices = await gw.areaChoices(for: room)
+            guard !choices.isEmpty else {
+                withAnimation(reduceMotion ? nil : HueAnimation.fast) { localNotice = Composer2Copy.noAreaFor(room.name) }
+                return
+            }
+            areaSheet = Composer2AreaSheet(room: room, choices: choices, chosenID: gw.rememberedAreaID(for: room))
+        }
+    }
+
+    /// Remember the area, then — if this look is already playing in Room
+    /// mode for want of one — move it onto the stream at once.
+    private func pickArea(_ choice: UnifiedOrchestrator.EntertainmentAreaChoice, room: RoomDisplayItem) {
+        guard let gw = gateway else { return }
+        HapticManager.shared.success()
+        gw.chooseArea(choice.configID, for: room)
+        areaSheet = nil
+        Task {
+            await refreshRoomContext(room, gateway: gw)
+            if isLiveHere, center.session?.playMode == .roomMode, !center.isBusy {
+                let audition = center.session?.isAudition ?? true
+                await center.stop(gateway: gw)
+                _ = await center.start(document: document, output: output, gateway: gw, audition: audition)
+            } else {
+                withAnimation(reduceMotion ? nil : HueAnimation.fast) { localNotice = Composer2Copy.streamsTo(choice.areaName) }
+            }
+        }
+    }
 
     private func toggleLive() {
         guard let gw = gateway, !center.isBusy else { return }
@@ -473,6 +515,88 @@ struct Composer2NoticeBanner: View {
         .padding(.vertical, 10)
         .composer2Glass(cornerRadius: 14, raised: true)
         .shadow(color: .black.opacity(0.35), radius: 14, y: 6)
+    }
+}
+
+// MARK: - Entertainment Area chooser (build-61 H-5)
+
+struct Composer2AreaSheet: Identifiable {
+    let id = UUID()
+    let room: RoomDisplayItem
+    let choices: [UnifiedOrchestrator.EntertainmentAreaChoice]
+    let chosenID: String?
+}
+
+/// Which Entertainment Area Go Live streams this room to. The Composer had
+/// no way to choose: a room several areas cover — or whose only area also
+/// reaches other rooms — always fell back to Room mode. The scope warning is
+/// stated before the tap, as in Studio's chooser.
+struct Composer2AreaChooser: View {
+    let sheet: Composer2AreaSheet
+    let onPick: (UnifiedOrchestrator.EntertainmentAreaChoice) -> Void
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: HueSpacing.md) {
+                Text(EntertainmentAreaChoiceCopy.title)
+                    .font(.title3.weight(.bold))
+                    .foregroundStyle(Composer2Theme.ink)
+                Text(EntertainmentAreaChoiceCopy.message(choiceCount: sheet.choices.count))
+                    .font(.subheadline)
+                    .foregroundStyle(Composer2Theme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                ForEach(sheet.choices) { choice in
+                    row(choice)
+                }
+            }
+            .padding(HueSpacing.screenH)
+            .padding(.top, HueSpacing.sm)
+        }
+        .background(Composer2Theme.void.ignoresSafeArea())
+        .preferredColorScheme(.dark)
+    }
+
+    private func row(_ choice: UnifiedOrchestrator.EntertainmentAreaChoice) -> some View {
+        let chosen = choice.configID == sheet.chosenID
+        return Button {
+            onPick(choice)
+        } label: {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: chosen ? "checkmark.circle.fill" : "sparkles.tv")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(chosen ? Composer2Theme.live : Composer2Theme.cyan)
+                    .frame(width: 26)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(choice.areaName)
+                        .font(.headline)
+                        .foregroundStyle(Composer2Theme.ink)
+                    if !choice.roomNames.isEmpty {
+                        Text(choice.roomNames.joined(separator: " · "))
+                            .font(.subheadline)
+                            .foregroundStyle(Composer2Theme.ink.opacity(0.75))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Text(EntertainmentAreaChoiceCopy.lightSummary(inRoom: choice.lightCount,
+                                                                  outside: choice.extraLightCount))
+                        .font(.caption)
+                        .foregroundStyle(Composer2Theme.muted)
+                    if choice.expandsScope {
+                        Label(EntertainmentAreaChoiceCopy.expandsScope(room: sheet.room.name),
+                              systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(LuminousPalette.amber)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .composer2Glass(cornerRadius: 18, raised: chosen)
+            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(chosen ? [.isSelected] : [])
     }
 }
 

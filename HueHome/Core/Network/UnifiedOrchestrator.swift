@@ -5686,7 +5686,15 @@ final class UnifiedOrchestrator {
         // The typed decision, not the optional. `select` answering nil covers
         // both "nothing here fits" and "several things fit and one of them is
         // yours to pick"; only the first is a refusal.
-        switch cachedAreaDecision(for: room) {
+        //
+        // An area the user already picked for this room answers first. A
+        // remembered pick that no longer fits is treated as never made — the
+        // start path forgets it (`startCompositionModeAttended`).
+        var decision = cachedAreaDecision(for: room, selectedConfigID: rememberedAreaID(for: room))
+        if case .noCompatible? = decision, rememberedAreaID(for: room) != nil {
+            decision = cachedAreaDecision(for: room)
+        }
+        switch decision {
         case .exact(let config):            return .available(areaName: config.name)
         case .choiceRequired(let options):  return .choiceRequired(count: options.count)
         case .noCompatible, .none:          return .noMatchingArea
@@ -6215,7 +6223,17 @@ final class UnifiedOrchestrator {
         preferEntertainment: Bool,
         askTakeover: @MainActor () async -> Bool
     ) async -> PlaybackStartOutcome {
-        switch await foreignTakeoverPreflight(for: room, requestsEntertainment: preferEntertainment) {
+        // The area the user picked for this room (Composer or Studio). One
+        // that no longer serves the room is forgotten and the room decided
+        // afresh — a remembered pick must never block a start.
+        let remembered = rememberedAreaID(for: room)
+        var preflight = await foreignTakeoverPreflight(for: room, requestsEntertainment: preferEntertainment,
+                                                       selectedConfigID: remembered)
+        if remembered != nil, case .staleSelection = preflight {
+            rememberAreaChoice(nil, for: room)
+            preflight = await foreignTakeoverPreflight(for: room, requestsEntertainment: preferEntertainment)
+        }
+        switch preflight {
         case .clear(let plan):
             return await startCompositionMode(room: room, paramBox: paramBox,
                                               preferEntertainment: true, capturedPlan: plan)
@@ -6237,8 +6255,9 @@ final class UnifiedOrchestrator {
         case .notRequested, .noStreamableArea:
             return await startCompositionMode(room: room, paramBox: paramBox, preferEntertainment: false)
         case .choiceRequired:
-            // Several areas cover the room: the start below lands on Room
-            // mode rather than guessing an area (the chooser is Studio's).
+            // Several areas cover the room (or the only one reaches past it)
+            // and none was picked: Room mode rather than a guess. The Composer
+            // offers the chooser (`entertainmentAreaChoices(for:)`).
             return await startCompositionMode(room: room, paramBox: paramBox,
                                               preferEntertainment: preferEntertainment)
         case .ambiguous:
@@ -11563,7 +11582,14 @@ enum EntertainmentAvailabilityCopy {
 /// chooser identifies areas the way the user named them in the Hue app.
 enum EntertainmentAreaChoiceCopy {
     static let title = "Which lights should this play on?"
-    static let message = "More than one Entertainment Area covers this room."
+    /// Says why the user is being asked. With ONE candidate the reason is
+    /// that it also reaches other rooms — "more than one area" was shown over
+    /// a single row (build-60 regression M-7).
+    static func message(choiceCount: Int) -> String {
+        choiceCount > 1
+            ? "More than one Entertainment Area covers this room. Pick the one to stream to."
+            : "This room's Entertainment Area also reaches lights in other rooms. Stream to it anyway?"
+    }
     static let cancel = "Cancel"
     /// Shown on a candidate that reaches beyond the requested room. The scope
     /// has to be stated BEFORE the tap, not explained after the lights change.
@@ -11830,6 +11856,69 @@ extension UnifiedOrchestrator {
         case staleSelection
         /// Several controllers hold this bridge. Nothing to name, nothing to ask.
         case ambiguousOwnership
+    }
+
+    // MARK: Remembered area choice (build-61, regression H-5)
+
+    /// The Entertainment Area the user picked for a room when the app could
+    /// not pick alone — several areas cover it, or the only one also reaches
+    /// lights in other rooms. Kept per bridge + room on this device, so the
+    /// Composer, Studio and the next launch all stream where the user said.
+    /// Studio's chooser used to answer for one start only, and the Composer
+    /// had no chooser at all: it could never stream in a home like that.
+    private static func areaChoiceKey(bridgeID: String, roomID: String) -> String {
+        "entertainmentAreaChoice.\(bridgeID).\(roomID)"
+    }
+
+    func rememberedAreaID(for room: RoomDisplayItem) -> String? {
+        guard let bridgeID = room.bridgeID else { return nil }
+        return UserDefaults.standard.string(forKey: Self.areaChoiceKey(bridgeID: bridgeID, roomID: room.id))
+    }
+
+    /// Remember (or, with nil, forget) the area to stream this room to.
+    func rememberAreaChoice(_ configID: String?, for room: RoomDisplayItem) {
+        guard let bridgeID = room.bridgeID else { return }
+        let key = Self.areaChoiceKey(bridgeID: bridgeID, roomID: room.id)
+        if let configID {
+            UserDefaults.standard.set(configID, forKey: key)
+        } else {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
+    }
+
+    /// The lights a stream to this room will drive: the area the user picked
+    /// (or the one that serves the room alone). A picked area can reach other
+    /// rooms, and Stop must put those lights back too — after streaming to
+    /// "Bed party", Main bathroom was restored and the 2 Bedroom lights were
+    /// left on the storm's last frame (build-61 device check).
+    func streamAreaLightIDs(for room: RoomDisplayItem) -> Set<String> {
+        guard let bridgeID = room.bridgeID,
+              case .exact(let config)? = cachedAreaDecision(for: room, selectedConfigID: rememberedAreaID(for: room))
+        else { return [] }
+        return EntertainmentAreaSelector.mappedLightIDs(
+            for: config, entertainmentToLightMap: entertainmentMembershipByBridge[bridgeID] ?? [:])
+    }
+
+    /// Every area that could stream this room, described for a chooser —
+    /// fresh from the bridge. Empty when nothing can (or the bridge is
+    /// unreadable); a single entry when one area serves the room on its own.
+    func entertainmentAreaChoices(for room: RoomDisplayItem) async -> [EntertainmentAreaChoice] {
+        switch await exactTargetDecision(for: room) {
+        case .choiceRequired(let choices):
+            return choices
+        case .plan(let plan):
+            guard let bridgeID = room.bridgeID else { return [] }
+            let mapped = EntertainmentAreaSelector.mappedLightIDs(
+                for: plan.capturedConfig, entertainmentToLightMap: entertainmentMembershipByBridge[bridgeID] ?? [:])
+            let roomLightIDs = cachedRoomLightIDs(for: room) ?? []
+            let candidate = EntertainmentAreaSelector.ExactAreaCandidate(
+                config: plan.capturedConfig,
+                lightIDs: mapped.intersection(roomLightIDs).sorted(),
+                extraLightIDs: mapped.subtracting(roomLightIDs).sorted())
+            return areaChoice(candidate, bridgeID: bridgeID, room: room).map { [$0] } ?? []
+        case .noCompatiblePlan, .unreadableBridge, .staleSelection, .ambiguousOwnership:
+            return []
+        }
     }
 
     /// Resolve a room to its exact stream target, forcing fresh bridge reads.
