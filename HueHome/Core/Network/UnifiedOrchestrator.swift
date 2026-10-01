@@ -2408,6 +2408,13 @@ final class UnifiedOrchestrator {
             roomsByBridge[bridgeID] = roomsByBridge[bridgeID]?.map(applyingPreset)
         }
         rebuildAllRooms()
+        // Zones hold the same lights — every room on the bridge got the mood,
+        // so its zones did too. They used to keep their old Off / 2% cards
+        // until the next full load (build-61 device check).
+        for bridgeID in zonesByBridge.keys where presetBridge(bridgeID) {
+            zonesByBridge[bridgeID] = zonesByBridge[bridgeID]?.map(applyingPreset)
+        }
+        rebuildAllZones()
 
         // M-08: pace per-bridge (~10 cmd/sec) and surface failures — an
         // unpaced N-room burst hit the bridge throttle and silently dropped
@@ -2424,6 +2431,9 @@ final class UnifiedOrchestrator {
             )
         }
         log.info("Automation preset '\(preset.id)' applied to \(self.allRooms.count) rooms")
+        // One confirming load after the whole fan-out: lamp colours and any
+        // room the bridge refused come back from the bridge, not the guess.
+        scheduleStateRefresh()
     }
 
     /// Which guest features a bulk fan-out needs on a granted bridge.
@@ -2528,6 +2538,9 @@ final class UnifiedOrchestrator {
             }
         }
         log.info("Automation effect '\(effect.name)' applied to \(self.allRooms.count) rooms")
+        // Nothing optimistic for an effect — the confirming load is the only
+        // way the room and zone cards learn the house changed.
+        scheduleStateRefresh()
     }
 
     // ──────────────────────────────────────────────
@@ -2552,6 +2565,13 @@ final class UnifiedOrchestrator {
             rooms = rooms.map { room in var r = room; r.isOn = false; return r }
             roomsByBridge[bridgeID] = rooms
         }
+        // Every room off means every zone off too.
+        for bridgeID in zonesByBridge.keys {
+            guard guestFeatures(for: bridgeID).canPower,
+                  let zones = zonesByBridge[bridgeID] else { continue }
+            zonesByBridge[bridgeID] = zones.map { zone in var z = zone; z.isOn = false; return z }
+        }
+        rebuildAllZones()
         log.info("All Off: optimistic update applied, firing API calls…")
         // M-08: paced per-bridge with failure surfacing — All Off must reach
         // EVERY room; a silently dropped PUT left lights on with the card off.
@@ -2559,6 +2579,7 @@ final class UnifiedOrchestrator {
             try await client.setGroupedLight(id: glID, on: false)
         }
         log.info("All Off fired across \(self.clients.count) bridge(s)")
+        scheduleStateRefresh()
     }
 
     // ──────────────────────────────────────────────
