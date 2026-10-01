@@ -43,6 +43,39 @@ struct Composer2StreamAvailability: Equatable {
     var severalAreas: Bool
 }
 
+/// What a room's lights looked like just before Go Live, so stopping the
+/// look puts the room back (device round, build 58: Stop used to leave the
+/// lights on the look's last frame — a storm-blue bathroom at 15 %).
+struct Composer2RoomSnapshot: Equatable {
+    struct Light: Equatable {
+        let id: String
+        let on: Bool
+        let brightness: Double?
+        /// Exactly one of xy / mirek, whichever mode the light was in.
+        let x: Double?
+        let y: Double?
+        let mirek: Int?
+    }
+    let roomID: String
+    let bridgeID: String?
+    let lights: [Light]
+}
+
+extension Composer2RoomSnapshot.Light {
+    /// The light as the bridge reported it: white-temperature mode when its
+    /// mirek is current (`mirek_valid`), colour mode otherwise.
+    init(_ light: HueLight) {
+        let ct = light.color_temperature
+        let inTemperature = ct?.mirek_valid == true && ct?.mirek != nil
+        self.init(id: light.id,
+                  on: light.on.on,
+                  brightness: light.dimming?.brightness,
+                  x: inTemperature ? nil : light.color?.xy.x,
+                  y: inTemperature ? nil : light.color?.xy.y,
+                  mirek: inTemperature ? ct?.mirek : nil)
+    }
+}
+
 @MainActor
 protocol Composer2LiveGateway: AnyObject {
     func gate(for room: RoomDisplayItem?) -> Composer2LiveGate
@@ -76,10 +109,17 @@ protocol Composer2LiveGateway: AnyObject {
     /// Names of the room's lights the bridge said it could not reach on
     /// their last command (off at the wall, out of range).
     func unresponsiveLightNames(roomID: String, bridgeID: String?) -> [String]
+    /// The room's lights as the bridge has them now — read fresh, just
+    /// before Go Live changes them. nil when it cannot be read.
+    func captureRoomState(room: RoomDisplayItem) async -> Composer2RoomSnapshot?
+    /// Put a room's lights back as captured, paced on the bridge's budget.
+    func restoreRoomState(_ snapshot: Composer2RoomSnapshot) async
 }
 
 extension Composer2LiveGateway {
     func unresponsiveLightNames(roomID: String, bridgeID: String?) -> [String] { [] }
+    func captureRoomState(room: RoomDisplayItem) async -> Composer2RoomSnapshot? { nil }
+    func restoreRoomState(_ snapshot: Composer2RoomSnapshot) async {}
 }
 
 // MARK: - Production adapter
@@ -129,6 +169,34 @@ final class Composer2OrchestratorGateway: Composer2LiveGateway {
     func lightItems(room: RoomDisplayItem) -> [LightDisplayItem] {
         if orchestrator.isDemoMode { return DemoDataProvider.lights(for: room.id) }
         return orchestrator.cachedLightItems(for: room)
+    }
+
+    func captureRoomState(room: RoomDisplayItem) async -> Composer2RoomSnapshot? {
+        guard !orchestrator.isDemoMode, let api = orchestrator.hueClient(for: room.bridgeID) else { return nil }
+        let ids = Set(lightItems(room: room).map(\.id))
+        guard !ids.isEmpty, let all = try? await api.fetchLights() else { return nil }
+        let lights = all.filter { ids.contains($0.id) }.map(Composer2RoomSnapshot.Light.init)
+        return lights.isEmpty ? nil : Composer2RoomSnapshot(roomID: room.id, bridgeID: room.bridgeID, lights: lights)
+    }
+
+    func restoreRoomState(_ snapshot: Composer2RoomSnapshot) async {
+        guard !orchestrator.isDemoMode, let api = orchestrator.hueClient(for: snapshot.bridgeID) else { return }
+        let gate = orchestrator.commandGate(for: snapshot.bridgeID)
+        // A batch dispatched just before the stop may still be in flight;
+        // let it land so it cannot overwrite the restore.
+        try? await Task.sleep(for: .milliseconds(300))
+        for light in snapshot.lights {
+            let xy: (Double, Double)? = light.x.flatMap { x in light.y.map { (x, $0) } }
+            await gate.send {
+                if light.on {
+                    try await api.setLightEffect(id: light.id, on: true, brightness: light.brightness,
+                                                 xy: xy, mirek: light.mirek, duration: 400)
+                } else {
+                    try await api.setLightEffect(id: light.id, on: false, brightness: nil,
+                                                 xy: nil, mirek: nil, duration: 400)
+                }
+            }
+        }
     }
 
     func unresponsiveLightNames(roomID: String, bridgeID: String?) -> [String] {

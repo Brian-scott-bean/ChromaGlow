@@ -72,6 +72,14 @@ final class Composer2FakeGateway: Composer2LiveGateway {
     }
     var unresponsive: [String] = []
     func unresponsiveLightNames(roomID: String, bridgeID: String?) -> [String] { unresponsive }
+    var snapshot: Composer2RoomSnapshot? = nil
+    var captures = 0
+    var restored: [Composer2RoomSnapshot] = []
+    func captureRoomState(room: RoomDisplayItem) async -> Composer2RoomSnapshot? {
+        captures += 1
+        return snapshot
+    }
+    func restoreRoomState(_ snapshot: Composer2RoomSnapshot) async { restored.append(snapshot) }
 }
 
 enum Composer2LabFixtures {
@@ -392,6 +400,88 @@ final class Composer2LabLifecycleTests: XCTestCase {
         XCTAssertEqual(Composer2Copy.connectionText(.init(prefer: true, severalAreas: false)), "Bridge · streaming ready")
         XCTAssertEqual(Composer2Copy.connectionText(.init(prefer: true, severalAreas: true)), "Bridge · Room mode")
         XCTAssertEqual(Composer2Copy.connectionText(.init(prefer: false, severalAreas: false)), "Bridge · Room mode")
+    }
+
+    // MARK: Restore on stop (device round, build 58)
+
+    private static let bathroom = Composer2RoomSnapshot(
+        roomID: "r1", bridgeID: "b1",
+        lights: [.init(id: "l1", on: true, brightness: 100, x: nil, y: nil, mirek: 490),
+                 .init(id: "l2", on: false, brightness: 40, x: 0.3, y: 0.3, mirek: nil)])
+
+    /// Stop used to leave the room on the look's last frame (a storm-blue
+    /// bathroom at 15 %). The room read just before Go Live is put back.
+    func testStoppingOurLookPutsTheRoomBackAsItWas() async {
+        let gw = Composer2FakeGateway()
+        gw.snapshot = Self.bathroom
+        let c = center()
+        let doc = document()
+        _ = await c.start(document: doc, output: Composer2LiveOutput(composition: doc.composition),
+                          gateway: gw, audition: false)
+        XCTAssertEqual(gw.captures, 1, "the room is read before Go Live")
+        XCTAssertEqual(gw.restored, [], "nothing is restored while the look plays")
+        await c.stop(gateway: gw)
+        XCTAssertEqual(gw.stopCalls, ["r1"])
+        XCTAssertEqual(gw.restored, [Self.bathroom])
+    }
+
+    /// Ending a Live audition (leaving the screen) is a stop too.
+    func testEndingAnAuditionPutsTheRoomBack() async {
+        let gw = Composer2FakeGateway()
+        gw.snapshot = Self.bathroom
+        let c = center()
+        let doc = document()
+        _ = await c.start(document: doc, output: Composer2LiveOutput(composition: doc.composition),
+                          gateway: gw, audition: true)
+        await c.endAudition(gateway: gw)?.value
+        XCTAssertEqual(gw.restored, [Self.bathroom])
+    }
+
+    /// Another look took the room: its lights are not ours to put back —
+    /// neither when the heartbeat sees the replacement nor at a later stop.
+    func testAReplacedLookNeverRestoresTheRoom() async {
+        let gw = Composer2FakeGateway()
+        gw.snapshot = Self.bathroom
+        let c = center(now: 100)
+        let doc = document()
+        _ = await c.start(document: doc, output: Composer2LiveOutput(composition: doc.composition),
+                          gateway: gw, audition: false)
+        gw.driving = false
+        c.now = { 101.2 }
+        XCTAssertFalse(c.tickHeartbeat())
+        await c.stop(gateway: gw)
+        XCTAssertEqual(gw.restored, [], "a replacement owns the lights")
+        XCTAssertEqual(gw.stopCalls, [], "and is never stopped")
+    }
+
+    /// A start that never went live leaves nothing to restore.
+    func testAFailedStartRestoresNothing() async {
+        let gw = Composer2FakeGateway()
+        gw.snapshot = Self.bathroom
+        gw.startOutcome = .failed("no")
+        let c = center()
+        let doc = document()
+        _ = await c.start(document: doc, output: Composer2LiveOutput(composition: doc.composition),
+                          gateway: gw, audition: false)
+        await c.stop(gateway: gw)
+        XCTAssertEqual(gw.restored, [])
+    }
+
+    /// The bridge's light, as captured: white-temperature mode when its
+    /// mirek is current, colour otherwise; on/off and brightness as read.
+    func testSnapshotKeepsEachLightInTheModeItWasIn() throws {
+        func light(_ json: String) throws -> HueLight {
+            try JSONDecoder().decode(HueLight.self, from: Data(json.utf8))
+        }
+        let warm = try light(#"{"id":"a","metadata":{"name":"A"},"on":{"on":true},"dimming":{"brightness":100},"color":{"xy":{"x":0.52,"y":0.41}},"color_temperature":{"mirek":490,"mirek_valid":true}}"#)
+        XCTAssertEqual(Composer2RoomSnapshot.Light(warm),
+                       .init(id: "a", on: true, brightness: 100, x: nil, y: nil, mirek: 490))
+        let blue = try light(#"{"id":"b","metadata":{"name":"B"},"on":{"on":true},"dimming":{"brightness":15},"color":{"xy":{"x":0.17,"y":0.05}},"color_temperature":{"mirek":null,"mirek_valid":false}}"#)
+        XCTAssertEqual(Composer2RoomSnapshot.Light(blue),
+                       .init(id: "b", on: true, brightness: 15, x: 0.17, y: 0.05, mirek: nil))
+        let off = try light(#"{"id":"c","metadata":{"name":"C"},"on":{"on":false},"dimming":{"brightness":40}}"#)
+        XCTAssertEqual(Composer2RoomSnapshot.Light(off),
+                       .init(id: "c", on: false, brightness: 40, x: nil, y: nil, mirek: nil))
     }
 
     func testHeartbeatEndedNeverCallsStopAndReleasesTheRuntime() async {
