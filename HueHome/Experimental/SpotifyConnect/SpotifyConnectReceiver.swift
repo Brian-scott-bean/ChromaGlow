@@ -1,0 +1,382 @@
+// SpotifyConnectReceiver.swift
+// ChromaGlow — Experimental/SpotifyConnect (LOCAL-ONLY experiment)
+//
+// Owns the Rust receiver's lifecycle (Experimental/SpotifyReceiver, pinned
+// librespot) and the status the experiment panel shows. Explicit Start/Stop:
+// the receiver advertises "ChromaGlow Sync" over Bonjour and Spotify hands it
+// credentials through Spotify Connect's zeroconf flow — no username, password
+// or token is ever entered, stored or logged here.
+//
+// Status is POLLED (4 Hz, one long-lived task) — nothing crosses into the
+// MainActor per audio buffer. Start/stop are serialized on one task chain;
+// the blocking Rust stop runs off the main thread, but the Swift-side PCM gate
+// closes synchronously first, so no stale frame reaches analysis after Stop.
+//
+// Storage: librespot streams the *encrypted* compressed file through an
+// unlinked-on-drop temp file. That temp folder is purged on every start and
+// stop; decoded PCM is never written anywhere.
+//
+// Compiles only under CHROMAGLOW_EXPERIMENTAL_SPOTIFY (never in Release).
+
+#if CHROMAGLOW_EXPERIMENTAL_SPOTIFY
+
+import ChromaGlowSpotifyFFI
+import Foundation
+import Network
+import Observation
+import QuartzCore
+import UIKit
+
+@MainActor
+@Observable
+final class SpotifyConnectReceiver {
+    static let shared = SpotifyConnectReceiver()
+    static let deviceName = "ChromaGlow Sync"
+
+    enum Phase: Equatable {
+        case stopped, starting, waiting, connecting, connected, failed
+    }
+
+    enum Playback: Equatable {
+        case idle, loading, playing, paused
+    }
+
+    /// Everything the panel renders, swapped as one value so a poll that
+    /// changes nothing invalidates nothing.
+    struct Snapshot: Equatable {
+        var phase: Phase = .stopped
+        var playback: Playback = .idle
+        var title = ""
+        var artist = ""
+        var remoteClient = ""
+        var message = ""
+        var sampleRate = 0
+        var channels = 0
+        var framesDelivered: UInt64 = 0
+        var peak: Float = 0
+        var pcmFlowing = false
+        var zeroconfPort = 0
+        var volumePercent = 0
+        var firstPCMMilliseconds = 0
+        var hopsAnalyzed: UInt64 = 0
+        var chunksDropped: UInt64 = 0
+        var presentationDelayMs = 0
+        var analyzerRunning = false
+        var analyzerOnSpotify = false
+    }
+
+    private(set) var snapshot = Snapshot()
+    /// What the shared analyzer publishes right now (bass/mid/high/overall).
+    private(set) var levels = AudioFeatures.silent
+    /// Wants the receiver running (Start pressed, Stop not yet).
+    private(set) var isEnabled = false
+
+    let librespotRevision = String(cString: cg_spotify_librespot_revision())
+
+    @ObservationIgnored private var generation: UInt64 = 0
+    @ObservationIgnored private var lifecycle: Task<Void, Never>?
+    @ObservationIgnored private var pollTask: Task<Void, Never>?
+    @ObservationIgnored private var lastFrames: UInt64 = 0
+    @ObservationIgnored private var lastConsoleAt: Double = 0
+    @ObservationIgnored private var pathMonitor: NWPathMonitor?
+    @ObservationIgnored private var networkWasSatisfied = true
+    @ObservationIgnored private var observers: [NSObjectProtocol] = []
+    @ObservationIgnored private var backgroundGrace: UIBackgroundTaskIdentifier = .invalid
+
+    private init() {
+        observers.append(NotificationCenter.default.addObserver(
+            forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.endBackgroundGrace()
+                self?.recoverIfNeeded(reason: "foreground")
+            }
+        })
+        observers.append(NotificationCenter.default.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.beginBackgroundGrace() }
+        })
+    }
+
+    /// Picking "ChromaGlow Sync" usually means switching to the Spotify app,
+    /// which backgrounds ChromaGlow. Phase 1 has no background audio mode, so
+    /// ask iOS for the standard short grace period (public API, ~30 s) to
+    /// finish the zeroconf hand-off and login; iOS suspends the app after.
+    private func beginBackgroundGrace() {
+        guard isEnabled, backgroundGrace == .invalid else { return }
+        backgroundGrace = UIApplication.shared.beginBackgroundTask(withName: "Spotify Connect hand-off") { [weak self] in
+            Task { @MainActor in self?.endBackgroundGrace() }
+        }
+        // backgroundTimeRemaining is DBL_MAX mid-transition — never Int() it raw.
+        let remaining = min(UIApplication.shared.backgroundTimeRemaining, 999)
+        print("[SpotifyPCM] background grace started (remaining ≈ \(Int(remaining)) s)")
+    }
+
+    private func endBackgroundGrace() {
+        guard backgroundGrace != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(backgroundGrace)
+        backgroundGrace = .invalid
+    }
+
+    // MARK: - Lifecycle
+
+    func start() {
+        guard !isEnabled else { return }
+        isEnabled = true
+        update { $0.phase = .starting; $0.message = "Starting the receiver…" }
+        let name = Self.deviceName
+        let previous = lifecycle
+        lifecycle = Task { @MainActor in
+            await previous?.value
+            guard self.isEnabled else { return }
+            let directory = Self.resetStreamDirectory()
+            let generation = await Task.detached(priority: .userInitiated) {
+                Self.startReceiver(name: name, temporaryDirectory: directory.path)
+            }.value
+            guard self.isEnabled else {
+                // Stop landed while starting: the queued stop tears this down.
+                return
+            }
+            self.generation = generation
+            SpotifyPCMRouter.shared.setReceiverGeneration(generation)
+            if generation == 0 {
+                self.update { $0.phase = .failed; $0.message = "The receiver refused to start." }
+                self.isEnabled = false
+                return
+            }
+            self.lastFrames = 0
+            self.startPolling()
+            self.startPathMonitor()
+        }
+    }
+
+    func stop() {
+        guard isEnabled else { return }
+        isEnabled = false
+        // Instant invalidation: the gate closes before Rust is even asked.
+        SpotifyPCMRouter.shared.setReceiverGeneration(0)
+        update { $0.message = "Stopping…" }
+        let previous = lifecycle
+        lifecycle = Task { @MainActor in
+            await previous?.value
+            await Task.detached(priority: .userInitiated) { cg_spotify_stop() }.value
+            Self.purgeStreamDirectory()
+            self.pollOnce()
+            self.stopPolling()
+            self.stopPathMonitor()
+            self.generation = 0
+            self.levels = .silent
+            self.update {
+                $0 = Snapshot()
+                $0.message = "Receiver stopped."
+            }
+        }
+    }
+
+    /// Restart a receiver that died underneath us (Wi-Fi change, suspension).
+    private func recoverIfNeeded(reason: String) {
+        guard isEnabled, snapshot.phase == .failed || snapshot.phase == .stopped else { return }
+        print("[SpotifyPCM] restarting receiver after \(reason)")
+        isEnabled = false
+        let previous = lifecycle
+        lifecycle = Task { @MainActor in
+            await previous?.value
+            await Task.detached(priority: .userInitiated) { cg_spotify_stop() }.value
+        }
+        start()
+    }
+
+    /// Device-test hook (experimental builds only): launching with
+    /// `-ChromaGlowSpotifyAutoStart` selects the Spotify source, starts the
+    /// receiver and holds an analysis demand, so the console's 1 Hz
+    /// `[SpotifyPCM]` line proves discovery → PCM → analyzer without touching
+    /// the UI:
+    ///   xcrun devicectl device process launch --console --terminate-existing \
+    ///     --device <id> com.huehome.pro -ChromaGlowSpotifyAutoStart
+    static func autoStartIfRequested(arguments: [String] = ProcessInfo.processInfo.arguments) {
+        guard arguments.contains("-ChromaGlowSpotifyAutoStart") else { return }
+        print("[SpotifyPCM] auto-start requested by launch argument")
+        Task { @MainActor in
+            await AudioAnalysisEngine.shared.selectSource(.spotifyConnect)
+            await AudioAnalysisEngine.shared.setDemand(.syncMode, active: true)
+            shared.start()
+        }
+    }
+
+    /// Await any in-flight start/stop (tests, teardown ordering).
+    func settle() async {
+        await lifecycle?.value
+    }
+
+    // MARK: - FFI (nonisolated: runs on a detached task)
+
+    nonisolated private static func startReceiver(name: String, temporaryDirectory: String) -> UInt64 {
+        name.withCString { cName in
+            temporaryDirectory.withCString { cDir in
+                cg_spotify_start(cName, cDir) { generation, samples, frames, channels, sampleRate, queued in
+                    // librespot's player thread — real-time path, no captures.
+                    guard let samples else { return }
+                    SpotifyPCMRouter.shared.route(
+                        generation: generation,
+                        samples: samples,
+                        frames: frames,
+                        channels: channels,
+                        sampleRate: sampleRate,
+                        queuedFrames: queued
+                    )
+                }
+            }
+        }
+    }
+
+    // MARK: - Temp storage (encrypted stream buffer only)
+
+    nonisolated static var streamDirectory: URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("ChromaGlowSpotifyStream", isDirectory: true)
+    }
+
+    @discardableResult
+    nonisolated static func resetStreamDirectory() -> URL {
+        purgeStreamDirectory()
+        let url = streamDirectory
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    nonisolated static func purgeStreamDirectory() {
+        try? FileManager.default.removeItem(at: streamDirectory)
+    }
+
+    // MARK: - Polling
+
+    private func startPolling() {
+        pollTask?.cancel()
+        pollTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                self?.pollOnce()
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+        }
+    }
+
+    private func stopPolling() {
+        pollTask?.cancel()
+        pollTask = nil
+    }
+
+    private func pollOnce() {
+        var status = CGSpotifyStatus()
+        guard cg_spotify_status(&status), status.generation == generation, generation != 0 else { return }
+        let now = CACurrentMediaTime()
+        SpotifyPCMRouter.shared.silenceIfStalled(now: now)
+        let router = SpotifyPCMRouter.shared.snapshot()
+        let engine = AudioAnalysisEngine.shared
+        let flowing = status.frames_delivered > lastFrames
+        lastFrames = status.frames_delivered
+
+        var next = snapshot
+        next.phase = Self.phase(status.state)
+        next.playback = Self.playback(status.playback)
+        next.title = Self.string(status.title)
+        next.artist = Self.string(status.artist)
+        next.remoteClient = Self.string(status.remote_client)
+        next.message = Self.string(status.message)
+        next.sampleRate = Int(status.sample_rate)
+        next.channels = Int(status.channels)
+        next.framesDelivered = status.frames_delivered
+        next.peak = status.last_peak
+        next.pcmFlowing = flowing
+        next.zeroconfPort = Int(status.zeroconf_port)
+        next.volumePercent = Int((Double(status.volume) / 65535 * 100).rounded())
+        next.firstPCMMilliseconds = Int(status.first_pcm_ms)
+        next.hopsAnalyzed = router.hopsAnalyzed
+        next.chunksDropped = router.chunksDropped
+        next.presentationDelayMs = Int((router.presentationDelay * 1000).rounded())
+        next.analyzerRunning = engine.isRunning
+        next.analyzerOnSpotify = engine.sourceKind == .spotifyConnect
+        if next != snapshot { snapshot = next }
+        levels = AudioAnalysisEngine.latestFeatures()
+
+        if now - lastConsoleAt >= 1 {
+            lastConsoleAt = now
+            logDiagnostics(next)
+        }
+    }
+
+    private func logDiagnostics(_ s: Snapshot) {
+        let f = levels
+        print(String(
+            format: "[SpotifyPCM] state=%@ playback=%@ fmt=%dHz/%dch frames=%llu flowing=%@ peak=%.3f hops=%llu dropped=%llu delay=%dms firstPCM=%dms | analyzer=%@/%@ level=%.2f bass=%.2f mid=%.2f treble=%.2f raw=%.2f onset=%.2f bpm=%.0f",
+            "\(s.phase)", "\(s.playback)", s.sampleRate, s.channels, s.framesDelivered,
+            s.pcmFlowing ? "yes" : "no", s.peak, s.hopsAnalyzed, s.chunksDropped,
+            s.presentationDelayMs, s.firstPCMMilliseconds,
+            s.analyzerRunning ? "running" : "idle", s.analyzerOnSpotify ? "spotify" : "mic",
+            f.level, f.bass, f.mid, f.treble, f.rawOverall, f.onsetStrength, f.bpm
+        ))
+    }
+
+    private func update(_ mutate: (inout Snapshot) -> Void) {
+        var next = snapshot
+        mutate(&next)
+        if next != snapshot { snapshot = next }
+    }
+
+    // MARK: - Network changes
+
+    private func startPathMonitor() {
+        guard pathMonitor == nil else { return }
+        let monitor = NWPathMonitor()
+        monitor.pathUpdateHandler = { [weak self] path in
+            let satisfied = path.status == .satisfied
+            Task { @MainActor in self?.networkChanged(satisfied: satisfied) }
+        }
+        monitor.start(queue: DispatchQueue(label: "com.lightshade.app.spotify-path"))
+        pathMonitor = monitor
+    }
+
+    private func stopPathMonitor() {
+        pathMonitor?.cancel()
+        pathMonitor = nil
+    }
+
+    private func networkChanged(satisfied: Bool) {
+        defer { networkWasSatisfied = satisfied }
+        guard satisfied != networkWasSatisfied else { return }
+        print("[SpotifyPCM] network \(satisfied ? "back" : "lost") (phase=\(snapshot.phase))")
+        if satisfied { recoverIfNeeded(reason: "network change") }
+    }
+
+    // MARK: - C status decoding
+
+    private static func phase(_ raw: UInt32) -> Phase {
+        switch Int(raw) {
+        case Int(CGSpotifyStateStopped): .stopped
+        case Int(CGSpotifyStateStarting): .starting
+        case Int(CGSpotifyStateWaiting): .waiting
+        case Int(CGSpotifyStateConnecting): .connecting
+        case Int(CGSpotifyStateConnected): .connected
+        default: .failed
+        }
+    }
+
+    private static func playback(_ raw: UInt32) -> Playback {
+        switch Int(raw) {
+        case Int(CGSpotifyPlaybackLoading): .loading
+        case Int(CGSpotifyPlaybackPlaying): .playing
+        case Int(CGSpotifyPlaybackPaused): .paused
+        default: .idle
+        }
+    }
+
+    /// Decode a fixed C char array (imported as a tuple), bounded by its size.
+    static func string<T>(_ tuple: T) -> String {
+        withUnsafeBytes(of: tuple) { raw in
+            let bytes = raw.prefix { $0 != 0 }
+            return String(decoding: bytes, as: UTF8.self)
+        }
+    }
+}
+
+#endif

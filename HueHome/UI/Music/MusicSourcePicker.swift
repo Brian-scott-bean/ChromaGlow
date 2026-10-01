@@ -144,6 +144,10 @@ struct MusicSourcePicker: View {
                     }
                     .background(cardBackground)
 
+                    #if CHROMAGLOW_EXPERIMENTAL_SPOTIFY
+                    SpotifyConnectExperimentSection()
+                    #endif
+
                     VStack(alignment: .leading, spacing: 10) {
                         Toggle(isOn: $tempoLookupEnabled) {
                             VStack(alignment: .leading, spacing: 2) {
