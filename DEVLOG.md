@@ -18,7 +18,9 @@
   (reached from the Composer) because it still owns Siri/QR drains, bulb effects, Perform and its stop hooks. Every
   screen — Home, Room, Light, Scenes, More, Settings, setup, onboarding, the tour — rebuilt on one kit
   (`LuminousKit`/`LuminousStage`). Full suite **2451/2451**, guards green. **Uploaded to TestFlight as build 60**
-  (build 59 still installable; tags `testflight/build-59`/`-60`). **Hardware NOT verified.** Entry below;
+  (build 59 still installable; tags `testflight/build-59`/`-60`). **Device regression 2026-10-01: 5 High / 13 Medium
+  bugs logged in `docs/ios/luminous-app-redesign/regression-build-60.md`** (select docks behind the tab bar, sliders
+  stealing scroll, Composer can't stream here); Entertainment streaming verified for the first time. Entry below;
   design record `docs/ios/luminous-app-redesign/README.md`.
 - **DEVICE ROUND ON THE REAL BRIDGE → BUILD 58 (fixes) / 59 (this redesign branch), NOT MERGED (2026-09-30).**
   Claude drove build 57 on Brian's iPhone (iPhone Mirroring + live console + bridge replies) and fixed 7 bugs (paced
@@ -701,6 +703,49 @@
 ### Gotchas
 - ...
 ```
+
+---
+
+## 2026-10-01 - [Claude] Build 60 device regression on the real bridge — bug log
+
+### Branch
+- `experiment/luminous-app-redesign`. Docs only — no code changed. Not pushed.
+
+### What happened
+- Brian asked for a full regression of build 60 from the welcome tour, a log of every bug (including "can't scroll
+  to the bottom / reach save, effect and delete controls"), and responsiveness checked against the logs.
+- Claude installed the **Debug** build 60 over the TestFlight copy (data and pairing kept) because a TestFlight
+  (Release) build can't be attached to and compiles its diagnostic prints out. Drove the phone through iPhone
+  Mirroring with a timestamped live console; all writes went to Main bathroom (log-checked: 0 commands to
+  Bedroom/My room). Whole-house actions were exercised in Demo Mode only.
+- Full log: `docs/ios/luminous-app-redesign/regression-build-60.md` — 5 High, 13 Medium, ~45 Low, 9 perf/logic.
+
+### Headline bugs
+- H-1 *(Brian's report)*: Room Select-mode action buttons (lights On/Off/Brightness/Scene, scenes Edit/Delete) sit
+  behind the floating tab bar (`RoomDetailView.swift:182` inner safeAreaInset).
+- H-2 *(Brian's report)*: sliders swallow vertical swipes (`DragGesture(minimumDistance: 0)` in `LuminousGlowSlider`
+  / `Composer2GlowSlider`) — scrolling Composer → Tune changed Speed ×1 → ×0.48.
+- H-3: Room Scenes Select can't select a single scene (`allowsHitTesting(false)` on the Button label).
+- H-4: Room long-press "Delete Scene" deletes immediately (no confirm, no undo).
+- H-5: Composer never streams in this home — `.choiceRequired` → Room mode, no picker, Studio's area choice not shared.
+- Also: Studio Stop turns rooms off / Live Stop freezes the last frame (Composer restores); static looks stream
+  ~9 cmd/s forever; Composer Room-mode latency p50 286 ms vs 128 ms on build 59; every action triggers a full
+  two-bridge reload 1.5 s later.
+
+### Verified on hardware (first time)
+- Entertainment streaming: Studio Live Thunderstorm over a temporary Main-bathroom-only area — start 224 ms, no REST
+  while streaming, clean stop <0.7 s. Composer Stop restores the room exactly; Scenes Undo works; Demo Mode makes 0
+  bridge writes.
+
+### Left
+- Fix pass for the High/Medium list; re-test select docks, slider swipes, Composer streaming on hardware.
+- Not testable through mirroring: keyboard overlap, Dynamic Type, small phones (code audit lists suspects).
+
+### Gotchas
+- iPhone Mirroring: synthetic scroll-wheel events scroll SwiftUI lists (drags don't); `CGEvent` unicode typing gets
+  stuck — post real US keycodes instead; the on-screen keyboard is hidden. The scratchpad was wiped mid-session
+  (tools had to be rebuilt).
+- Phone is left on the Debug build; notification permission was granted during the schedule test.
 
 ---
 
