@@ -284,18 +284,33 @@ final class Composer2RESTCharacterizationTests: XCTestCase {
         XCTAssertEqual(BridgeCommandGate.retryBackoff, .milliseconds(400))
     }
 
-    /// The Composer REST path does not use the pacing gate at all — its work
-    /// builders dispatch batches concurrently and pace themselves with the
-    /// 80 ms gap pinned above.
-    func testCurrentComposerWorkBuildersDoNotUseTheCommandGate() throws {
+    /// The Composer REST path BOOKS the bridge's pacing gate (device round,
+    /// build 58): unbooked, an 8-light room ran ~14 cmd/sec and a real
+    /// bridge's replies slowed from ~50 ms to ~270 ms. Each builder books its
+    /// sweep's commands BEFORE the realized-frame admit, so every
+    /// flash-safety stamp is taken exactly as before; batches still dispatch
+    /// concurrently with the 80 ms gap pinned above, and nothing goes through
+    /// `gate.send` (a sweep's next frame supersedes a failed one — no retry).
+    func testComposerWorkBuildersBookTheBridgeBudgetBeforeTheAdmit() throws {
         let src = try productionSource(orchestratorPath)
-        for signature in ["private func makeComposerGradientWork(",
-                          "private func makeComposerPerLightWork(",
-                          "private func makeComposerGroupedWork("] {
+        for (signature, booking) in [("private func makeComposerGradientWork(", "await gate.reserve(cost: entries.count)"),
+                                     ("private func makeComposerPerLightWork(", "await gate.reserve(cost: targets.count)"),
+                                     ("private func makeComposerGroupedWork(", "await gate?.reserve(cost: 1)")] {
             let body = try requireBody(signature, in: src, of: orchestratorPath)
-            requireAbsent("gate.send(", in: body, "\(signature) does not use the gate")
-            requireAbsent("commandGate(", in: body, "\(signature) does not resolve a gate")
+            requireContains(booking, in: body, "\(signature) books its commands")
+            requireAbsent("gate.send(", in: body, "\(signature) never retries through the gate")
+            requireAbsent("commandGate(", in: body, "\(signature) is handed its bridge's gate, never resolves one")
+            let book = try XCTUnwrap(body.range(of: booking))
+            let admit = try XCTUnwrap(body.range(of: "admitComposerSweep("))
+            XCTAssertLessThan(book.lowerBound, admit.lowerBound,
+                              "\(signature) books the budget before the flash-safety admit")
         }
+        let scheduler = try requireBody("private func runCompositionScheduler() async {",
+                                        in: src, of: orchestratorPath)
+        requireContains("let composerGate = commandGate(for: runtime.restBridgeIdentity)",
+                        in: scheduler, "the scheduler uses the room's own bridge gate")
+        XCTAssertEqual(scheduler.components(separatedBy: "gate: composerGate)").count - 1, 3,
+                       "all three builders are handed the gate")
     }
 
     /// Studio live-param writes DO use the gate, and every one of them opts

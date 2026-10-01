@@ -152,6 +152,42 @@ final class GatedBulkWriteTests: XCTestCase {
             "commands must be spaced to the ~10 cmd/sec bridge budget")
     }
 
+    /// A Composer sweep books its whole room at once: it goes immediately,
+    /// and the bridge's NEXT command waits for every slot it booked.
+    func testReserveBooksItsWholeCostBeforeTheNextCommand() async {
+        let gate = BridgeCommandGate()
+        let clock = ContinuousClock()
+        let start = clock.now
+        await gate.reserve(cost: 5)
+        XCTAssertLessThan(start.duration(to: clock.now), .milliseconds(50),
+            "the first booking on an idle bridge must not wait")
+        await gate.send { }
+        XCTAssertGreaterThanOrEqual(start.duration(to: clock.now), .milliseconds(480),
+            "a 5-command booking holds the bridge for 5 × 100 ms")
+    }
+
+    /// Sweep after sweep of an 8-light room averages the bridge budget, not
+    /// the bridge's reply speed (device round: ~14 cmd/sec, replies ~270 ms).
+    func testBackToBackReservationsAverageTheBridgeBudget() async {
+        let gate = BridgeCommandGate()
+        let clock = ContinuousClock()
+        let start = clock.now
+        for _ in 0..<3 { await gate.reserve(cost: 8) }
+        // Three 8-command sweeps = 24 commands; the third starts after 16.
+        XCTAssertGreaterThanOrEqual(start.duration(to: clock.now), .milliseconds(1550))
+    }
+
+    /// A zero or negative cost still books one slot — a sweep is at least a
+    /// command, and a free booking would let a loop spin.
+    func testReserveNeverBooksLessThanOneSlot() async {
+        let gate = BridgeCommandGate()
+        let clock = ContinuousClock()
+        let start = clock.now
+        await gate.reserve(cost: 0)
+        await gate.reserve(cost: -3)
+        XCTAssertGreaterThanOrEqual(start.duration(to: clock.now), .milliseconds(90))
+    }
+
     // ──────────────────────────────────────────────
     // MARK: - M-08: All Off reaches every room, failures surface
     // ──────────────────────────────────────────────

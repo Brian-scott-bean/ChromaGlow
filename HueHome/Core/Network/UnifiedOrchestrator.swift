@@ -7453,11 +7453,22 @@ final class UnifiedOrchestrator {
         api: HueAPIClient,
         gamut: HueColorUtils.Gamut,
         sentX: Double, sentY: Double, sentBri: Double,
-        slots: [CompositionRenderSlot] = []
+        slots: [CompositionRenderSlot] = [],
+        gate: BridgeCommandGate? = nil
     ) -> RestSender.Work {
         let slotByLight = Dictionary(slots.compactMap { s in s.lightID.map { ($0, s) } }, uniquingKeysWith: { a, _ in a })
         return { [weak self] stillCurrent in
             self?.composerWorkStarted(token)
+            // The bridge budget, BEFORE the admit (see the per-light builder):
+            // one booked slot per PUT — a whole strip is one gradient PUT.
+            if let gate {
+                await gate.reserve(cost: entries.count)
+                guard await stillCurrent() else {
+                    self?.composerWorkTerminated(
+                        token: token, kind: .cancelled, attemptedOperations: 0, failures: 0)
+                    return
+                }
+            }
             // The realized-frame gate, at dispatch (safety round 2): the
             // frame this sweep will put on each of its lights.
             // A strip's PUT carries ONE averaged brightness for every point
@@ -7616,13 +7627,26 @@ final class UnifiedOrchestrator {
         api: HueAPIClient,
         gamut: HueColorUtils.Gamut,
         sentX: Double, sentY: Double, sentBri: Double,
-        slots: [CompositionRenderSlot] = []
+        slots: [CompositionRenderSlot] = [],
+        gate: BridgeCommandGate? = nil
     ) -> RestSender.Work {
         // Capability honesty (Composer 2.1) is looked up per light below; the
         // closure opener stays within the cancellation guard's scan window.
         let slotByLight = Dictionary(slots.compactMap { s in s.lightID.map { ($0, s) } }, uniquingKeysWith: { a, _ in a })
         return { [weak self] stillCurrent in
             self?.composerWorkStarted(token)
+            // The bridge budget, BEFORE the admit: every flash-safety stamp
+            // below is taken exactly as before — the sweep just starts when
+            // the bridge has room. Unbooked, an 8-light room ran ~14 cmd/sec
+            // and a real bridge's replies slowed from ~50 ms to ~270 ms.
+            if let gate {
+                await gate.reserve(cost: targets.count)
+                guard await stillCurrent() else {
+                    self?.composerWorkTerminated(
+                        token: token, kind: .cancelled, attemptedOperations: 0, failures: 0)
+                    return
+                }
+            }
             // The realized-frame gate, at dispatch (safety round 2).
             let sweep = targets.compactMap { t -> (index: Int, x: Double, y: Double, brightness: Double)? in
                 guard t.frameIndex < frames.count else { return nil }
@@ -7762,13 +7786,16 @@ final class UnifiedOrchestrator {
         groupedLightID: String,
         brightness: Double,
         xy: (x: Double, y: Double),
-        api: HueAPIClient
+        api: HueAPIClient,
+        gate: BridgeCommandGate? = nil
     ) -> RestSender.Work {
         // One request, no loop — nothing to cancel between dispatches, so this
         // path ignores the probe (packet 3). Scope invalidation still prevents
         // it from STARTING once the room is stopped.
         return { [weak self] stillCurrent in
             self?.composerWorkStarted(token)
+            // The bridge budget, before the probe and the admit below.
+            await gate?.reserve(cost: 1)
             // One probe before the one PUT (safety round 3, #5): a stop that
             // began while this item waited in the mailbox must not be
             // followed by a stale grouped write behind its group-off.
@@ -8076,6 +8103,9 @@ final class UnifiedOrchestrator {
             // its own sender instead of the shared "legacy" one. The clear
             // side in `stopCompositionMode` keys off the same value.
             let composerSender = restSender(for: runtime.restBridgeIdentity)
+            // The same per-bridge budget Room Detail, bulk writes and Studio
+            // already share — a sweep books its commands on it (build 58).
+            let composerGate = commandGate(for: runtime.restBridgeIdentity)
             let composerScope = RestScope(roomID: roomID, owner: .composer)
 
             // Packet 4: one token per enqueued work item, keyed exactly like
@@ -8193,7 +8223,7 @@ final class UnifiedOrchestrator {
                         token: token, entries: subset, frames: frames,
                         api: capturedAPI, gamut: capturedGamut,
                         sentX: sentX, sentY: sentY, sentBri: sentBri,
-                        slots: capturedSlots)
+                        slots: capturedSlots, gate: composerGate)
                 }
             } else if usePerLight, let slice = sweepSlice {
                 // ── PER-LIGHT MODE ──
@@ -8211,7 +8241,7 @@ final class UnifiedOrchestrator {
                         token: token, targets: subset, frames: frames,
                         api: capturedAPI, gamut: capturedGamut,
                         sentX: sentX, sentY: sentY, sentBri: sentBri,
-                        slots: capturedSlots)
+                        slots: capturedSlots, gate: composerGate)
                 }
             } else {
                 // ── GROUPED FALLBACK ──
@@ -8223,7 +8253,7 @@ final class UnifiedOrchestrator {
                     makeComposerGroupedWork(
                         token: token, groupedLightID: runtime.groupedLightID,
                         brightness: firstBri, xy: (firstXY.x, firstXY.y),
-                        api: capturedAPI)
+                        api: capturedAPI, gate: composerGate)
                 }
             }
 
