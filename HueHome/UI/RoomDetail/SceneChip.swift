@@ -1,97 +1,65 @@
 // SceneChip.swift
-// CastChroma — Stage 1 (renamed RoomSceneChip to avoid conflict with HueComponents.SceneChip)
+// ChromaGlow — Room (Luminous): one of the room's scenes.
 //
-// Full-featured scene tile for Room Detail's horizontal scene strip.
-// Takes a SceneDisplayItem with isActive state and accent color.
-// isActivating: true while API call is in flight → shows spinner, disables double-tap.
+// A glass tile whose top is the scene's light — an arc of orbs in its
+// colour — over its name. The active scene glows; while a recall is in
+// flight a spinner replaces its icon and the tile ignores another tap.
+// Presses use a ButtonStyle (never a DragGesture) so the tile never steals
+// a scroll.
 
 import SwiftUI
 
-struct RoomSceneChip: View {
+struct RoomSceneTile: View {
 
     let scene: SceneDisplayItem
-    let isActivating: Bool   // true while API call is in flight → shows spinner
+    /// True while the recall is in flight → spinner, no double tap.
+    let isActivating: Bool
+    var isFavorite: Bool = false
     let onTap: () -> Void
 
     var body: some View {
         Button(action: onTap) {
-            VStack(spacing: 8) {
-                // ── Icon circle (spinner when activating) ──────────────────────────
-                ZStack {
-                    Circle()
-                        .fill(scene.isActive
-                              ? scene.accentColor.opacity(0.28)
-                              : Color.white.opacity(0.08))
-                        .frame(width: 44, height: 44)
-
+            VStack(alignment: .leading, spacing: 6) {
+                LuminousPaletteOrbs(colors: [scene.accentColor, scene.accentColor.opacity(0.85), scene.accentColor],
+                                    count: 3, lit: true, height: 40)
+                    .opacity(scene.isActive ? 1 : 0.55)
+                HStack(spacing: 6) {
                     if isActivating {
-                        ProgressView()
-                            .progressViewStyle(.circular)
-                            .tint(scene.accentColor)
-                            .scaleEffect(0.7)
+                        ProgressView().tint(scene.accentColor).scaleEffect(0.7)
+                            .frame(width: 14, height: 14)
                     } else {
                         Image(systemName: scene.icon)
-                            .font(.system(size: 17, weight: .medium))
-                            .foregroundStyle(scene.isActive
-                                             ? scene.accentColor
-                                             : .white.opacity(0.50))
-                            .symbolEffect(.bounce, value: scene.isActive)
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(scene.accentColor)
                     }
+                    Text(scene.name)
+                        .font(LuminousType.cardTitleSmall)
+                        .foregroundStyle(LuminousPalette.ink)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
                 }
-
-                // ── Name ─────────────────────────────────
-                Text(scene.name)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(scene.isActive ? .white : .white.opacity(0.60))
-                    .lineLimit(2)
-                    .multilineTextAlignment(.center)
-                    .truncationMode(.tail)
+                Text(scene.isActive ? "On now" : (isActivating ? "Setting…" : "Tap to set"))
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(scene.isActive ? LuminousPalette.live : LuminousPalette.inkSecondary)
             }
-            .frame(width: 76, height: 80)
-            .padding(.vertical, 14)
-            .padding(.horizontal, 8)
-            .background {
-                // Glass surface
-                RoundedRectangle(cornerRadius: 18)
-                    .fill(.ultraThinMaterial)
-                // Accent glow when active
-                if scene.isActive {
-                    RoundedRectangle(cornerRadius: 18)
-                        .fill(scene.accentColor.opacity(0.12))
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .luminousPanel(radius: 18, glow: scene.isActive ? scene.accentColor : nil,
+                           glowStrength: scene.isActive ? 0.8 : 0)
+            .overlay(alignment: .topTrailing) {
+                if isFavorite {
+                    Image(systemName: "star.fill")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(LuminousPalette.amber)
+                        .padding(10)
+                        .accessibilityHidden(true)
                 }
             }
-            .overlay {
-                RoundedRectangle(cornerRadius: 18)
-                    .stroke(
-                        scene.isActive
-                            ? scene.accentColor.opacity(0.70)
-                            : Color.white.opacity(0.12),
-                        lineWidth: scene.isActive ? 1.5 : 1
-                    )
-            }
-            .shadow(
-                color: scene.isActive ? scene.accentColor.opacity(0.45) : .clear,
-                radius: 12, x: 0, y: 4
-            )
+            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         }
-        // Custom ButtonStyle handles press scale WITHOUT a DragGesture —
-        // DragGesture was stealing the horizontal ScrollView's pan on iPhone.
-        .buttonStyle(SceneChipButtonStyle())
+        .buttonStyle(LuminousPressStyle(scale: 0.95))
         .disabled(isActivating)
-        .accessibilityLabel(Text("\(scene.name) scene\(scene.isActive ? ", active" : "")"))
-        .accessibilityHint(Text(isActivating ? "Activating…" : "Tap to activate"))
-        .animation(.spring(response: 0.35, dampingFraction: 0.72), value: scene.isActive)
-        .animation(.easeInOut(duration: 0.2), value: isActivating)
-    }
-}
-
-/// Scroll-friendly press animation. Unlike DragGesture, ButtonStyle's
-/// isPressed is managed by UIKit's gesture system which correctly defers
-/// to scroll gestures — so horizontal ScrollView swiping works on iPhone.
-private struct SceneChipButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? 0.93 : 1.0)
-            .animation(.spring(response: 0.2, dampingFraction: 0.65), value: configuration.isPressed)
+        .accessibilityLabel("\(scene.name) scene\(scene.isActive ? ", active" : "")\(isFavorite ? ", favourite" : "")")
+        .accessibilityHint(isActivating ? "Activating…" : "Tap to activate")
     }
 }

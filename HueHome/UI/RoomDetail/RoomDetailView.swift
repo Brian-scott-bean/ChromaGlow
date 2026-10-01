@@ -1,9 +1,25 @@
 // RoomDetailView.swift
-// CastChroma — Epic 3 / Story 3.1
+// ChromaGlow — Room (Luminous).
 //
-// Individual light control drill-down.
-// Reuses GlassmorphicCard, BrightnessRow, and archetypeIcon() from the dashboard layer.
-// Each bulb card: tap = toggle, brightness scrubber = dimming.
+// A room is a stage. The hero is the Composer's stage painter fed with what
+// the lamps are doing right now (tap a lamp to open it); under it the room's
+// name, its power and brightness, then three views of the room —
+// Lights · Scenes · Looks — the way the Composer has Looks · Tune · Layers.
+// The background glows in the colours the room's lamps are showing.
+//
+// Contracts kept from the previous Room screen:
+//   • `.task` replaces the placeholder VM with one seeded from the
+//     orchestrator's light cache; a fresh seed (< 30 s) skips the refetch;
+//     ONE SSE subscriber is held for the view's lifetime; colour commits
+//     refresh the dashboard glows; scene edits reload the global list.
+//   • Paint mode is sticky (Done pill / re-tap the armed swatch / leave the
+//     room) and excludes select mode.
+//   • Guest gates: power (canPower), brightness/colour/moods/My Colors
+//     (canAdjust), scenes (canRecallScenes), every create/edit/delete and
+//     multi-select (never on a granted bridge). No Looks on a guest-only
+//     shell or a granted bridge (the Composer isn't part of shared access).
+//   • Light writes go through the view model, which owns optimistic state
+//     and rollback.
 
 import SwiftUI
 
@@ -11,12 +27,33 @@ import SwiftUI
 
 struct RoomDetailView: View {
 
+    /// The three views of a room.
+    enum Segment: String, CaseIterable, Hashable {
+        case lights, scenes, looks
+
+        var title: String {
+            switch self {
+            case .lights: return "Lights"
+            case .scenes: return "Scenes"
+            case .looks:  return "Looks"
+            }
+        }
+
+        var symbol: String {
+            switch self {
+            case .lights: return "lightbulb.2.fill"
+            case .scenes: return "swatchpalette.fill"
+            case .looks:  return "sparkles"
+            }
+        }
+    }
+
     let room: RoomDisplayItem
     @State private var vm: RoomDetailViewModel
+    @State private var segment: Segment
     @State private var showLog           = false
     @State private var showCreateScene   = false
-    @State private var showBulkScene     = false   // CreateSceneView from BulkActionBar
-    @State private var showAddMenu       = false   // + button menu
+    @State private var showBulkScene     = false   // builder from the bulk dock
     @State private var showCreateAutomation = false
     @State private var sceneToRename:    SceneDisplayItem? = nil
     @State private var sceneRenameDraft: String = ""
@@ -30,21 +67,25 @@ struct RoomDetailView: View {
         Set(favoriteSceneIDsRaw.split(separator: ",").map(String.init))
     }
     private func toggleFavorite(_ scene: SceneDisplayItem) {
-        // Order-preserving toggle — the Set round-trip this used to do
-        // rewrote the CSV in arbitrary order, scrambling every Dashboard
-        // favorite pill whenever a scene was starred from a room.
+        // Order-preserving toggle — the Dashboard renders favourites in
+        // stored order.
         favoriteSceneIDsRaw = FavoriteSceneCSV.toggled(favoriteSceneIDsRaw, id: scene.id)
     }
 
     // ── Room / Zone CRUD ──────────────────────────────────────────────────────
-    @State private var showRoomMenu  = false   // drives the ··· confirmationDialog
-    @State private var showEditSheet = false   // drives the EditRoomSheet
+    @State private var showEditSheet     = false
+    @State private var showDeleteConfirm = false
 
-    /// Saved swatch armed for tap-to-apply — non-nil turns light cards into
-    /// apply targets (My Colors strip).
+    /// Saved swatch armed for tap-to-apply — non-nil turns light tiles (and
+    /// the stage's lamps) into paint targets.
     @State private var armedColor: SavedColor? = nil
-    /// Light card a swatch drag is currently hovering (drop-target ring).
+    /// Light tile a swatch drag is currently hovering (drop-target ring).
     @State private var dropTargetLightID: String? = nil
+    /// A lamp tapped on the stage — pushes its control.
+    @State private var stageLight: LightDisplayItem? = nil
+    /// The room brightness slider's drag state (commits once on release).
+    @State private var roomLevel: Double
+    @State private var draggingRoomLevel = false
 
     @Environment(UnifiedOrchestrator.self) private var orchestrator
     @Environment(\.dismiss)               private var dismiss
@@ -56,72 +97,99 @@ struct RoomDetailView: View {
     /// Granted bridges never offer creation/edit surfaces (scenes,
     /// automations) regardless of features.
     private var isGrantedBridge: Bool { orchestrator.isGuestGrantedBridge(room.bridgeID) }
+    /// A guest-only device has no Composer (its tabs are hidden).
+    private var isGuestOnlyShell: Bool { orchestrator.guestAccessInfo.isGuestOnly && !orchestrator.isDemoMode }
 
-    init(room: RoomDisplayItem) {
+    init(room: RoomDisplayItem, initialSegment: Segment = .lights) {
         self.room = room
-        // vm is placeholder — will be replaced with correct client in .onAppear
-        // We use a temp init here; proper injection happens via updateVM()
+        // Placeholder VM — replaced in .task with one that has the bridge
+        // client, the demo flag, the seeded cache and the pacing gate.
         _vm = State(initialValue: RoomDetailViewModel(room: room))
+        _segment = State(initialValue: initialSegment)
+        _roomLevel = State(initialValue: max(1, room.brightness))
     }
 
+    /// The room as the orchestrator knows it now (a rename lands here); the
+    /// pushed snapshot is the fallback.
+    private var liveRoom: RoomDisplayItem {
+        (orchestrator.allRooms + orchestrator.allZones).first { $0.id == room.id } ?? room
+    }
+
+    /// What is playing in this room right now, if anything.
+    private var liveEntry: ActiveEffectEntry? {
+        orchestrator.activeEffectEntries.last { $0.roomID == room.id }
+    }
+
+    /// The colour the room is showing — the same dominant colour its Home
+    /// card glows in, so the two screens agree.
+    private var roomColor: Color { liveRoom.luminousColor }
+
+    /// The lamps as the stage draws them: an off lamp has no colour, so it
+    /// is drawn as neutral dark glass rather than tinted by its last colour.
+    private var stageLights: [LightDisplayItem] {
+        vm.lights.map { light in
+            guard !light.isOn else { return light }
+            var dark = light
+            dark.colorTempMirek = nil
+            dark.colorX = 0.3127
+            dark.colorY = 0.3290
+            return dark
+        }
+    }
+
+    private var ambienceColors: [Color] {
+        let lit = LuminousLight.palette(of: vm.lights, max: 3)
+        return lit.isEmpty ? [LuminousPalette.night] : lit
+    }
+
+    // ── Segments ──────────────────────────────────────────────────────────────
+
+    private var showsScenesSegment: Bool {
+        guestFeatures.canAdjust || guestFeatures.canRecallScenes || (!isGrantedBridge && !vm.automations.isEmpty)
+    }
+
+    private var showsLooksSegment: Bool { !isGuestOnlyShell && !isGrantedBridge }
+
+    private var segments: [Segment] {
+        var out: [Segment] = [.lights]
+        if showsScenesSegment { out.append(.scenes) }
+        if showsLooksSegment { out.append(.looks) }
+        return out
+    }
+
+    /// The segment on screen — falls back to Lights when the chosen one isn't
+    /// offered here (a guest shell never shows Looks).
+    private var activeSegment: Segment {
+        segments.contains(segment) ? segment : .lights
+    }
+
+    // MARK: - Body
+
     var body: some View {
-        ZStack {
-            RoomDetailAmbientBackground()
-
-            Group {
-                if vm.isLoading && vm.lights.isEmpty {
-                    loadingView
-                } else if let error = vm.errorMessage, vm.lights.isEmpty {
-                    errorView(error)
-                } else {
-                    lightScrollView
-                }
-            }
-
-            // BulkActionBar — slides up when lights are selected.
-            // NOTE: RoomDetailAmbientBackground uses .ignoresSafeArea(), which
-            // expands the ZStack to the full screen height (inc. home indicator).
-            // Spacer() therefore pushes to the raw screen bottom, NOT the safe
-            // area bottom. Explicit padding is needed to clear:
-            //   home indicator (~34pt) + tab bar bottom pad (8pt) + capsule (56pt) = ~98pt
-            if vm.isSelecting {
-                VStack {
-                    Spacer()
-                    // Bulk "Scene" creates a bridge scene — owner surface only.
-                    BulkActionBar(vm: vm) { if !isGrantedBridge { showBulkScene = true } }
-                        .padding(.bottom, 100)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                }
-                .zIndex(5)
-                .animation(.spring(response: 0.35, dampingFraction: 0.75), value: vm.isSelecting)
-            }
-
-            // SceneEditBar — slides up when scenes are selected.
-            // Never on a granted bridge: guests can't edit scenes.
-            if vm.isSelectingScenes && !isGrantedBridge {
-                VStack {
-                    Spacer()
-                    SceneEditBar(vm: vm) { scene in
-                        // Edit: recall the scene as a live preview, then open the
-                        // builder (it seeds from the scene's stored actions).
-                        vm.activateScene(scene)
-                        vm.exitSceneSelectMode()
-                        sceneToEdit = scene
-                    }
-                    .padding(.bottom, 100)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-                }
-                .zIndex(5)
-                .animation(.spring(response: 0.35, dampingFraction: 0.75), value: vm.isSelectingScenes)
+        Group {
+            if vm.isLoading && vm.lights.isEmpty {
+                loadingView
+            } else if let error = vm.errorMessage, vm.lights.isEmpty {
+                errorView(error)
+            } else {
+                scrollContent
             }
         }
-        .navigationTitle("")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbarColorScheme(.dark, for: .navigationBar)
-        .toolbarBackground(.hidden, for: .navigationBar)
-        .scrollContentBackground(.hidden)
-        .background(Color(red: 0.055, green: 0.055, blue: 0.08).ignoresSafeArea())
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background { LuminousAmbience(colors: ambienceColors) }
+        // Contextual docks float above the tab bar and inset the scroll
+        // content, so the last tiles are never hidden behind them.
+        .safeAreaInset(edge: .bottom, spacing: 0) { docks }
+        .animation(.spring(response: 0.35, dampingFraction: 0.78), value: vm.isSelecting)
+        .animation(.spring(response: 0.35, dampingFraction: 0.78), value: vm.isSelectingScenes)
+        .luminousNavigationChrome()
         .toolbar { toolbarItems }
+        .navigationDestination(for: LightDisplayItem.self) { light in
+            lightDestination(light)
+        }
+        .navigationDestination(item: $stageLight) { light in
+            lightDestination(light)
+        }
         .sheet(isPresented: $showLog) { logSheet }
         .sheet(isPresented: $showCreateScene) {
             SceneColorBuilderView(
@@ -135,7 +203,7 @@ struct RoomDetailView: View {
                 Task { await vm.loadScenes() }
             }
         }
-        // SceneColorBuilderView launched from BulkActionBar — pre-filtered to selection
+        // Builder launched from the bulk dock — pre-filtered to the selection.
         .sheet(isPresented: $showBulkScene) {
             let prefiltered = vm.selectedLights
             SceneColorBuilderView(
@@ -150,7 +218,7 @@ struct RoomDetailView: View {
                 Task { await vm.loadScenes() }
             }
         }
-        // SceneColorBuilderView launched for editing an existing scene
+        // Builder launched to edit an existing scene.
         .sheet(item: $sceneToEdit) { scene in
             SceneColorBuilderView(
                 roomID: room.id,
@@ -168,7 +236,7 @@ struct RoomDetailView: View {
         }
         // ── Edit Room / Zone sheet ─────────────────────────────────────────────
         .sheet(isPresented: $showEditSheet) {
-            EditRoomSheet(room: room, isZone: room.kind == .zone) { newName, newArchetype in
+            EditRoomSheet(room: liveRoom, isZone: room.kind == .zone) { newName, newArchetype in
                 Task {
                     if room.kind == .zone {
                         await orchestrator.renameZone(room, name: newName, archetype: newArchetype)
@@ -178,15 +246,12 @@ struct RoomDetailView: View {
                 }
             }
         }
-        // ── Room / Zone CRUD action sheet (··· button) ───────────────────────────
+        // ── Delete Room / Zone ────────────────────────────────────────────────
         .confirmationDialog(
-            room.kind == .zone ? "Zone: \(room.name)" : "Room: \(room.name)",
-            isPresented: $showRoomMenu,
+            room.kind == .zone ? "Delete \(liveRoom.name)?" : "Delete \(liveRoom.name)?",
+            isPresented: $showDeleteConfirm,
             titleVisibility: .visible
         ) {
-            Button(room.kind == .zone ? "Edit Zone" : "Edit Room") {
-                showEditSheet = true
-            }
             Button(room.kind == .zone ? "Delete Zone" : "Delete Room", role: .destructive) {
                 Task {
                     if room.kind == .zone {
@@ -194,10 +259,12 @@ struct RoomDetailView: View {
                     } else {
                         await orchestrator.deleteRoom(room)
                     }
-                    await MainActor.run { dismiss() }   // pop back to dashboard
+                    await MainActor.run { dismiss() }   // back to Home
                 }
             }
             Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes \"\(liveRoom.name)\" from your bridge.")
         }
         .alert("Rename Scene", isPresented: Binding(
             get: { sceneToRename != nil },
@@ -220,67 +287,62 @@ struct RoomDetailView: View {
         .sheet(isPresented: $showCreateAutomation) {
             CreateAutomationView()
         }
-        .confirmationDialog("Add", isPresented: $showAddMenu) {
-            Button("New Scene") { showCreateScene = true }
-            Button("New Schedule") { showCreateAutomation = true }
-            Button("Cancel", role: .cancel) {}
-        }
         .task {
-            let __seed = orchestrator.cachedLightItems(for: room)
-            // Re-build vm with the right bridge client now that orchestrator is available.
-            // This replaces the placeholder vm created in init() with one that has correct credentials.
-            vm = RoomDetailViewModel(
+            let seed = orchestrator.cachedLightItems(for: room)
+            // Rebuild the VM with the right bridge client now that the
+            // orchestrator is available. Every call below goes to THIS model.
+            let model = RoomDetailViewModel(
                 room: room,
                 api: orchestrator.hueClient(for: room.bridgeID),
                 isDemoMode: orchestrator.isDemoMode,
-                initialLights: __seed,
+                initialLights: seed,
                 // Bulk (multi-select) writes share the bridge's pacing gate
                 // with every other bulk writer (M-08).
                 commandGate: orchestrator.commandGate(for: room.bridgeID)
             )
-            // Wire the glow-refresh callback so color changes propagate to dashboard cards.
+            vm = model
+            // Colour changes propagate to the Home cards' glows.
             let bridgeID = room.bridgeID ?? ""
-            vm.onColorCommitted = { [weak orchestrator] in
+            model.onColorCommitted = { [weak orchestrator] in
                 guard let orchestrator, !bridgeID.isEmpty else { return }
                 orchestrator.refreshDominantColors(for: bridgeID)
             }
             // Scene renames/deletes made here must reach the global list
-            // (Scenes tab, Dashboard favorites, widgets/watch/Siri publish).
-            vm.onScenesChanged = { [weak orchestrator] in
+            // (Scenes tab, Home favourites, widgets/watch/Siri publish).
+            model.onScenesChanged = { [weak orchestrator] in
                 guard let orchestrator else { return }
                 Task { await orchestrator.loadAllScenes() }
             }
-            // Seed came from the same fetchLights that loadAll ran moments ago — a
-            // re-fetch now would return identical data and queue behind the
-            // post-pairing storm on rate-limited bridges. SSE (subscribed below)
-            // keeps the seeded list live; a stale or empty seed still refetches.
-            let seedIsFresh = !__seed.isEmpty
+            // The seed came from the same fetchLights that loadAll ran moments
+            // ago — a re-fetch would return identical data and queue behind the
+            // post-pairing storm on rate-limited bridges. SSE (subscribed
+            // below) keeps the seeded list live; a stale or empty seed refetches.
+            let seedIsFresh = !seed.isEmpty
                 && Date().timeIntervalSince(orchestrator.lastLoadedAt) < 30
 
-            // Load data concurrently. SSE runs forever so it must NOT block the group.
-            // Instead, launch SSE separately and use the group for finite fetches only.
-            async let sse: Void = vm.runSSE(eventStream: orchestrator.subscribeToLightEvents())
+            // SSE runs forever, so it must NOT block the group of finite loads.
+            async let sse: Void = model.runSSE(eventStream: orchestrator.subscribeToLightEvents())
             await withTaskGroup(of: Void.self) { group in
-                if !seedIsFresh { group.addTask { await vm.loadLights() } }
-                group.addTask { await vm.loadScenes() }
-                group.addTask { await vm.loadAutomations() }
+                if !seedIsFresh { group.addTask { await model.loadLights() } }
+                group.addTask { await model.loadScenes() }
+                group.addTask { await model.loadAutomations() }
             }
-            // Load room-level state after lights are loaded (needs light data for cross-check)
-            await vm.loadRoomState()
-            // Hold the SSE child for the view's lifetime. An async let that is
-            // never awaited is CANCELLED when this scope exits — which ended the
-            // stream (and live updates, including the fresh-seed shortcut's
-            // "SSE keeps it live") the moment the finite loads above finished.
-            // .task cancellation (the view going away) still ends it.
+            // Room-level state after the lights (it cross-checks them).
+            await model.loadRoomState()
+            // Hold the SSE child for the view's lifetime: an async let that is
+            // never awaited is CANCELLED when this scope exits. `.task`
+            // cancellation (the view going away) still ends it.
             await sse
+        }
+        .onChange(of: vm.roomBrightness) { _, new in
+            if !draggingRoomLevel { roomLevel = max(1, new) }
         }
         .preferredColorScheme(.dark)
         .overlay(alignment: .top) {
             if let msg = vm.toastMessage {
-                HueToastView(message: msg)
+                LuminousToastCapsule(text: msg)
                     .padding(.top, 8)
                     .transition(.move(edge: .top).combined(with: .opacity))
-                    .animation(.spring(response: 0.4, dampingFraction: 0.75), value: vm.toastMessage)
                     .allowsHitTesting(false)
                     .zIndex(10)
             }
@@ -288,178 +350,270 @@ struct RoomDetailView: View {
         .animation(.spring(response: 0.4, dampingFraction: 0.75), value: vm.toastMessage)
     }
 
-    // ──────────────────────────────────────────────
-    // MARK: - Background
-    // ──────────────────────────────────────────────
-    // ambientBackground moved to RoomDetailAmbientBackground struct (bottom of file).
-    // Separated so SSE / vm changes don't trigger blur re-renders.
+    // MARK: - Scroll content
 
-    // ──────────────────────────────────────────────
-    // MARK: - Light Scroll
-    // ──────────────────────────────────────────────
-
-    private var lightScrollView: some View {
+    private var scrollContent: some View {
         ScrollView {
-            VStack(spacing: 0) {
-                // ── Room Name (custom large title — inline mode has no large title area,
-                //    which eliminates the opaque nav bar background on pushed views) ──
-                Text(room.name)
-                    .font(.system(size: 34, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 20)
-                    .padding(.top, 8)
-                    .padding(.bottom, 4)
-
-                // ── Room Brightness Header ──
-                roomBrightnessHeader
-                    .padding(.horizontal, 20)
-                    .padding(.top, 8)
-                    .padding(.bottom, 20)
-
-                // ── PRESETS row (room-scoped — one grouped write, THIS room) ──
-                // Presets recolor + re-dim the room: adjust-level access.
-                if guestFeatures.canAdjust {
-                    presetsRow
-                        .padding(.bottom, 24)
+            VStack(alignment: .leading, spacing: 22) {
+                hero
+                titleBlock
+                powerPanel
+                if segments.count > 1 {
+                    LuminousSegmented(options: segments,
+                                      selection: $segment,
+                                      title: { $0.title },
+                                      symbol: { $0.symbol },
+                                      accessibilityLabel: "\(liveRoom.name) sections")
                 }
-
-                // ── SCENES section ──
-                if (!vm.scenes.isEmpty || !vm.lights.isEmpty) && guestFeatures.canRecallScenes {
-                    scenesStrip
-                        .padding(.bottom, 24)
-                }
-
-                // ── MY COLORS section (saved palette → tap a light to apply) ──
-                if !SavedColorStore.shared.colors.isEmpty && guestFeatures.canAdjust {
-                    myColorsSection
-                        .padding(.bottom, 24)
-                }
-
-                // ── LIGHTS section (horizontal scroll strip) ──
-                lightsSection
-                    .padding(.bottom, 24)
-
-                // ── AUTOMATIONS section (room-scoped) ──
-                // Automations write bridge schedules — owner surface only.
-                if !vm.automations.isEmpty && !isGrantedBridge {
-                    automationsSection
-                        .padding(.bottom, 32)
-                }
-            }   // VStack
-        }       // ScrollView
-        .navigationDestination(for: LightDisplayItem.self) { light in
-            if let binding = vm.lightBinding(for: light) {
-                if guestFeatures.canAdjust {
-                    LightControlView(
-                        light: binding,
-                        onToggle:     { desiredOn in vm.setLight(binding.wrappedValue, isOn: desiredOn) },
-                        onBrightness: { vm.setBrightness($0, for: binding.wrappedValue) },
-                        onColor:      { x, y in vm.setColor(x: x, y: y, for: binding.wrappedValue) },
-                        onColorTemp:  { vm.setColorTemp(mirek: $0, for: binding.wrappedValue) },
-                        onIdentify:   {
-                            let lightID = binding.wrappedValue.id
-                            Task {
-                                await SignalingService(orchestrator: orchestrator)
-                                    .identifyLight(id: lightID, bridgeID: room.bridgeID)
-                            }
-                        }
-                    )
-                } else {
-                    // Guest without the brightness grant: the full control
-                    // surface (sliders, color wheel) would be dishonest —
-                    // show status and, when granted, power only.
-                    guestLightSummary(binding.wrappedValue)
-                }
+                segmentContent
+                    .id(activeSegment)
+                    .transition(.asymmetric(insertion: .opacity.combined(with: .offset(y: 12)), removal: .opacity))
             }
+            .padding(.horizontal, HueSpacing.screenH)
+            .padding(.top, 4)
+            .padding(.bottom, 28)
+            .animation(.spring(response: 0.4, dampingFraction: 0.85), value: activeSegment)
         }
+        .scrollIndicators(.hidden)
         .refreshable {
             await vm.loadLights()
             await vm.loadRoomState()
             await vm.loadAutomations()
         }
-        .scrollIndicators(.hidden)
     }
 
-    // ── Guest light summary (adjust not granted) ──
+    // MARK: - Hero
 
-    private func guestLightSummary(_ light: LightDisplayItem) -> some View {
-        VStack(spacing: HueSpacing.lg) {
-            ZStack {
-                Circle()
-                    .fill(light.isOn
-                          ? LightCard.resolveGlowColor(for: light).opacity(0.2)
-                          : Color.white.opacity(0.07))
-                    .frame(width: 88, height: 88)
-                Image(systemName: archetypeIcon(for: light.archetype))
-                    .font(.system(size: 36, weight: .medium))
-                    .foregroundStyle(light.isOn
-                                     ? LightCard.resolveGlowColor(for: light)
-                                     : .white.opacity(0.4))
+    private var hero: some View {
+        LuminousRoomStage(lights: stageLights,
+                          isLive: liveEntry != nil,
+                          height: 220,
+                          badge: AnyView(heroBadges),
+                          onTapLight: tapLamp)
+    }
+
+    private var heroBadges: some View {
+        HStack(spacing: 6) {
+            if let entry = liveEntry {
+                LuminousLiveBadge(state: .live)
+                LuminousFactBadge(text: entry.effectName, symbol: entry.effectIcon)
             }
-            Text(light.name)
-                .font(.system(size: 22, weight: .bold))
-                .foregroundStyle(.white)
-            Text(light.isOn ? "On · \(BrightnessDisplay.percent(light.brightness))%" : "Off")
-                .font(HueFont.stageStatus)
-                .foregroundStyle(.white.opacity(0.5))
-
-            if guestFeatures.canPower {
-                Button {
-                    HapticManager.shared.medium()
-                    vm.setLight(light, isOn: !light.isOn)
-                } label: {
-                    Label(light.isOn ? "Turn Off" : "Turn On",
-                          systemImage: "power")
-                        .font(HueFont.stageChip)
-                        .frame(maxWidth: 220)
-                        .padding(.vertical, 12)
-                        .background(
-                            RoundedRectangle(cornerRadius: HueRadius.lg)
-                                .fill(HuePalette.amber.opacity(0.15))
-                        )
-                }
-                .buttonStyle(.plain)
-                .tint(HuePalette.amber)
-            }
-
-            Text("Brightness and color aren't part of your shared access.")
-                .font(.system(size: 11))
-                .foregroundStyle(.white.opacity(0.35))
-                .multilineTextAlignment(.center)
+            Spacer(minLength: 0)
+            LuminousFactBadge(text: "\(vm.lights.count) light\(vm.lights.count == 1 ? "" : "s")",
+                              symbol: "lightbulb.fill")
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(RoomDetailAmbientBackground())
-        .navigationTitle("")
-        .navigationBarTitleDisplayMode(.inline)
     }
 
-    // ── My Colors Section (saved palette) ─────────
+    /// A lamp tapped on the stage: paints it while a colour is armed, picks it
+    /// in select mode, otherwise opens it.
+    private func tapLamp(_ tapped: LightDisplayItem) {
+        // The stage draws display copies (off lamps neutralised) — act on the
+        // real lamp, whose capabilities decide how a colour applies.
+        let light = vm.lights.first { $0.id == tapped.id } ?? tapped
+        if let armed = armedColor {
+            applySavedColor(armed, to: light)
+        } else if vm.isSelecting {
+            vm.toggleSelection(id: light.id)
+        } else {
+            stageLight = light
+        }
+    }
 
-    /// Tap a swatch to ARM it, then tap any light card to apply — the same
-    /// select-then-paint model as the scene builder. Tapping the armed
-    /// swatch again disarms.
-    private var myColorsSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                HStack(spacing: 6) {
-                    Image(systemName: "paintpalette.fill")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(Color(red: 0.35, green: 0.78, blue: 0.98))
-                    Text("MY COLORS")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.45))
+    // MARK: - Title & power
+
+    private var titleBlock: some View {
+        let onCount = vm.lights.filter(\.isOn).count
+        let total = vm.lights.count
+        var subtitle: String
+        if total == 0 {
+            subtitle = "No lights here yet"
+        } else if onCount == 0 {
+            subtitle = total == 1 ? "The light is off" : "All \(total) lights off"
+        } else {
+            subtitle = "\(onCount) of \(total) on · \(BrightnessDisplay.percent(vm.roomBrightness))%"
+        }
+        if orchestrator.isDemoMode { subtitle += " · Demo home" }
+        return LuminousScreenTitle(title: liveRoom.name,
+                                   eyebrow: room.kind == .zone ? "Zone" : "Room",
+                                   eyebrowSymbol: archetypeIcon(for: liveRoom.archetype),
+                                   eyebrowTint: vm.roomIsOn ? roomColor : LuminousPalette.inkSecondary,
+                                   subtitle: subtitle)
+    }
+
+    @ViewBuilder
+    private var powerPanel: some View {
+        if guestFeatures.canPower || guestFeatures.canAdjust {
+            HStack(spacing: 14) {
+                // Room power — hidden without the onOff grant.
+                if guestFeatures.canPower {
+                    LuminousPowerButton(isOn: vm.roomIsOn, tint: roomColor, size: 52,
+                                        label: "Turn \(liveRoom.name) \(vm.roomIsOn ? "off" : "on")") {
+                        HapticManager.shared.medium()
+                        vm.toggleRoom(on: !vm.roomIsOn)
+                    }
                 }
+                // Room brightness — hidden without the brightness grant.
+                if vm.roomIsOn && guestFeatures.canAdjust {
+                    LuminousGlowSlider(title: "Brightness",
+                                       symbol: "sun.max.fill",
+                                       value: $roomLevel,
+                                       range: 1...100,
+                                       colors: [roomColor.opacity(0.5), roomColor],
+                                       format: { "\(BrightnessDisplay.percent($0))%" },
+                                       accessibilityName: "\(liveRoom.name) brightness",
+                                       onEditingChanged: { editing in
+                                           draggingRoomLevel = editing
+                                           if !editing { vm.setRoomBrightness(roomLevel) }
+                                       })
+                        .transition(.opacity)
+                } else {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(vm.roomIsOn ? "On" : "Off")
+                            .font(LuminousType.cardTitle)
+                            .foregroundStyle(LuminousPalette.ink)
+                        Text(powerHint)
+                            .font(.footnote)
+                            .foregroundStyle(LuminousPalette.inkSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+            .padding(14)
+            .luminousPanel(glow: vm.roomIsOn ? roomColor : nil,
+                           glowStrength: vm.roomIsOn ? 0.3 + 0.7 * (vm.roomBrightness / 100) : 0)
+            .animation(.spring(response: 0.35, dampingFraction: 0.75), value: vm.roomIsOn)
+        }
+    }
+
+    private var powerHint: String {
+        if !guestFeatures.canPower { return "Power isn't part of your shared access." }
+        if vm.roomIsOn { return "Brightness isn't part of your shared access." }
+        return "Tap the power button to light the room."
+    }
+
+    // MARK: - Segments
+
+    @ViewBuilder
+    private var segmentContent: some View {
+        switch activeSegment {
+        case .lights: lightsSegment
+        case .scenes: scenesSegment
+        case .looks:  ComposerRoomLooks(room: liveRoom)
+        }
+    }
+
+    // ── Lights ────────────────────────────────────────────────────────────────
+
+    private var lightsSegment: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            // My Colors (saved palette → tap a light to apply).
+            if !SavedColorStore.shared.colors.isEmpty && guestFeatures.canAdjust {
+                myColorsSection
+            }
+            LuminousSectionHeader(title: "Lights", subtitle: lightsSubtitle) {
+                lightsHeaderAction
+            }
+            if vm.lights.isEmpty {
+                LuminousEmptyState(symbol: "lightbulb", title: "No lights here yet",
+                                   message: "Pull down to refresh once lights are added to this room.")
+            } else {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 12)], spacing: 12) {
+                    ForEach(vm.lights, id: \.id) { light in
+                        lightTile(light)
+                    }
+                }
+            }
+        }
+    }
+
+    private var lightsSubtitle: String {
+        if armedColor != nil { return "Tap a light to paint it." }
+        if vm.isSelecting { return "Choose lights to change together." }
+        return "Tap a light for colour and warmth. Hold one for more."
+    }
+
+    @ViewBuilder
+    private var lightsHeaderAction: some View {
+        if let armed = armedColor {
+            // Paint mode swaps in for Select (same row — no layout shift).
+            paintModePill(for: armed)
+        } else if !isGrantedBridge {
+            // Multi-select exists to bulk-edit and save scenes — owner surface.
+            LuminousTextPill(title: vm.isSelecting ? "Done" : "Select",
+                             symbol: vm.isSelecting ? nil : "checklist",
+                             tint: LuminousPalette.cyan,
+                             active: vm.isSelecting) {
+                if vm.isSelecting { vm.exitSelectMode() } else { vm.enterSelectMode() }
+            }
+        }
+    }
+
+    private func lightTile(_ light: LightDisplayItem) -> some View {
+        let isSelected = vm.selectedLightIDs.contains(light.id)
+        return RoomLightTile(
+            light: light,
+            isSelecting: vm.isSelecting,
+            isSelected: isSelected,
+            showsPowerToggle: guestFeatures.canPower,
+            onToggle: { desiredOn in vm.setLight(light, isOn: desiredOn) },
+            onToggleSelect: { vm.toggleSelection(id: light.id) }
+        )
+        // Armed-swatch paint target: while a My Colors swatch is armed, a tap
+        // anywhere on the tile applies it (over the tile's own controls).
+        .overlay {
+            if let armed = armedColor {
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .strokeBorder(armed.displayColor.opacity(0.9), lineWidth: 2)
+                    .background(RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .fill(armed.displayColor.opacity(0.08)))
+                    .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    .onTapGesture { applySavedColor(armed, to: light) }
+                    .transition(.opacity)
+                    .accessibilityElement()
+                    .accessibilityLabel("Paint \(light.name)")
+                    .accessibilityAddTraits(.isButton)
+            }
+        }
+        // Drop target for a dragged My Colors swatch.
+        .overlay {
+            if dropTargetLightID == light.id {
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .strokeBorder(LuminousPalette.cyan, lineWidth: 2.5)
+                    .shadow(color: LuminousPalette.cyan.opacity(0.6), radius: 8)
+                    .allowsHitTesting(false)
+            }
+        }
+        .dropDestination(for: SavedColor.self) { items, _ in
+            guard let saved = items.first else { return false }
+            applySavedColor(saved, to: light)
+            return true
+        } isTargeted: { targeting in
+            if targeting {
+                dropTargetLightID = light.id
+            } else if dropTargetLightID == light.id {
+                dropTargetLightID = nil
+            }
+        }
+        .contextMenu { lightContextMenu(for: light) }
+    }
+
+    /// Tap a swatch to ARM it, then tap any light to apply — the same
+    /// select-then-paint model as the scene builder. Tapping the armed swatch
+    /// again disarms.
+    private var myColorsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                LuminousEyebrow(text: "My Colors")
                 Spacer()
                 if armedColor != nil {
                     Text("Tap a light to apply")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(Color(red: 1.0, green: 0.76, blue: 0.20))
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(LuminousPalette.amber)
                         .transition(.opacity)
                 }
             }
-            .padding(.horizontal, 20)
-
+            .padding(.horizontal, 16)
             SavedColorStrip(
                 armedColorID: armedColor?.id,
                 onTapSwatch: { saved in
@@ -467,14 +621,15 @@ struct RoomDetailView: View {
                     HapticManager.shared.light()
                 }
             )
-            .padding(.horizontal, 4)
         }
+        .padding(.vertical, 12)
+        .luminousGlass(radius: 20)
         .animation(.spring(response: 0.3, dampingFraction: 0.7), value: armedColor)
     }
 
-    /// Send an armed swatch to one light, honoring its capabilities
-    /// (color → xy; CT-only → mirek; dimmable → brightness). Brightness
-    /// rides along so the saved look reproduces fully.
+    /// Send an armed swatch to one light, honouring its capabilities
+    /// (colour → xy; CT-only → mirek; dimmable → brightness). Brightness rides
+    /// along so the saved look reproduces fully.
     private func applySavedColor(_ saved: SavedColor, to light: LightDisplayItem) {
         switch saved.application(
             supportsColor: light.supportsColor,
@@ -492,42 +647,34 @@ struct RoomDetailView: View {
             vm.setBrightness(brightness, for: light)
         }
         HapticManager.shared.success()
-        // Deliberately stays armed: an armed color paints until the user
+        // Deliberately stays armed: an armed colour paints until the person
         // says Done (paint pill / tap the armed swatch / leave the room).
     }
 
-    /// Armed-state chrome in the LIGHTS header: swatch dot + "Painting" + Done.
-    /// StageBadge's amber recipe, but it carries a live swatch and a button so
-    /// it stays a local view rather than a StageKit component.
+    /// Armed-state chrome in the Lights header: the swatch, "Painting", Done.
     private func paintModePill(for armed: SavedColor) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 8) {
             Circle()
                 .fill(armed.displayColor)
-                .frame(width: 12, height: 12)
-                .overlay(Circle().stroke(.white.opacity(0.25), lineWidth: 0.5))
+                .frame(width: 14, height: 14)
+                .overlay(Circle().strokeBorder(.white.opacity(0.35), lineWidth: 1))
+                .shadow(color: armed.displayColor.opacity(0.8), radius: 5)
             Text("Painting")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(Color(red: 1.0, green: 0.76, blue: 0.20))
-            Button("Done") {
+                .font(.footnote.weight(.bold))
+                .foregroundStyle(LuminousPalette.amber)
+            LuminousTextPill(title: "Done", tint: LuminousPalette.amber, active: true) {
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
                     armedColor = nil
                 }
-                HapticManager.shared.light()
             }
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(.white)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 4)
-        .background(
-            Capsule().fill(Color(red: 1.0, green: 0.76, blue: 0.20).opacity(0.14))
-        )
         .transition(.opacity)
+        .accessibilityElement(children: .contain)
     }
 
-    /// Arm a color for paint mode. Select mode and paint mode are mutually
-    /// exclusive — an armed overlay would fight the selection Buttons for
-    /// the same taps.
+    /// Arm a colour for paint mode. Select mode and paint mode are mutually
+    /// exclusive — an armed overlay would fight the selection buttons for the
+    /// same taps.
     private func armPaintMode(with color: SavedColor?) {
         if vm.isSelecting { vm.exitSelectMode() }
         withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
@@ -535,16 +682,16 @@ struct RoomDetailView: View {
         }
     }
 
-    /// Long-press menu on a light card. Copy/Save hide (rather than no-op)
-    /// on dimmable-only lights, where there is no color to capture; Paste
-    /// hides until something has been copied.
+    /// Long-press menu on a light tile. Copy/Save hide (rather than no-op) on
+    /// dimmable-only lights, where there is no colour to capture; Paste hides
+    /// until something has been copied.
     @ViewBuilder
     private func lightContextMenu(for light: LightDisplayItem) -> some View {
         if let captured = ColorClipboard.capture(from: light) {
             Button {
-                // Copy arms paint mode immediately — tap lights to paste.
-                // The clipboard itself is app-wide, so the menu Paste also
-                // works in any other room until something else is copied.
+                // Copy arms paint mode immediately — tap lights to paste. The
+                // clipboard is app-wide, so the menu Paste also works in any
+                // other room until something else is copied.
                 ColorClipboard.shared.copy(captured)
                 armPaintMode(with: captured)
                 HapticManager.shared.light()
@@ -577,7 +724,7 @@ struct RoomDetailView: View {
             Label("Identify", systemImage: "rays")
         }
         // Multi-select exists to bulk-edit and save scenes — owner surface,
-        // same gate as the LIGHTS header's Select button.
+        // same gate as the Lights header's Select button.
         if !vm.isSelecting && !isGrantedBridge {
             Button {
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
@@ -590,403 +737,165 @@ struct RoomDetailView: View {
         }
     }
 
-    // ── Lights Section (horizontal strip) ─────────
+    // ── Scenes ────────────────────────────────────────────────────────────────
 
-    private var lightsSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                HStack(spacing: 6) {
-                    Image(systemName: "lightbulb.fill")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(Color(red: 1.0, green: 0.76, blue: 0.20))
-                    Text("LIGHTS")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.45))
-                    Text("(\(vm.lights.count))")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.white.opacity(0.25))
-                }
-                Spacer()
-                if let armed = armedColor {
-                    // Paint mode: swaps in for the Select button (same row,
-                    // same height — zero layout shift).
-                    paintModePill(for: armed)
-                } else if !isGrantedBridge {
-                    // Select / Done button for multi-select mode. Multi-select
-                    // exists to bulk-edit and save scenes — owner surface.
-                    Button(vm.isSelecting ? "Done" : "Select") {
-                        if vm.isSelecting { vm.exitSelectMode() } else { vm.enterSelectMode() }
-                    }
-                    .font(.system(size: 12, weight: vm.isSelecting ? .semibold : .regular))
-                    .foregroundStyle(vm.isSelecting
-                                     ? Color(red: 1.0, green: 0.76, blue: 0.20)
-                                     : .white.opacity(0.5))
-                }
+    private var scenesSegment: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            // Moods recolour + re-dim THIS room: adjust-level access.
+            if guestFeatures.canAdjust {
+                moodsRow
             }
-            .padding(.horizontal, 20)
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 12) {
-                    ForEach(vm.lights, id: \.id) { light in
-                        let isSelected = vm.selectedLightIDs.contains(light.id)
-                        CompactLightCard(
-                            light:          light,
-                            isSelecting:    vm.isSelecting,
-                            isSelected:     isSelected,
-                            onToggle:       { desiredOn in vm.setLight(light, isOn: desiredOn) },
-                            onToggleSelect: { vm.toggleSelection(id: light.id) },
-                            showsPowerToggle: guestFeatures.canPower
-                        )
-                        // Armed-swatch apply target: while a My Colors swatch
-                        // is armed, a tap anywhere on the card applies it
-                        // (intercepts the card's own controls until disarmed).
-                        .overlay {
-                            if let armed = armedColor {
-                                RoundedRectangle(cornerRadius: 18)
-                                    .stroke(armed.displayColor.opacity(0.85), lineWidth: 2)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 18)
-                                            .fill(armed.displayColor.opacity(0.06))
-                                    )
-                                    .contentShape(RoundedRectangle(cornerRadius: 18))
-                                    .onTapGesture { applySavedColor(armed, to: light) }
-                                    .transition(.opacity)
-                            }
-                        }
-                        // Drop target for a dragged My Colors swatch.
-                        .overlay {
-                            if dropTargetLightID == light.id {
-                                RoundedRectangle(cornerRadius: 18)
-                                    .stroke(Color(red: 1.0, green: 0.76, blue: 0.20),
-                                            lineWidth: 2.5)
-                                    .allowsHitTesting(false)
-                            }
-                        }
-                        .dropDestination(for: SavedColor.self) { items, _ in
-                            guard let saved = items.first else { return false }
-                            applySavedColor(saved, to: light)
-                            return true
-                        } isTargeted: { targeting in
-                            if targeting {
-                                dropTargetLightID = light.id
-                            } else if dropTargetLightID == light.id {
-                                dropTargetLightID = nil
-                            }
-                        }
-                        .contextMenu { lightContextMenu(for: light) }
-                    }
-                }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 2)
+            if (!vm.scenes.isEmpty || !vm.lights.isEmpty) && guestFeatures.canRecallScenes {
+                scenesSection
+            }
+            // Schedules write bridge behaviours — owner surface only.
+            if !vm.automations.isEmpty && !isGrantedBridge {
+                schedulesSection
             }
         }
     }
 
-    // ── Scene Strip ───────────────────────────────
-
-    // ──────────────────────────────────────────────
-    // MARK: - Presets row (room-scoped)
-    // ──────────────────────────────────────────────
-
-    /// The same four chips as the Dashboard bar, but scoped: Energize here
-    /// lights THIS room, not the whole home. Same shared catalog, same look.
-    private var presetsRow: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
-                ForEach(LightingPreset.all) { preset in
-                    Button {
-                        HapticManager.shared.light()
-                        vm.applyPreset(preset)
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: preset.icon)
-                                .font(.system(size: 11, weight: .semibold))
-                            Text(preset.name)
-                                .font(.system(size: 13, weight: .semibold))
-                                .lineLimit(1)
+    /// The same four moods as Home, scoped: Energize here lights THIS room.
+    private var moodsRow: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            LuminousSectionHeader(title: "Moods", subtitle: "For this room only.")
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(LightingPreset.all) { preset in
+                        HomeMoodTile(title: preset.name,
+                                     symbol: preset.icon,
+                                     detail: "\(BrightnessDisplay.percent(preset.brightness))% · \(HueColorUtils.kelvin(from: preset.mirek))K",
+                                     colors: [preset.luminousColor],
+                                     level: preset.brightness / 100) {
+                            HapticManager.shared.light()
+                            vm.applyPreset(preset)
                         }
-                        .foregroundStyle(preset.chipColor)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 9)
-                        .background(Capsule().fill(preset.chipColor.opacity(0.12)))
-                        .overlay(Capsule().strokeBorder(preset.chipColor.opacity(0.3), lineWidth: 1))
+                        .accessibilityLabel("\(preset.name), this room only")
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("\(preset.name), this room only")
                 }
+                .padding(.vertical, 4)
             }
-            .padding(.horizontal, 20)
+            .scrollClipDisabled()
         }
     }
 
-    private var scenesStrip: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            // Header: label + Select/Done + "＋" button
-            HStack {
+    private var scenesSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            LuminousSectionHeader(title: "Scenes",
+                                  subtitle: vm.scenes.isEmpty
+                                    ? "Save how this room looks and it's one tap away."
+                                    : "\(vm.scenes.count) saved for this room.") {
                 HStack(spacing: 6) {
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(Color(red: 0.60, green: 0.40, blue: 0.90))
-                    Text("SCENES")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.45))
-                    Text("(\(vm.scenes.count))")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.white.opacity(0.25))
-                }
-                Spacer()
-
-                // Select / Done for scene multi-select (bulk delete/edit —
-                // never on a granted bridge: guests recall, they don't edit).
-                if vm.scenes.count > 1 && !isGrantedBridge {
-                    Button(vm.isSelectingScenes ? "Done" : "Select") {
-                        if vm.isSelectingScenes { vm.exitSceneSelectMode() } else { vm.enterSceneSelectMode() }
-                    }
-                    .font(.system(size: 12, weight: vm.isSelectingScenes ? .semibold : .regular))
-                    .foregroundStyle(vm.isSelectingScenes
-                                     ? Color(red: 1.0, green: 0.76, blue: 0.20)
-                                     : .white.opacity(0.5))
-                }
-
-                if !vm.isSelectingScenes && !isGrantedBridge {
-                    Button {
-                        HapticManager.shared.light()
-                        showCreateScene = true
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "plus")
-                            Text("New")
+                    // Select / Done for scene multi-select (bulk delete/edit —
+                    // never on a granted bridge: guests recall, they don't edit).
+                    if vm.scenes.count > 1 && !isGrantedBridge {
+                        LuminousTextPill(title: vm.isSelectingScenes ? "Done" : "Select",
+                                         tint: LuminousPalette.cyan,
+                                         active: vm.isSelectingScenes) {
+                            if vm.isSelectingScenes { vm.exitSceneSelectMode() } else { vm.enterSceneSelectMode() }
                         }
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(Color(red: 1.0, green: 0.76, blue: 0.20).opacity(0.85))
                     }
-                    .buttonStyle(.plain)
+                    if !vm.isSelectingScenes && !isGrantedBridge {
+                        LuminousTextPill(title: "New", symbol: "plus", tint: LuminousPalette.cyan) {
+                            showCreateScene = true
+                        }
+                        .accessibilityLabel("New scene")
+                    }
                 }
             }
-            .padding(.horizontal, 20)
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 12) {
+            if !vm.scenes.isEmpty {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 12)], spacing: 12) {
                     ForEach(vm.scenes) { scene in
-                        let isSelected = vm.selectedSceneIDs.contains(scene.id)
-                        let isFav = favoriteSceneIDs.contains(scene.id)
+                        sceneTile(scene)
+                    }
+                }
+            }
+        }
+    }
 
-                        ZStack(alignment: .topTrailing) {
-                            if vm.isSelectingScenes {
-                                // Select mode: tap = toggle selection
-                                Button {
-                                    vm.toggleSceneSelection(id: scene.id)
-                                } label: {
-                                    RoomSceneChip(
-                                        scene: scene,
-                                        isActivating: false
-                                    ) { /* no-op in select mode */ }
-                                    .allowsHitTesting(false)
-                                }
-                                .buttonStyle(.plain)
-                            } else {
-                                // Normal mode: tap = activate
-                                RoomSceneChip(
-                                    scene: scene,
-                                    isActivating: vm.activatingSceneID == scene.id
-                                ) {
-                                    vm.activateScene(scene)
-                                }
-                                .contextMenu {
-                                    // Edit/Rename/Delete write the owner's bridge
-                                    // scenes — never offered on a granted bridge
-                                    // (design §5). Favorite is local-only.
-                                    if !isGrantedBridge {
-                                        Button {
-                                            // Edit: recall the scene so the room previews
-                                            // it, then open the builder — which seeds from
-                                            // the scene's own stored actions, not from the
-                                            // (still refreshing) live light state.
-                                            vm.activateScene(scene)
-                                            sceneToEdit = scene
-                                        } label: {
-                                            Label("Edit Scene", systemImage: "slider.horizontal.3")
-                                        }
-                                    }
-                                    Button {
-                                        toggleFavorite(scene)
-                                    } label: {
-                                        Label(
-                                            isFav ? "Unfavorite" : "Favorite",
-                                            systemImage: isFav ? "star.slash" : "star"
-                                        )
-                                    }
-                                    if !isGrantedBridge {
-                                        Button {
-                                            sceneRenameDraft = scene.name
-                                            sceneToRename    = scene
-                                        } label: {
-                                            Label("Rename", systemImage: "pencil")
-                                        }
-                                        Divider()
-                                        Button(role: .destructive) {
-                                            vm.deleteScene(scene)
-                                        } label: {
-                                            Label("Delete Scene", systemImage: "trash")
-                                        }
-                                    }
-                                }
-                            }
-
-                            // ── Star badge for favorited scenes ──
-                            if isFav && !vm.isSelectingScenes {
-                                Image(systemName: "star.fill")
-                                    .font(.system(size: 9))
-                                    .foregroundStyle(Color(red: 1.0, green: 0.76, blue: 0.20))
-                                    .padding(6)
-                                    .transition(.scale(scale: 0.5).combined(with: .opacity))
-                            }
-
-                            // ── Checkbox overlay for select mode ──
-                            if vm.isSelectingScenes {
-                                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                                    .font(.system(size: 18, weight: .medium))
-                                    .foregroundStyle(isSelected
-                                                     ? scene.accentColor
-                                                     : .white.opacity(0.35))
-                                    .padding(6)
-                                    .transition(.scale(scale: 0.6).combined(with: .opacity))
-                                    .animation(.spring(response: 0.3), value: isSelected)
-                            }
+    @ViewBuilder
+    private func sceneTile(_ scene: SceneDisplayItem) -> some View {
+        let isSelected = vm.selectedSceneIDs.contains(scene.id)
+        let isFav = favoriteSceneIDs.contains(scene.id)
+        Group {
+            if vm.isSelectingScenes {
+                // Select mode: tap toggles the selection.
+                Button {
+                    vm.toggleSceneSelection(id: scene.id)
+                } label: {
+                    RoomSceneTile(scene: scene, isActivating: false, isFavorite: false) { /* no-op in select mode */ }
+                        .allowsHitTesting(false)
+                }
+                .buttonStyle(.plain)
+                .overlay(alignment: .topTrailing) {
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundStyle(isSelected ? LuminousPalette.cyan : LuminousPalette.inkTertiary)
+                        .padding(8)
+                        .allowsHitTesting(false)
+                        .transition(.scale(scale: 0.6).combined(with: .opacity))
+                }
+                .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+            } else {
+                // Normal mode: tap recalls the scene.
+                RoomSceneTile(scene: scene,
+                              isActivating: vm.activatingSceneID == scene.id,
+                              isFavorite: isFav) {
+                    vm.activateScene(scene)
+                }
+                .contextMenu {
+                    // Edit/Rename/Delete write the owner's bridge scenes —
+                    // never offered on a granted bridge. Favourite is local.
+                    if !isGrantedBridge {
+                        Button {
+                            // Recall the scene so the room previews it, then
+                            // open the builder — which seeds from the scene's
+                            // own stored actions.
+                            vm.activateScene(scene)
+                            sceneToEdit = scene
+                        } label: {
+                            Label("Edit Scene", systemImage: "slider.horizontal.3")
                         }
-                        .opacity(vm.isSelectingScenes ? (isSelected ? 1.0 : 0.55) : 1.0)
-                        .animation(.spring(response: 0.25), value: isSelected)
-                        .animation(.spring(response: 0.3), value: vm.isSelectingScenes)
                     }
-                }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 2)
-            }
-        }
-    }
-
-    // ── Room Brightness Header (replaces summaryHeader) ───────────
-
-    private var roomBrightnessHeader: some View {
-        // Derive dominant glow color from the brightest ON light
-        let dominantGlow: Color = {
-            if let best = vm.lights.filter({ $0.isOn }).max(by: { $0.brightness < $1.brightness }) {
-                return LightCard.resolveGlowColor(for: best)
-            }
-            return Color(red: 1.0, green: 0.76, blue: 0.20)
-        }()
-
-        return VStack(spacing: 14) {
-            // Status + room toggle
-            HStack(alignment: .center) {
-                VStack(alignment: .leading, spacing: 2) {
-                    let onCount = vm.lights.filter { $0.isOn }.count
-                    Text(onCount == 0
-                         ? "All lights off"
-                         : "\(onCount) of \(vm.lights.count) on")
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(.white.opacity(0.9))
-                    Text("\(vm.lights.count) bulb\(vm.lights.count == 1 ? "" : "s")")
-                        .font(.caption)
-                        .foregroundStyle(.white.opacity(0.45))
-                }
-                Spacer()
-                // Room-level power button — hidden without the onOff grant.
-                if guestFeatures.canPower {
                     Button {
-                        HapticManager.shared.medium()
-                        vm.toggleRoom(on: !vm.roomIsOn)
+                        toggleFavorite(scene)
                     } label: {
-                        Image(systemName: vm.roomIsOn ? "power.circle.fill" : "power.circle")
-                            .font(.system(size: 28))
-                            .foregroundStyle(vm.roomIsOn
-                                             ? dominantGlow
-                                             : .white.opacity(0.35))
-                            .symbolEffect(.bounce, value: vm.roomIsOn)
+                        Label(isFav ? "Unfavorite" : "Favorite",
+                              systemImage: isFav ? "star.slash" : "star")
                     }
-                    .buttonStyle(.plain)
-                    // Icon-only — VoiceOver read just "power circle".
-                    .accessibilityLabel(Text("Turn \(room.name) \(vm.roomIsOn ? "off" : "on")"))
-                    .accessibilityValue(Text(vm.roomIsOn ? "On" : "Off"))
+                    if !isGrantedBridge {
+                        Button {
+                            sceneRenameDraft = scene.name
+                            sceneToRename    = scene
+                        } label: {
+                            Label("Rename", systemImage: "pencil")
+                        }
+                        Divider()
+                        Button(role: .destructive) {
+                            vm.deleteScene(scene)
+                        } label: {
+                            Label("Delete Scene", systemImage: "trash")
+                        }
+                    }
                 }
-            }
-
-            // Room-level brightness slider — hidden without the brightness grant.
-            if vm.roomIsOn && guestFeatures.canAdjust {
-                BrightnessRow(
-                    brightness: vm.roomBrightness,
-                    glowColor: dominantGlow,
-                    onCommit: { vm.setRoomBrightness($0) }
-                )
-                .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 18)
-                .fill(vm.roomIsOn
-                      ? dominantGlow.opacity(0.10)
-                      : Color.white.opacity(0.06))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 18)
-                        .strokeBorder(
-                            vm.roomIsOn
-                                ? dominantGlow.opacity(0.40)
-                                : Color.white.opacity(0.08),
-                            lineWidth: vm.roomIsOn ? 1.5 : 1
-                        )
-                )
-        )
-        .shadow(color: vm.roomIsOn
-                ? dominantGlow.opacity(0.20)
-                : .clear,
-                radius: 12, x: 0, y: 4)
-        .animation(.spring(response: 0.35, dampingFraction: 0.72), value: vm.roomIsOn)
+        .opacity(vm.isSelectingScenes ? (isSelected ? 1.0 : 0.55) : 1.0)
+        .animation(.spring(response: 0.25), value: isSelected)
+        .animation(.spring(response: 0.3), value: vm.isSelectingScenes)
     }
 
-    // ── Automations Section (room-scoped) ─────────
-
-    private var automationsSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: "bolt.fill")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(Color(red: 0.55, green: 0.35, blue: 1.00))
-                Text("AUTOMATIONS")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.45))
-                Text("(\(vm.automations.count))")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.white.opacity(0.25))
-            }
-            .padding(.horizontal, 20)
-
-            VStack(spacing: 0) {
-                ForEach(Array(vm.automations.enumerated()), id: \.element.id) { idx, item in
-                    AutomationRow(
-                        item: item,
-                        iconColor: automationIconColor(item.category)
-                    ) {
-                        vm.toggleAutomation(item)
-                    }
-                    .padding(.horizontal, 16)
-
-                    if idx < vm.automations.count - 1 {
-                        Divider()
-                            .background(Color.white.opacity(0.07))
-                            .padding(.horizontal, 16)
-                    }
+    private var schedulesSection: some View {
+        LuminousGroup(title: "Schedules for this room") {
+            ForEach(Array(vm.automations.enumerated()), id: \.element.id) { idx, item in
+                AutomationRow(item: item, iconColor: automationIconColor(item.category)) {
+                    vm.toggleAutomation(item)
+                }
+                .padding(.horizontal, 14)
+                if idx < vm.automations.count - 1 {
+                    LuminousRowDivider(inset: 16)
                 }
             }
-            .background(
-                RoundedRectangle(cornerRadius: 18)
-                    .fill(Color.white.opacity(0.06))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 18)
-                            .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
-                    )
-            )
-            .padding(.horizontal, 20)
         }
     }
 
@@ -994,437 +903,230 @@ struct RoomDetailView: View {
         switch category.color {
         case "orange":  return .orange
         case "indigo":  return .indigo
-        case "yellow":  return Color(red: 1.0, green: 0.76, blue: 0.20)
+        case "yellow":  return LuminousPalette.amber
         case "blue":    return Color(red: 0.4, green: 0.6, blue: 1.0)
         case "teal":    return .teal
-        case "purple":  return Color(red: 0.55, green: 0.35, blue: 1.00)
-        default:        return Color(red: 1.0, green: 0.76, blue: 0.20)
+        case "purple":  return LuminousPalette.violet
+        default:        return LuminousPalette.amber
         }
     }
 
-    // ──────────────────────────────────────────────
+    // MARK: - Docks
+
+    @ViewBuilder
+    private var docks: some View {
+        VStack(spacing: 8) {
+            if vm.isSelecting {
+                // The bulk "Scene" button creates a bridge scene — owner only.
+                BulkActionBar(vm: vm) { if !isGrantedBridge { showBulkScene = true } }
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+            // Never on a granted bridge: guests can't edit scenes.
+            if vm.isSelectingScenes && !isGrantedBridge {
+                SceneEditBar(vm: vm) { scene in
+                    // Edit: recall the scene as a live preview, then open the
+                    // builder (it seeds from the scene's stored actions).
+                    vm.activateScene(scene)
+                    vm.exitSceneSelectMode()
+                    sceneToEdit = scene
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .padding(.bottom, vm.isSelecting || vm.isSelectingScenes ? 8 : 0)
+    }
+
+    // MARK: - Light destination
+
+    @ViewBuilder
+    private func lightDestination(_ light: LightDisplayItem) -> some View {
+        if let binding = vm.lightBinding(for: light) {
+            if guestFeatures.canAdjust {
+                LightControlView(
+                    light: binding,
+                    onToggle:     { desiredOn in vm.setLight(binding.wrappedValue, isOn: desiredOn) },
+                    onBrightness: { vm.setBrightness($0, for: binding.wrappedValue) },
+                    onColor:      { x, y in vm.setColor(x: x, y: y, for: binding.wrappedValue) },
+                    onColorTemp:  { vm.setColorTemp(mirek: $0, for: binding.wrappedValue) },
+                    onIdentify:   {
+                        let lightID = binding.wrappedValue.id
+                        Task {
+                            await SignalingService(orchestrator: orchestrator)
+                                .identifyLight(id: lightID, bridgeID: room.bridgeID)
+                        }
+                    }
+                )
+            } else {
+                // Guest without the brightness grant: the full control surface
+                // (wheel, sliders) would be dishonest — status and, when
+                // granted, power only.
+                guestLightSummary(binding.wrappedValue)
+            }
+        }
+    }
+
+    private func guestLightSummary(_ light: LightDisplayItem) -> some View {
+        let color = LuminousLight.color(of: light)
+        return ScrollView {
+            VStack(spacing: 18) {
+                LuminousLampOrb(color: color, level: LuminousLight.level(of: light), size: 64, showsFloor: true)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .luminousStageFrame()
+                LuminousScreenTitle(title: light.name,
+                                    eyebrow: "Light",
+                                    eyebrowSymbol: archetypeIcon(for: light.archetype),
+                                    eyebrowTint: light.isOn ? color : LuminousPalette.inkSecondary,
+                                    subtitle: light.isOn ? "On · \(BrightnessDisplay.percent(light.brightness))%" : "Off")
+                if guestFeatures.canPower {
+                    LuminousPrimaryButton(title: light.isOn ? "Turn Off" : "Turn On", symbol: "power") {
+                        HapticManager.shared.medium()
+                        vm.setLight(light, isOn: !light.isOn)
+                    }
+                }
+                LuminousNotice(text: "Brightness and color aren't part of your shared access.",
+                               symbol: "person.2.fill", tint: LuminousPalette.inkSecondary)
+            }
+            .padding(.horizontal, HueSpacing.screenH)
+            .padding(.vertical, 12)
+        }
+        .scrollIndicators(.hidden)
+        .background { LuminousAmbience(colors: light.isOn ? [color] : [LuminousPalette.night]) }
+        .luminousNavigationChrome()
+        .preferredColorScheme(.dark)
+    }
+
     // MARK: - Toolbar
-    // ──────────────────────────────────────────────
 
     @ToolbarContentBuilder
     private var toolbarItems: some ToolbarContent {
-        // + button — New Scene / New Automation. Both write the owner's
-        // bridge (scene POST, schedule) — never on a granted bridge.
-        ToolbarItem(placement: .navigationBarTrailing) {
+        ToolbarItemGroup(placement: .topBarTrailing) {
+            if vm.isLoading && !vm.lights.isEmpty {
+                ProgressView().tint(LuminousPalette.ink)
+                    .accessibilityLabel("Refreshing")
+            }
+            // New Scene / New Schedule — both write the owner's bridge, never
+            // on a granted bridge.
             if !vm.isSelecting && !isGrantedBridge {
-                Button {
-                    showAddMenu = true
-                    HapticManager.shared.light()
+                Menu {
+                    Button {
+                        showCreateScene = true
+                    } label: {
+                        Label("New Scene", systemImage: "camera.aperture")
+                    }
+                    Button {
+                        showCreateAutomation = true
+                    } label: {
+                        Label("New Schedule", systemImage: "calendar.badge.plus")
+                    }
                 } label: {
                     Image(systemName: "plus")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(Color(red: 1.0, green: 0.76, blue: 0.20).opacity(0.85))
                 }
+                .accessibilityLabel("Add to \(liveRoom.name)")
             }
-        }
-        // ··· (more) button — Edit / Delete room or zone
-        // Hidden during multi-select so it doesn't compete with Select/Done,
-        // and on a granted bridge: a guest must never rename or delete the
-        // owner's rooms/zones.
-        ToolbarItem(placement: .navigationBarTrailing) {
-            if !vm.isSelecting && !isGrantedBridge {
+            Menu {
+                // Owner surfaces: never on a granted bridge, and out of the way
+                // during multi-select.
+                if !vm.isSelecting && !isGrantedBridge {
+                    Button {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { armedColor = nil }
+                        segment = .lights
+                        vm.enterSelectMode()
+                    } label: {
+                        Label("Select Lights", systemImage: "checklist")
+                    }
+                    Button {
+                        showEditSheet = true
+                    } label: {
+                        Label(room.kind == .zone ? "Edit Zone" : "Edit Room", systemImage: "pencil")
+                    }
+                }
                 Button {
-                    showRoomMenu = true
-                    HapticManager.shared.light()
+                    Task {
+                        await vm.loadLights()
+                        await vm.loadRoomState()
+                    }
                 } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.8))
+                    Label("Refresh", systemImage: "arrow.clockwise")
                 }
-            }
-        }
-        ToolbarItem(placement: .navigationBarTrailing) {
-            Button { showLog.toggle() } label: {
-                Image(systemName: "terminal")
-                    .foregroundStyle(.white.opacity(0.7))
-            }
-        }
-        ToolbarItem(placement: .navigationBarTrailing) {
-            if vm.isLoading {
-                ProgressView().progressViewStyle(.circular).tint(.white).scaleEffect(0.8)
-            } else {
-                Button { Task { await vm.loadLights() } } label: {
-                    Image(systemName: "arrow.clockwise").foregroundStyle(.white.opacity(0.7))
+                #if DEBUG
+                Button {
+                    showLog = true
+                } label: {
+                    Label("Light Console", systemImage: "terminal")
                 }
+                #endif
+                if !vm.isSelecting && !isGrantedBridge {
+                    Divider()
+                    Button(role: .destructive) {
+                        showDeleteConfirm = true
+                    } label: {
+                        Label(room.kind == .zone ? "Delete Zone…" : "Delete Room…", systemImage: "trash")
+                    }
+                }
+            } label: {
+                Image(systemName: "ellipsis")
             }
+            .accessibilityLabel("More for \(liveRoom.name)")
         }
     }
 
-    // ──────────────────────────────────────────────
     // MARK: - Loading / Error
-    // ──────────────────────────────────────────────
 
     private var loadingView: some View {
-        VStack(spacing: 20) {
-            ProgressView().progressViewStyle(.circular).tint(.yellow).scaleEffect(1.6)
-            Text("Loading lights…").font(.subheadline).foregroundStyle(.white.opacity(0.6))
+        VStack(spacing: 18) {
+            ProgressView().tint(LuminousPalette.cyan).scaleEffect(1.4)
+            Text("Finding the lights in \(liveRoom.name)…")
+                .font(.subheadline)
+                .foregroundStyle(LuminousPalette.inkSecondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func errorView(_ message: String) -> some View {
-        VStack(spacing: 20) {
-            Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 44)).foregroundStyle(.orange)
-            Text(message).font(.caption).foregroundStyle(.white.opacity(0.6))
-                .multilineTextAlignment(.center).padding(.horizontal)
-            Button("Retry") { Task { await vm.loadLights() } }
-                .buttonStyle(.borderedProminent).tint(.orange)
+        VStack {
+            LuminousEmptyState(symbol: "exclamationmark.triangle.fill",
+                               title: "Couldn't reach this room",
+                               message: message,
+                               actionTitle: "Try again") {
+                Task { await vm.loadLights() }
+            }
         }
+        .padding(.horizontal, HueSpacing.screenH)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    // ──────────────────────────────────────────────
     // MARK: - Console Log Sheet
-    // ──────────────────────────────────────────────
 
     private var logSheet: some View {
         NavigationStack {
-            ZStack {
-                Color(red: 0.055, green: 0.055, blue: 0.08).ignoresSafeArea()
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 2) {
-                            ForEach(Array(vm.logLines.enumerated()), id: \.offset) { idx, line in
-                                Text(line)
-                                    .font(.system(.caption2, design: .monospaced))
-                                    .foregroundStyle(.white.opacity(0.8))
-                                    .id(idx)
-                            }
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 2) {
+                        ForEach(Array(vm.logLines.enumerated()), id: \.offset) { idx, line in
+                            Text(line)
+                                .font(.system(.caption2, design: .monospaced))
+                                .foregroundStyle(LuminousPalette.ink.opacity(0.8))
+                                .id(idx)
                         }
-                        .padding()
                     }
-                    .onChange(of: vm.logLines.count) { _, count in
-                        proxy.scrollTo(count - 1, anchor: .bottom)
-                    }
+                    .padding()
+                }
+                .onChange(of: vm.logLines.count) { _, count in
+                    proxy.scrollTo(count - 1, anchor: .bottom)
                 }
             }
+            .background(LuminousPalette.void)
             .navigationTitle("Light Console")
             .navigationBarTitleDisplayMode(.inline)
-            .preferredColorScheme(.dark)
+            .toolbarBackground(.hidden, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { showLog = false }
+                        .foregroundStyle(LuminousPalette.cyan)
                 }
             }
         }
-    }
-}
-
-// MARK: - LightCard
-//
-// Individual bulb card.
-// Normal mode: tap = NavigationLink → LightControlView; long-press = enter select mode.
-// Select mode:  tap = toggle checkbox; no navigation; power button hidden.
-
-struct LightCard: View {
-
-    let light:          LightDisplayItem
-    let isSelecting:    Bool
-    let isSelected:     Bool
-    let onToggle:       (Bool)   -> Void
-    let onBrightness:   (Double) -> Void
-    let onToggleSelect: ()       -> Void
-    let onLongPress:    ()       -> Void
-
-    @State private var localIsOn: Bool
-
-    init(
-        light:          LightDisplayItem,
-        isSelecting:    Bool             = false,
-        isSelected:     Bool             = false,
-        onToggle:       @escaping (Bool)   -> Void,
-        onBrightness:   @escaping (Double) -> Void,
-        onToggleSelect: @escaping ()       -> Void = {},
-        onLongPress:    @escaping ()       -> Void = {}
-    ) {
-        self.light          = light
-        self.isSelecting    = isSelecting
-        self.isSelected     = isSelected
-        self.onToggle       = onToggle
-        self.onBrightness   = onBrightness
-        self.onToggleSelect = onToggleSelect
-        self.onLongPress    = onLongPress
-        _localIsOn          = State(initialValue: light.isOn)
-    }
-
-    /// Glow color computed directly from light — always current.
-    private var glowColor: Color {
-        Self.resolveGlowColor(for: light)
-    }
-
-    static func resolveGlowColor(for light: LightDisplayItem) -> Color {
-        if light.supportsColor, let x = light.colorX, let y = light.colorY {
-            return HueColorUtils.color(fromX: x, y: y, brightness: max(light.brightness, 50))
-        }
-        if light.supportsColorTemp, let mirek = light.colorTempMirek {
-            return HueColorUtils.color(fromMirek: mirek)
-        }
-        return Color(red: 1.0, green: 0.76, blue: 0.2)
-    }
-
-    var body: some View {
-        ZStack(alignment: .topLeading) {
-            // ── Card content (NavigationLink in normal mode, plain tap in select mode) ──
-            if isSelecting {
-                Button { onToggleSelect() } label: { cardContent }
-                    .buttonStyle(.plain)
-            } else {
-                NavigationLink(value: light) { cardContent }
-                    .buttonStyle(.plain)
-                    .onLongPressGesture(minimumDuration: 0.45) { onLongPress() }
-            }
-
-            // ── Checkbox overlay (top-leading, animated in/out) ──────────────────────
-            if isSelecting {
-                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 22, weight: .medium))
-                    .foregroundStyle(isSelected ? glowColor : .white.opacity(0.35))
-                    .padding(14)
-                    .transition(.scale(scale: 0.6).combined(with: .opacity))
-                    .animation(.spring(response: 0.3), value: isSelected)
-            }
-        }
-        // ── Power button (hidden in select mode) ────────────────────────────────────
-        .overlay(alignment: .topTrailing) {
-            if !isSelecting {
-                Button {
-                    HapticManager.shared.light()
-                    localIsOn.toggle()
-                    onToggle(localIsOn)
-                } label: {
-                    Image(systemName: localIsOn ? "power.circle.fill" : "power.circle")
-                        .font(.system(size: 22))
-                        .foregroundStyle(localIsOn ? glowColor : .white.opacity(0.35))
-                        .frame(width: 52, height: 52)
-                        .contentShape(Rectangle())
-                        .symbolEffect(.bounce, value: localIsOn)
-                }
-                .buttonStyle(.plain)
-                .padding(.top, 18)
-                .padding(.trailing, 14)
-                .accessibilityLabel(Text("Turn \(light.name) \(localIsOn ? "off" : "on")"))
-                .accessibilityHint(Text(localIsOn ? "Tap to turn off" : "Tap to turn on"))
-            }
-        }
-        .frame(minHeight: 80)
-        .opacity(isSelecting ? (isSelected ? 1.0 : 0.58) : (localIsOn ? 1.0 : 0.72))
-        .scaleEffect(localIsOn && !isSelecting ? 1.0 : 0.982)
-        .animation(.spring(response: 0.35, dampingFraction: 0.72), value: localIsOn)
-        .animation(.spring(response: 0.3), value: isSelecting)
-        .animation(.spring(response: 0.25), value: isSelected)
-        .onChange(of: light.isOn) { _, confirmed in
-            if localIsOn != confirmed {
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.72)) { localIsOn = confirmed }
-            }
-        }
-    }
-
-    private var cardContent: some View {
-        GlassmorphicCard(isActive: localIsOn, glowColor: glowColor) {
-            VStack(spacing: 0) {
-                lightHeaderContent
-                if localIsOn && !isSelecting {
-                    BrightnessRow(
-                        brightness: light.brightness,
-                        glowColor:  glowColor,
-                        onCommit:   { onBrightness($0) }
-                    )
-                    .padding(.top, 6)
-                }
-            }
-        }
-    }
-
-    private var lightHeaderContent: some View {
-        HStack(alignment: .center, spacing: 14) {
-            ZStack {
-                Circle()
-                    .fill(localIsOn ? glowColor.opacity(0.22) : Color.white.opacity(0.07))
-                    .frame(width: 44, height: 44)
-                Image(systemName: archetypeIcon(for: light.archetype))
-                    .font(.system(size: 18, weight: .medium))
-                    .foregroundStyle(localIsOn ? glowColor : .white.opacity(0.4))
-                    .symbolEffect(.bounce, value: localIsOn)
-            }
-            VStack(alignment: .leading, spacing: 3) {
-                Text(light.name)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-                Text(localIsOn ? "\(BrightnessDisplay.percent(light.brightness))%" : "Off")
-                    .font(.caption)
-                    .foregroundStyle(localIsOn ? glowColor.opacity(0.8) : .white.opacity(0.40))
-            }
-            Spacer()
-            // Reserve space for power button overlay in normal mode
-            if !isSelecting { Spacer().frame(width: 44) }
-        }
-    }
-}
-
-// MARK: - CompactLightCard
-//
-// Narrower card for the horizontal lights strip.
-// Shows: icon circle + name + brightness% + power button.
-// Tap = NavigationLink to LightControlView; long-press = enter select mode.
-
-struct CompactLightCard: View {
-
-    let light:          LightDisplayItem
-    let isSelecting:    Bool
-    let isSelected:     Bool
-    let onToggle:       (Bool)   -> Void
-    let onToggleSelect: ()       -> Void
-    /// Family Sharing: false hides the per-light power button (a guest
-    /// grant without onOff renders the card status-only).
-    let showsPowerToggle: Bool
-
-    @State private var localIsOn: Bool
-
-    init(
-        light:          LightDisplayItem,
-        isSelecting:    Bool             = false,
-        isSelected:     Bool             = false,
-        onToggle:       @escaping (Bool)   -> Void,
-        onToggleSelect: @escaping ()       -> Void = {},
-        showsPowerToggle: Bool           = true
-    ) {
-        self.light          = light
-        self.isSelecting    = isSelecting
-        self.isSelected     = isSelected
-        self.onToggle       = onToggle
-        self.onToggleSelect = onToggleSelect
-        self.showsPowerToggle = showsPowerToggle
-        _localIsOn          = State(initialValue: light.isOn)
-    }
-
-    /// Glow color computed directly from light — always current, no @State lag.
-    private var glowColor: Color {
-        LightCard.resolveGlowColor(for: light)
-    }
-
-    var body: some View {
-        let content = VStack(spacing: 8) {
-            ZStack {
-                Circle()
-                    .fill(localIsOn ? glowColor.opacity(0.22) : Color.white.opacity(0.07))
-                    .frame(width: 44, height: 44)
-                Image(systemName: archetypeIcon(for: light.archetype))
-                    .font(.system(size: 18, weight: .medium))
-                    .foregroundStyle(localIsOn ? glowColor : .white.opacity(0.4))
-                    .symbolEffect(.bounce, value: localIsOn)
-            }
-
-            Text(light.name)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.white)
-                .lineLimit(2)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Text(localIsOn ? "\(BrightnessDisplay.percent(light.brightness))%" : "Off")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(localIsOn ? glowColor.opacity(0.8) : .white.opacity(0.40))
-
-            if showsPowerToggle {
-                Button {
-                    HapticManager.shared.light()
-                    localIsOn.toggle()
-                    onToggle(localIsOn)
-                } label: {
-                    Image(systemName: localIsOn ? "power.circle.fill" : "power.circle")
-                        .font(.system(size: 20))
-                        .foregroundStyle(localIsOn ? glowColor : .white.opacity(0.35))
-                        .symbolEffect(.bounce, value: localIsOn)
-                        .frame(width: HueHit.min, height: HueHit.min)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                // Same labelling as LightCard's power button.
-                .accessibilityLabel(Text("Turn \(light.name) \(localIsOn ? "off" : "on")"))
-                .accessibilityHint(Text(localIsOn ? "Tap to turn off" : "Tap to turn on"))
-            }
-        }
-        .frame(width: 110)
-        .padding(.vertical, 14)
-        .padding(.horizontal, 8)
-        .background {
-            RoundedRectangle(cornerRadius: 18)
-                .fill(localIsOn ? glowColor.opacity(0.10) : Color.white.opacity(0.06))
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: 18)
-                .stroke(
-                    isSelecting && isSelected
-                        ? glowColor.opacity(0.70)
-                        : localIsOn
-                            ? glowColor.opacity(0.40)
-                            : Color.white.opacity(0.08),
-                    lineWidth: isSelecting && isSelected ? 2 : (localIsOn ? 1.5 : 1)
-                )
-        }
-        .shadow(
-            color: localIsOn ? glowColor.opacity(0.25) : .clear,
-            radius: 10, x: 0, y: 4
-        )
-
-        Group {
-            if isSelecting {
-                Button { onToggleSelect() } label: { content }
-                    .buttonStyle(.plain)
-            } else {
-                // Long-press is the context menu's gesture now (attached at
-                // the RoomDetailView call site) — a competing recognizer
-                // here would race it.
-                NavigationLink(value: light) { content }
-                    .buttonStyle(.plain)
-            }
-        }
-        .opacity(isSelecting ? (isSelected ? 1.0 : 0.58) : (localIsOn ? 1.0 : 0.55))
-        .animation(.spring(response: 0.35, dampingFraction: 0.72), value: localIsOn)
-        .animation(.spring(response: 0.3), value: isSelecting)
-        .animation(.spring(response: 0.25), value: isSelected)
-        .onChange(of: light.isOn) { _, confirmed in
-            if localIsOn != confirmed {
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.72)) { localIsOn = confirmed }
-            }
-        }
-    }
-}
-
-
-// MARK: - Ambient Background (isolated — zero @Observable dependencies)
-
-/// Same reasoning as DashboardAmbientBackground: extracting the blur-orb
-/// background into its own View struct prevents vm.lights / vm.scenes
-/// changes from triggering repeated CoreImage blur passes.
-private struct RoomDetailAmbientBackground: View {
-    var body: some View {
-        ZStack {
-            Color(red: 0.055, green: 0.055, blue: 0.08).ignoresSafeArea()
-            Circle()
-                .fill(RadialGradient(
-                    colors: [Color(red: 1, green: 0.75, blue: 0.2).opacity(0.18), .clear],
-                    center: .center, startRadius: 0, endRadius: 200
-                ))
-                .frame(width: 340)
-                .offset(x: 80, y: -160)
-                .blur(radius: 20)
-            Circle()
-                .fill(RadialGradient(
-                    colors: [Color(red: 0.4, green: 0.3, blue: 1).opacity(0.14), .clear],
-                    center: .center, startRadius: 0, endRadius: 160
-                ))
-                .frame(width: 260)
-                .offset(x: -100, y: 120)
-                .blur(radius: 20)
-        }
-        .ignoresSafeArea()
-        .drawingGroup()   // rasterizes into a single Metal texture after first render
+        .luminousSheet()
     }
 }
