@@ -11,6 +11,13 @@
 - Live shared handoff: append-only entries in this `DEVLOG.md`. Git is the shared memory between tools.
 
 ### iOS — where we are RIGHT NOW
+- **BUILD 61 — THE BUILD-60 REGRESSION FIXES, RE-TESTED ON THE REAL BRIDGE (2026-10-01).** Same branch, rollback
+  tag `checkpoint/pre-build-61-regression-fixes`. The Composer add-colour crash Brian reported, all 5 High and 11 of
+  13 Medium fixed (one commit each), plus 4 bugs found while testing; P-1 (re-read only the touched bridge). The
+  Composer now streams in Brian's home (its own Entertainment Area chooser). Verified on Brian's iPhone on the real
+  bridge with the live log; full suite 2451/2451 after updating 3 tests pinned to deliberate changes. Debug build 61
+  on the phone; not uploaded to TestFlight. Brian: Studio Classic is out of device-test scope. Status table in
+  `docs/ios/luminous-app-redesign/regression-build-60.md`. Entry below.
 - **LUMINOUS APP REDESIGN — THE WHOLE APP IN THE COMPOSER'S LANGUAGE, BUILD 60, ISOLATED EXPERIMENT, NOT MERGED
   (2026-10-01).** Branch `experiment/luminous-app-redesign` (worktree `~/Developer/huehome-luminous-app`, from the
   build-59 redesign tip `dcb3df4`; rollback tag `checkpoint/pre-luminous-app-redesign`). Tabs become Home · Scenes ·
@@ -703,6 +710,62 @@
 ### Gotchas
 - ...
 ```
+
+---
+
+## 2026-10-01 - [Claude] Build 61 — the build-60 regression fixes, re-tested on the real bridge
+
+### Branch
+- `experiment/luminous-app-redesign`, rollback tag `checkpoint/pre-build-61-regression-fixes` (`fe0ae26`). Not
+  merged, not pushed. Build 61 (all 12 pbxproj entries), Debug build installed over the existing app on Brian's phone.
+
+### Did
+- Fixed and re-tested on Brian's iPhone **on the real bridge** (Brian: "you don't have to be in demo mode… test in
+  real cases"), live console log throughout, one commit per fix (status table in
+  `docs/ios/luminous-app-redesign/regression-build-60.md` → "Fix status: build 61"):
+  - **Crash Brian reported:** adding a colour in the Composer's Colors editor aborted the app — a Swift exclusivity
+    violation (`Composer2Document.edit` mutated `composition` in place while the "+" closure read it). `edit` now
+    mutates a copy; regression test. The swatch row also scrolls now (5+ colours pushed the sheet off-screen).
+  - **All 5 High:** Select docks clear the tab bar (`HueTabBarMetrics`, reserve 64 → 72), sliders take only sideways
+    drags/taps (`LuminousSliderInput`: iOS 18+ UIKit pan that begins only horizontally; iOS 17 axis-locked fallback),
+    scene Select taps work, Room Delete Scene asks, and **the Composer can stream**: its own Entertainment Area
+    chooser, the pick remembered per bridge+room (Studio's chooser remembers too), and Stop restores every light the
+    area drove (the 2 Bedroom lights of "Bed party" were left on the storm's last frame).
+  - **Medium:** M-1 toast, M-2 1% on power-on, M-3 lamps under the power button, M-4 real scene colours (+ "On now",
+    which tested a status CLIP v2 never sends), M-5 banner, M-6 Studio Stop restores the room, M-7 copy, M-8 still AI
+    looks are static (speed 0 is the SLOWEST motion, not still), M-10 search focus, M-11 schedules say "every room",
+    M-13 dynamic scenes (badge, `dynamic_palette` from the speed sheet, speed stored on the bridge).
+  - **New bugs found while testing, fixed:** lights Select dock survived a segment switch; zones stayed stale after a
+    house-wide mood (moods/All Off now update zones and schedule one confirming load).
+  - **P-1:** a change re-reads only the bridge it touched (4 GETs instead of 8).
+
+### Working
+- Verified on the phone, real bridge: everything marked *phone* in the status table — e.g. Composer → "Bed party" →
+  Live · Streaming over 10 lights with 0 per-light REST, Stop restored 10 lights; Candle → Stop restored the room
+  with no grouped off; Test 1 speed 0.35 → 0.73 stored, Activate → 8 lights `dynamic_palette` @ 0.73.
+- Full suite (2 workers): 2448 passed, 3 failed — all three were tests pinned to behaviour this round changed on
+  purpose (M-13 signature, P-1 fetch call, M-6 restore-instead-of-off); updated in `15a8a08`, all pass. Guards green.
+- Room Select bulk actions (reachable for the first time) on the bridge: Off / On / Brightness 28% each sent 8 paced
+  per-light PUTs, all 200 (49–208 ms); Scene opens the builder with the 8 lights, Cancel restores them.
+
+### Left
+- **Not done:** M-12 (Demo Mode only — Brian asked for real-bridge testing), P-2/P-3/P-4 (duplicate GETs at startup,
+  Go Live, scene save), P-5, P-7, P-8, P-9, and most Low polish items. M-9 is not a code regression (sending code
+  identical in 59 and 60; batches of 5 inflate per-request times); P-6 is deliberate (fast v1 blanket first).
+- M-8's still-look rule (`d4c8a23`) is unit-untested (private generator) and not tested on hardware — Brian put
+  Studio Classic out of device-test scope ("we're just going to try to move forward with this new look and feel").
+- P-5 seen again: the scene builder's Cancel sends 16 PUTs (2 per light) even when nothing changed.
+- The phone keeps the Debug build 61; "Bed party" is remembered for Main bathroom (it also drives 2 Bedroom lights).
+
+### Gotchas
+- iOS 18+: a SwiftUI `DragGesture` inside a ScrollView either claims every touch (min distance 0) or races the scroll
+  pan; a `UIGestureRecognizerRepresentable` pan that fails `gestureRecognizerShouldBegin` for vertical motion and
+  makes the scroll pan wait (`shouldBeRequiredToFailBy`) is what lets both work.
+- `@Observable` + `func edit(_ mutate: (inout T) -> Void) { mutate(&storedProperty) }` holds exclusive access for the
+  whole closure — any read of the same object inside traps. Mutate a copy and assign.
+- CLIP v2 scene `status.active` is "inactive" | "static" | "dynamic_palette"; there is no "active". A plain `active`
+  recall plays dynamically only when the scene's `auto_dynamic` is on.
+- Hunk-number staging is fragile after a partial commit (numbers shift); stage by content instead.
 
 ---
 

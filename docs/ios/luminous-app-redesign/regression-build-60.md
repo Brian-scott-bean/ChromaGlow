@@ -17,6 +17,42 @@
 
 Items marked *(Brian)* match the problem Brian reported: "can't scroll to the bottom / can't reach save, effect and delete controls".
 
+## Fix status: build 61 (2026-10-01, same branch)
+
+Rollback tag `checkpoint/pre-build-61-regression-fixes`. One commit per fix. Every item marked *phone* was
+re-tested on Brian's iPhone on the real bridge (not Demo Mode, per Brian), with the live console log.
+
+| Bug | Commit | Status |
+|-----|--------|--------|
+| **Crash (new, reported by Brian):** adding a colour in the Composer's Colors editor aborted the app (two crash reports, 05:03/05:05, Swift exclusivity violation) | `533347a` | Fixed, *phone*: 4th and 5th colours added; regression test `testEditClosureMayReadTheDocument` |
+| Five+ colours pushed the Colors editor off both screen edges (new) | `533347a` | Fixed (scrolling swatch strip) |
+| H-1 Select docks behind the tab bar | `4d9ceb1` | Fixed, *phone* |
+| Lights → Scenes left the lights Select dock up (new) | `32fab72` | Fixed, *phone* |
+| H-2 Sliders steal vertical swipes | `3af6cf2` | Fixed: simulator with real touches (swipe scrolls, value unchanged; sideways drag and tap set it); *phone*: a vertical drag no longer moves a Composer slider |
+| H-3 Room scene Select taps did nothing | `1315e48` | Fixed, *phone* (no light command sent) |
+| H-4 Room Delete Scene had no confirmation | `a6bd794` | Fixed, *phone* (throwaway scene: asked, then DELETE 200 41 ms) |
+| H-5 Composer could never stream here (+ M-7 copy) | `f1d46d7` | Fixed, *phone*: the Composer's own area chooser; "Bed party" picked, Go Live → Live · Streaming over 10 lights, no per-light REST while streaming; the pick survives relaunch |
+| Stop after streaming to an area that reaches other rooms left those lights on the last frame (new) | `f1d46d7` | Fixed, *phone*: Stop restored all 10 lights (8 + 2 Bedroom) |
+| M-1 Home toast behind the tab bar | `c71eb97` | Fixed, *phone* (real mood) |
+| Zones kept their old Off / 2% after a house-wide mood (new) | `fb22ef8` | Fixed, *phone* |
+| M-2 Power on showed 1% for ~3 s | `a25d62f` | Fixed, *phone* (40% at once); lamps also light at once |
+| M-3 Lamp dots under the power button | `f59f988` | Fixed, *phone* (incl. the "+4" count) |
+| M-4 Made-up scene colours | `f291a2d` | Fixed, *phone* (Room tiles, Scenes tab, Copy sheet) |
+| Room scene tiles never said "On now" (new: tested `"active"`, which CLIP v2 never sends) | `f291a2d` | Fixed, *phone* |
+| M-5 Saved banner never dismissed | `667ab33` | Fixed, *phone* |
+| M-6 Stop meant three things | `9ac7c9f` | Fixed for Studio Classic, *phone*: Candle → Stop restored the room, no grouped off |
+| M-8 Static looks streamed forever | `d4c8a23` | Root cause: Studio speed 0 is the SLOWEST motion (20 s cycle), not still, and the AI gave a "Static" look a cascade. Still-light prompts now get the static pattern and a steady envelope. Not tested on hardware (Studio Classic out of scope) |
+| M-9 Room-mode latency "doubled" | none | **Not a code regression**: the sending code is identical in builds 59 and 60. Per-request times inflate because each sweep sends 5 lights at once to a bridge that serialises them. Re-measured: Hallway 5.5 cmd/s, p50 163 ms |
+| M-10 Search kept focus after Copy / Move | `a9b1c8e` | Fixed, *phone* |
+| M-11 Schedules didn't say what they control | `1240467` | Fixed, *phone* |
+| M-12 Demo Mode reorder / stale dots | none | Not fixed: Demo-only. Brian asked for real-bridge testing; the real-bridge equivalent (zones) is fixed |
+| M-13 Dynamic scenes | `2679f86` | Fixed, *phone*: badge stays; speed 0.35 → 0.73 stored on the bridge; Activate → all 8 lights `dynamic_palette` at 0.73 |
+| P-1 Full reload of both bridges after every change | `de02185` | Fixed, *phone*: a brightness drag re-reads only its own bridge (4 GETs, was 8) |
+| P-6 Double effect commands | none | Deliberate: the v1 blanket gives the first bulb ~50 ms; v2 only follows when the user set speed / colour / warmth |
+| Room Select bulk actions (were unreachable) | — | *phone*: Off / On / Brightness / Scene all work, 8 paced PUTs each |
+| P-2, P-3, P-4, P-5, P-7, P-8, P-9 | none | Not done this round (duplicate GETs at startup / Go Live / scene save, paint PUTs, SSE watchdog, live slider, log gaps) |
+| Low (polish) items | mostly none | Card lamps lagging after power-on fixed with M-2; the rest stay open |
+
 ## Logs: TestFlight build vs Xcode build
 
 The TestFlight build cannot show live logs, for two reasons:
