@@ -99,11 +99,14 @@ struct DashboardView: View {
             await orchestrator.loadAll(cacheContext: modelContext)
         }
         .background { LuminousAmbience(colors: ambienceColors) }
-        .overlay(alignment: .bottom) {
+        // Top, like the Room page's toast: at the bottom it rendered behind
+        // the floating tab bar, which the overlay's safe area knows nothing of.
+        .overlay(alignment: .top) {
             if let msg = presetToast {
                 LuminousToastCapsule(text: msg)
-                    .padding(.bottom, 16)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .padding(.top, 8)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .allowsHitTesting(false)
             }
         }
         .animation(.spring(response: 0.4, dampingFraction: 0.8), value: presetToast)
