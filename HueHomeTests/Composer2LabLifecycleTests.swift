@@ -386,6 +386,14 @@ final class Composer2LabLifecycleTests: XCTestCase {
         XCTAssertEqual(c.unresponsiveLights, [], "stopping clears the notice")
     }
 
+    /// The header's promise before Go Live matches what Go Live does: with
+    /// several Entertainment Areas over the room it plays in Room mode.
+    func testHeaderPromisesStreamingOnlyWhenGoLiveWillStream() {
+        XCTAssertEqual(Composer2Copy.connectionText(.init(prefer: true, severalAreas: false)), "Bridge · streaming ready")
+        XCTAssertEqual(Composer2Copy.connectionText(.init(prefer: true, severalAreas: true)), "Bridge · Room mode")
+        XCTAssertEqual(Composer2Copy.connectionText(.init(prefer: false, severalAreas: false)), "Bridge · Room mode")
+    }
+
     func testHeartbeatEndedNeverCallsStopAndReleasesTheRuntime() async {
         let gw = Composer2FakeGateway()
         let c = center(now: 100)

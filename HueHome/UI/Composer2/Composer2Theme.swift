@@ -196,6 +196,14 @@ enum Composer2Copy {
     static let liveEndedElsewhere = "Stopped — another look took over this room."
     static let liveEndedLost = "Stopped — the lights stopped answering. Try Live again."
     static let liveSeveralAreas = "Several Entertainment Areas cover this room. Choose one in Studio to stream; playing in Room mode."
+    /// The header's promise before Go Live. Several Entertainment Areas
+    /// covering the room means Go Live plays in Room mode until one is
+    /// chosen in Studio — the header said "streaming ready" and the dock
+    /// then said Room mode (device round, build 58).
+    static func connectionText(_ availability: Composer2StreamAvailability) -> String {
+        availability.prefer && !availability.severalAreas ? "Bridge · streaming ready" : "Bridge · Room mode"
+    }
+
     /// The bridge accepted the command but cannot reach these bulbs.
     static func liveUnresponsive(_ names: [String]) -> String {
         names.count == 1

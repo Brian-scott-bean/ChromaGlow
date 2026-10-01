@@ -199,7 +199,7 @@ struct Composer2View: View {
             switch gw.gate(for: room) {
             case .ready:
                 let availability = gw.streamAvailability(for: room)
-                context.connectionText = availability.prefer ? "Bridge · streaming ready" : "Bridge · Room mode"
+                context.connectionText = Composer2Copy.connectionText(availability)
             case .demo: context.connectionText = Composer2Copy.demoHome
             case .noBridge: context.connectionText = "Bridge unavailable"
             case .noRoom: context.connectionText = ""
