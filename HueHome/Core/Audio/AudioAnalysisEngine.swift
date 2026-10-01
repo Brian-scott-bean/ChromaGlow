@@ -1,18 +1,26 @@
 // AudioAnalysisEngine.swift
 // ChromaGlow — Core/Audio (DJ upgrade Phase 2)
 //
-// The ONE owner of the app's AVAudioSession + AVAudioEngine + input tap.
-// Replaces CompositionMicCapture and SyncModeEngine's private engine — the
-// two used different session categories and coordinated through a timed
-// notification handshake; unifying capture removes that race entirely.
+// The ONE owner of audio analysis. Replaced CompositionMicCapture and
+// SyncModeEngine's private engine — the two used different session
+// categories and coordinated through a timed notification handshake;
+// unifying capture removed that race entirely.
+//
+// Audio-source boundary (2026-10): the engine no longer assumes the mic. It
+// pulls PCM from the selected AudioAnalysisSource — MicrophoneAudioSource
+// (the shipped capture, moved verbatim) or, in local experimental builds
+// only, the Spotify Connect PCM source. Everything below the source (feature
+// extraction, tempo, publishing, every render loop) is shared.
 //
 // Responsibilities:
 //  • Demand refcounting: consumers declare interest (.composerReaction,
 //    .syncMode, .performance); the engine runs while any demand is active.
-//  • Permission (AVAudioApplication), interruption + background recovery.
+//  • Source lifecycle: prepare (mic permission) → start → stop, plus
+//    interruption + background recovery.
 //  • Per-buffer feature extraction (AudioFeatureExtractor) published to a
 //    lock-guarded static store — render loops call latestFeatures() from
-//    any thread.
+//    any thread. Each activation gets a generation; a stop or source switch
+//    invalidates it under the same lock, so stale callbacks are dropped.
 //  • Raw-buffer fan-out taps so the Sync tab's Visualizer/Gaming/Ambient
 //    engines keep their own processing unchanged.
 //  • A ~2 Hz tempo pass (TempoEstimator on a utility task) that feeds
@@ -43,16 +51,28 @@ final class AudioAnalysisEngine {
 
     private var demands: Set<AudioDemand> = []
     private var engineRunning = false
-    private var audioEngine: AVAudioEngine?
     private var tempoTask: Task<Void, Never>?
+
+    /// Which source feeds analysis. Microphone unless an experimental build
+    /// selects otherwise; not persisted — every launch starts on the mic.
+    private(set) var sourceKind: AudioAnalysisSourceKind = .microphone
+    private var activeSource: (any AudioAnalysisSource)?
+    private let makeSource: @MainActor (AudioAnalysisSourceKind) -> any AudioAnalysisSource
     // nonisolated(unsafe): written only in init (before the singleton is
     // published), read only in deinit — same pattern as SyncModeEngine's
     // lifecycleObservers. The nonisolated deinit may not touch main-actor state.
     nonisolated(unsafe) private var ncObservers: [NSObjectProtocol] = []
+    /// The center the lifecycle observers live on (.default in the app;
+    /// tests pass a private one so they never fire the host app's observers).
+    nonisolated private let notificationCenter: NotificationCenter
 
-    /// Extractor + estimator are touched per the single-writer contracts
-    /// documented on each type (tap thread / tempo task respectively).
-    private let extractor = AudioFeatureExtractor()
+    /// Estimator + the current activation's extractor are touched per the
+    /// single-writer contracts documented on each type (source thread / tempo
+    /// task). A fresh extractor per activation replaces reset(): an outgoing
+    /// source's in-flight callback can never share state with its successor.
+    private var activeExtractor: AudioFeatureExtractor?
+    /// Generation of the activation this instance started (0 = none).
+    private var activeGeneration: UInt64 = 0
     private let tempoEstimator = TempoEstimator()
 
     // ── Published features (audio thread writes, anyone reads) ──
@@ -60,22 +80,77 @@ final class AudioAnalysisEngine {
     nonisolated(unsafe) private static var _latest = AudioFeatures.silent
     nonisolated(unsafe) private static var _tempoBPM: Double = 0
     nonisolated(unsafe) private static var _tempoConfidence: Double = 0
+    /// The live activation (0 = none). Process-wide so every engine instance
+    /// (the shared one, test instances) gates on one truth.
+    nonisolated(unsafe) private static var _activation: UInt64 = 0
+    nonisolated(unsafe) private static var _nextActivation: UInt64 = 0
+    /// Hops whose presentation time is still in the future (sources whose
+    /// audio plays out later). Always empty for the microphone.
+    nonisolated(unsafe) private static var _delayed = AnalysisFeatureDelayLine()
 
     /// Current audio features merged with the latest tempo estimate.
     /// Safe from any thread; returns .silent when capture is off.
     nonisolated static func latestFeatures() -> AudioFeatures {
         featuresLock.lock()
         defer { featuresLock.unlock() }
+        if !_delayed.isEmpty, let due = _delayed.popDue(now: CACurrentMediaTime()) {
+            _latest = due
+        }
         var f = _latest
         f.bpm = _tempoBPM
         f.bpmConfidence = _tempoConfidence
         return f
     }
 
-    nonisolated private static func publish(_ features: AudioFeatures) {
+    nonisolated static func isCurrentActivation(_ generation: UInt64) -> Bool {
         featuresLock.lock()
-        _latest = features
-        featuresLock.unlock()
+        defer { featuresLock.unlock() }
+        return generation != 0 && generation == _activation
+    }
+
+    /// Publish one hop for `generation`. Dropped if that activation has been
+    /// invalidated — checked under the same lock stopEngine() takes, so a
+    /// late hop can never overwrite the .silent a stop published. A hop
+    /// stamped in the future waits in the delay line until it is heard.
+    nonisolated static func publish(_ features: AudioFeatures, generation: UInt64) {
+        featuresLock.lock()
+        defer { featuresLock.unlock() }
+        guard generation != 0, generation == _activation else { return }
+        if features.timestamp > CACurrentMediaTime() + 0.001 {
+            _delayed.append(features)
+        } else {
+            _latest = features
+        }
+    }
+
+    /// Drop anything pending for `generation` and publish silence, keeping
+    /// the activation live (the source paused rather than stopped).
+    nonisolated static func publishSilence(generation: UInt64) {
+        featuresLock.lock()
+        defer { featuresLock.unlock() }
+        guard generation != 0, generation == _activation else { return }
+        _delayed.removeAll()
+        _latest = .silent
+    }
+
+    /// Open a new activation; returns its generation.
+    nonisolated private static func beginActivation() -> UInt64 {
+        featuresLock.lock()
+        defer { featuresLock.unlock() }
+        _nextActivation += 1
+        _activation = _nextActivation
+        _delayed.removeAll()
+        return _activation
+    }
+
+    /// Invalidate `generation` (if still live) and publish silence.
+    nonisolated private static func endActivation(_ generation: UInt64) {
+        featuresLock.lock()
+        defer { featuresLock.unlock() }
+        guard generation != 0, generation == _activation else { return }
+        _activation = 0
+        _delayed.removeAll()
+        _latest = .silent
     }
 
     nonisolated private static func publishTempo(bpm: Double, confidence: Double) {
@@ -103,22 +178,53 @@ final class AudioAnalysisEngine {
         tapsLock.unlock()
     }
 
+    nonisolated static func fanOut(_ buffer: AVAudioPCMBuffer, sampleRate: Float) {
+        tapsLock.lock()
+        let taps = bufferTaps
+        tapsLock.unlock()
+        for handler in taps.values { handler(buffer, sampleRate) }
+    }
+
     // MARK: - Init / lifecycle observers
 
-    private init() {
-        ncObservers.append(NotificationCenter.default.addObserver(
+    private convenience init() {
+        self.init(makeSource: AudioAnalysisEngine.defaultSource)
+    }
+
+    /// The production source factory. The experimental case exists only in
+    /// CHROMAGLOW_EXPERIMENTAL_SPOTIFY builds.
+    static func defaultSource(_ kind: AudioAnalysisSourceKind) -> any AudioAnalysisSource {
+        switch kind {
+        case .microphone:
+            return MicrophoneAudioSource()
+        #if CHROMAGLOW_EXPERIMENTAL_SPOTIFY
+        case .spotifyConnect:
+            return SpotifyPCMSource()
+        #endif
+        }
+    }
+
+    /// Designated init — internal so tests can inject fake sources and a
+    /// private notification center. Only `shared` should drive real audio.
+    init(
+        makeSource: @escaping @MainActor (AudioAnalysisSourceKind) -> any AudioAnalysisSource,
+        notificationCenter: NotificationCenter = .default
+    ) {
+        self.makeSource = makeSource
+        self.notificationCenter = notificationCenter
+        ncObservers.append(notificationCenter.addObserver(
             forName: UIApplication.didEnterBackgroundNotification,
             object: nil, queue: .main
         ) { [weak self] _ in
             Task { @MainActor in self?.stopEngine() }
         })
-        ncObservers.append(NotificationCenter.default.addObserver(
+        ncObservers.append(notificationCenter.addObserver(
             forName: UIApplication.willEnterForegroundNotification,
             object: nil, queue: .main
         ) { [weak self] _ in
             Task { @MainActor in await self?.startEngineIfNeeded() }
         })
-        ncObservers.append(NotificationCenter.default.addObserver(
+        ncObservers.append(notificationCenter.addObserver(
             forName: AVAudioSession.interruptionNotification,
             object: nil, queue: .main
         ) { [weak self] note in
@@ -139,7 +245,7 @@ final class AudioAnalysisEngine {
         // ready now" signal: recover capture that deferred on a 0 Hz / 0 ch
         // format. Acts only while a demand is held and the engine isn't running
         // — a route change on a healthy engine is left alone.
-        ncObservers.append(NotificationCenter.default.addObserver(
+        ncObservers.append(notificationCenter.addObserver(
             forName: AVAudioSession.routeChangeNotification,
             object: nil, queue: .main
         ) { [weak self] note in
@@ -159,7 +265,7 @@ final class AudioAnalysisEngine {
 
         // Media services reset: the engine + session are torn down by the
         // system, so rebuild from scratch if anything still needs audio.
-        ncObservers.append(NotificationCenter.default.addObserver(
+        ncObservers.append(notificationCenter.addObserver(
             forName: AVAudioSession.mediaServicesWereResetNotification,
             object: nil, queue: .main
         ) { [weak self] _ in
@@ -172,7 +278,7 @@ final class AudioAnalysisEngine {
     }
 
     deinit {
-        for o in ncObservers { NotificationCenter.default.removeObserver(o) }
+        for o in ncObservers { notificationCenter.removeObserver(o) }
     }
 
     // MARK: - Demand
@@ -194,6 +300,24 @@ final class AudioAnalysisEngine {
     /// by an interruption/backgrounding — it restarts automatically).
     var hasActiveDemand: Bool { !demands.isEmpty }
 
+    /// True while the selected source is delivering into analysis.
+    var isRunning: Bool { engineRunning }
+
+    // MARK: - Source selection
+
+    /// Switch where analyzed audio comes from. The current source is stopped
+    /// first (its activation invalidated before its stop() runs), then the new
+    /// source starts if anything still holds a demand. Returns whether the
+    /// new source is running.
+    @discardableResult
+    func selectSource(_ kind: AudioAnalysisSourceKind) async -> Bool {
+        guard kind != sourceKind else { return engineRunning }
+        stopEngine()
+        sourceKind = kind
+        guard hasActiveDemand else { return false }
+        return await startEngineIfNeeded()
+    }
+
     // MARK: - Engine
 
     @discardableResult
@@ -201,118 +325,57 @@ final class AudioAnalysisEngine {
         guard !demands.isEmpty else { return false }
         guard !engineRunning else { return true }
 
-        // Permission (modern API; L-22 pattern).
-        switch AVAudioApplication.shared.recordPermission {
-        case .undetermined:
-            let granted = await AVAudioApplication.requestRecordPermission()
-            // Demand may have been withdrawn while the prompt was up (L-19).
-            guard !demands.isEmpty else { return false }
-            if !granted {
-                log.warning("Mic permission denied (prompt)")
-                NotificationCenter.default.post(name: .compositionMicPermissionDenied, object: nil)
-                return false
-            }
-        case .denied:
-            log.warning("Mic permission denied (settings)")
-            NotificationCenter.default.post(name: .compositionMicPermissionDenied, object: nil)
-            return false
-        case .granted:
-            break
-        @unknown default:
-            break
-        }
+        let kind = sourceKind
+        let source = makeSource(kind)
+        // Permission / preflight. Demand may have been withdrawn (L-19) or the
+        // source switched while a prompt was up — re-check after it.
+        guard await source.prepare(stillWanted: { [unowned self] in
+            !self.demands.isEmpty && kind == self.sourceKind
+        }) else { return false }
+        guard !demands.isEmpty, kind == sourceKind else { return false }
         guard !engineRunning else { return true }
 
-        let engine = AVAudioEngine()
-        let input = engine.inputNode
-        let extractor = self.extractor
-
-        do {
-            let session = AVAudioSession.sharedInstance()
-            // .mixWithOthers: the DJ use case plays music from this phone —
-            // capture must never duck or pause it. .measurement: raw input,
-            // no system voice processing.
-            try session.setCategory(
-                .playAndRecord, mode: .measurement,
-                options: [.mixWithOthers, .allowBluetoothHFP, .defaultToSpeaker]
-            )
-            try session.setActive(true, options: [])
-
-            // Read the input format ONLY after the session is active. Before
-            // activation — e.g. a background→foreground restart that fires
-            // before the hardware route is restored — it comes back as a null
-            // 0 Hz / 0 ch format, and installTap() with that throws an
-            // *uncatchable* AVFoundation assertion (CreateRecordingTap:
-            // IsFormatSampleRateAndChannelCountValid) that terminates the app.
-            // Guard, don't crash: bail and let a routeChange / mediaReset (or
-            // the next demand toggle) retry once the route is ready.
-            let format = input.outputFormat(forBus: 0)
-            guard format.sampleRate > 0, format.channelCount > 0 else {
-                log.warning("Input format not ready (\(format.sampleRate)Hz/\(format.channelCount)ch) — deferring tap; will retry on route change")
-                try? session.setActive(false, options: .notifyOthersOnDeactivation)
-                return false
-            }
-            let sampleRate = Float(format.sampleRate)
-
-            input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
-                // Audio thread: extract features, publish, fan out. No Tasks,
-                // no actor hops, no allocations beyond the extractor's warm-up.
-                if let data = buffer.floatChannelData?[0] {
-                    let hostTime = CACurrentMediaTime()
-                    if let features = extractor.process(
-                        data: data,
-                        frameCount: Int(buffer.frameLength),
-                        sampleRate: sampleRate,
-                        hostTime: hostTime
-                    ) {
-                        AudioAnalysisEngine.publish(features)
-                    }
-                }
-                AudioAnalysisEngine.tapsLock.lock()
-                let taps = AudioAnalysisEngine.bufferTaps
-                AudioAnalysisEngine.tapsLock.unlock()
-                for handler in taps.values { handler(buffer, sampleRate) }
-            }
-
-            try engine.start()
-            audioEngine = engine
-            engineRunning = true
-            startTempoTask()
-            log.info("Audio analysis engine started (demands: \(self.demands.count))")
-            return true
-        } catch {
-            log.error("Audio analysis engine failed: \(error.localizedDescription)")
-            input.removeTap(onBus: 0)
-            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-            audioEngine = nil
-            NotificationCenter.default.post(name: .compositionMicPermissionDenied, object: nil)
+        let extractor = AudioFeatureExtractor()
+        let generation = Self.beginActivation()
+        let sink = AudioPCMSink(generation: generation, extractor: extractor)
+        guard source.start(sink: sink) else {
+            Self.endActivation(generation)
             return false
         }
+        activeSource = source
+        activeExtractor = extractor
+        activeGeneration = generation
+        engineRunning = true
+        startTempoTask()
+        log.info("Audio analysis engine started (source: \(kind.rawValue), demands: \(self.demands.count))")
+        return true
     }
 
     private func stopEngine() {
         tempoTask?.cancel()
         tempoTask = nil
         engineRunning = false
-        audioEngine?.inputNode.removeTap(onBus: 0)
-        audioEngine?.stop()
-        audioEngine = nil
-        do {
-            try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-        } catch {
-            log.debug("Session deactivate: \(error.localizedDescription)")
+        // Invalidate first: from here on, a late callback from the outgoing
+        // source is dropped at the sink and can't overwrite the silence.
+        Self.endActivation(activeGeneration)
+        activeGeneration = 0
+        if let source = activeSource {
+            source.stop()
+        } else if sourceKind == .microphone {
+            MicrophoneAudioSource.deactivateSession()
         }
-        extractor.reset()
-        Self.publish(.silent)
+        activeSource = nil
+        activeExtractor = nil
         Self.publishTempo(bpm: 0, confidence: 0)
     }
+
 
     // MARK: - Tempo pass (~2 Hz)
 
     private func startTempoTask() {
         tempoTask?.cancel()
         let previous = tempoTask
-        let extractor = self.extractor
+        guard let extractor = activeExtractor else { return }
         let estimator = self.tempoEstimator
         tempoTask = Task { @MainActor [weak self] in
             // Drain the predecessor before reset(): cancel can't reach its
