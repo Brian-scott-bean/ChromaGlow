@@ -1,0 +1,68 @@
+[package]
+name = "chromaglow-spotify-receiver"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "LOCAL-ONLY experiment: a Spotify Connect receiver whose decoded PCM feeds ChromaGlow's audio analyzer."
+license = "MIT"
+
+[lib]
+name = "chromaglow_spotify"
+crate-type = ["staticlib", "rlib"]
+
+# librespot is pinned to ONE exact upstream revision (dev @ 2026-09-11). Do not
+# float this to a branch: the v0.8.0 crates.io release does not build (vergen,
+# upstream #1760) and the CDN-fallback fix (#1722) is only on dev.
+[dependencies.librespot-core]
+git = "https://github.com/librespot-org/librespot"
+rev = "939dc5ee9d833e1980f9495241219d9d4868a061"
+default-features = false
+features = ["native-tls"]
+
+[dependencies.librespot-discovery]
+git = "https://github.com/librespot-org/librespot"
+rev = "939dc5ee9d833e1980f9495241219d9d4868a061"
+default-features = false
+features = ["with-dns-sd", "native-tls"]
+
+[dependencies.librespot-connect]
+git = "https://github.com/librespot-org/librespot"
+rev = "939dc5ee9d833e1980f9495241219d9d4868a061"
+default-features = false
+features = ["native-tls"]
+
+[dependencies.librespot-playback]
+git = "https://github.com/librespot-org/librespot"
+rev = "939dc5ee9d833e1980f9495241219d9d4868a061"
+default-features = false
+features = ["native-tls"]
+
+[dependencies.librespot-metadata]
+git = "https://github.com/librespot-org/librespot"
+rev = "939dc5ee9d833e1980f9495241219d9d4868a061"
+default-features = false
+features = ["native-tls"]
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+log = "0.4"
+sha1 = "0.10"
+hex = "0.4"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 4
+debug = false
+strip = "debuginfo"
+
+# dns-sd 0.1.3's build script treats only "darwin" as Apple and looks for Avahi
+# on iOS. Vendored with a one-line build.rs fix — see patches/dns-sd-0.1.3/build.rs.
+[patch.crates-io]
+dns-sd = { path = "patches/dns-sd-0.1.3" }
+
+# librespot-core, patched in place (runtime platform persona) — see
+# patches/librespot-core/Cargo.toml for the exact, marked changes. Same pinned rev.
+[patch."https://github.com/librespot-org/librespot"]
+librespot-core = { path = "patches/librespot-core" }

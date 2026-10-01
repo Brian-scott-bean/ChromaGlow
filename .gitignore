@@ -69,3 +69,7 @@ Config/Secrets.xcconfig
 .cursor/mcp.json
 .cnvs/
 Scripts/__pycache__/
+
+# Local Spotify PCM experiment (Rust build products; see docs/ios/local-spotify-pcm-experiment.md)
+Experimental/SpotifyReceiver/target/
+Experimental/SpotifyReceiver/build/
