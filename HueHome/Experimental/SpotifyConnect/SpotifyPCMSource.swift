@@ -167,13 +167,17 @@ final class SpotifyPCMRouter: @unchecked Sendable {
         let now = CACurrentMediaTime()
         let presentation = now + smoothedDelay
         var hops: UInt64 = 0
-        hopper.push(samples, frames: Int(frames), channels: Int(channels), sampleRate: rate) { mono, count, buffer in
+        hopper.push(samples, frames: Int(frames), channels: Int(channels), sampleRate: rate) { mono, count, _ in
+            // No raw-buffer fan-out: its only consumer is Auto Detect
+            // (ShazamKit), which listens to the room mic. Handing it these
+            // hops threw an Objective-C exception on librespot's player
+            // thread, which Rust can't unwind through — the app aborted.
             sink.deliver(
                 mono: mono,
                 frameCount: count,
                 sampleRate: Float(rate),
                 presentationTime: presentation,
-                buffer: buffer
+                buffer: nil
             )
             hops += 1
         }

@@ -153,6 +153,20 @@ final class SpotifyPCMExperimentTests: XCTestCase {
         await engine.setDemand(.composerReaction, active: false)
     }
 
+    /// Build 903 crash: Auto Detect's ShazamKit tap received Spotify hops on
+    /// librespot's player thread and threw an Objective-C exception there.
+    func testSpotifyHopsNeverReachRawBufferTaps() async {
+        let engine = await spotifyEngine()
+        SpotifyPCMRouter.shared.setReceiverGeneration(4)
+        let calls = TapCounter()
+        AudioAnalysisEngine.addBufferTap(id: "spotify-test-tap") { _, _ in calls.hit() }
+        defer { AudioAnalysisEngine.removeBufferTap(id: "spotify-test-tap") }
+        for _ in 0..<4 { route(4) }
+        XCTAssertGreaterThan(AudioAnalysisEngine.latestFeatures().rawOverall, 0.05, "analysis still runs")
+        XCTAssertEqual(calls.count, 0)
+        await engine.setDemand(.composerReaction, active: false)
+    }
+
     // MARK: - Delay / offset
 
     func testUserOffsetDelaysTheLights() async throws {
@@ -389,6 +403,14 @@ final class SpotifyPCMExperimentTests: XCTestCase {
             XCTAssertTrue(samples.allSatisfy { $0 == 0 }, "channel \(channel) not silent")
         }
     }
+}
+
+/// Counts raw-buffer tap calls from any thread.
+private final class TapCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var calls = 0
+    func hit() { lock.lock(); calls += 1; lock.unlock() }
+    var count: Int { lock.lock(); defer { lock.unlock() }; return calls }
 }
 
 #endif
