@@ -181,7 +181,7 @@ struct Composer2EntryCard: View {
                     .background(Capsule().fill(Composer2Theme.live))
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Stop Composer 2 playback in \(session.roomName)")
+            .accessibilityLabel("Stop Composer playback in \(session.roomName)")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)

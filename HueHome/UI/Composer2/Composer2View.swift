@@ -37,7 +37,7 @@ struct Composer2View: View {
     /// - Parameters:
     ///   - room: the room Studio had selected.
     ///   - composition: open this saved composition instead of the retained
-    ///     or default one (the entry card's "Open in Composer 2").
+    ///     or default one (the entry card's "Open in Composer").
     ///   - mode: the tab to open on (a saved look opens on Tune).
     init(room: RoomDisplayItem?, composition: Composer2Composition? = nil, mode: Composer2Mode? = nil) {
         self.initialRoom = room
