@@ -218,6 +218,13 @@ struct ScenesTabView: View {
         .onChange(of: isTabActive) { _, active in
             if active { refreshStudioScenePresets() }
         }
+        // Copy / Move / Rename / Speed take over the screen — let go of the
+        // search field. It stayed focused behind them and, once back, every
+        // layout change scrolled the list toward it — during testing a
+        // long-press landed on a different "Test 1" (build-60 M-10).
+        .onChange(of: copySheetContext != nil || sceneToRename != nil || speedSheetScene != nil) { _, presenting in
+            if presenting { searchFocused = false }
+        }
         .sheet(item: $copySheetContext) { ctx in
             CopySceneSheet(
                 scene: ctx.scene,
