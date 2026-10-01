@@ -244,8 +244,11 @@ struct SpotifyConnectExperimentSection: View {
 
     private var routeSubtitle: String {
         let name = output.routeName.isEmpty ? "This iPhone" : output.routeName
-        guard output.state == .playing else { return name }
-        return "\(name) · \(Int((output.routeLatency * 1000).rounded())) ms behind"
+        let delay = receiver.snapshot.presentationDelayMs
+        guard output.state == .playing, delay > 0 else { return name }
+        // What the lights actually wait for: the renderer timeline (which
+        // includes the AirPlay buffer), not iOS's reported route latency.
+        return "\(name) · lights wait \(delay) ms"
     }
 
     private var soundFooter: String {
