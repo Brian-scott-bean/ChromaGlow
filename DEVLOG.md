@@ -11,6 +11,12 @@
 - Live shared handoff: append-only entries in this `DEVLOG.md`. Git is the shared memory between tools.
 
 ### iOS — where we are RIGHT NOW
+- **MAIN = LUMINOUS + SPOTIFY EXPERIMENT, BUILD 907 → TESTFLIGHT (INTERNAL ONLY) (2026-10-01, Brian's order).**
+  `main` fast-forwarded `c2368c8` → `a719b23` (the Luminous redesign + the Spotify Connect experiment) and pushed.
+  Rollback: tag `checkpoint/pre-main-luminous-spotify` (= old `main`, pushed). TestFlight **907** is the
+  `Debug-SpotifyExperimental` archive (Spotify on) uploaded with "TestFlight internal testing only"; tag
+  `testflight/build-907`. TestFlight **906** is a Release `HueHome 1` archive (Spotify compiled out) — ignore it.
+  Xcode's Product → Archive always builds Release = no Spotify. Future build numbers must be > 907. Entry below.
 - **BUILD 62 → TESTFLIGHT (2026-10-01):** build 61's fixes + long pages scroll their last line clear of the tab
   bar (Brian's report). Entry below.
 - **BUILD 61 — THE BUILD-60 REGRESSION FIXES, RE-TESTED ON THE REAL BRIDGE (2026-10-01).** Same branch, rollback
@@ -13863,3 +13869,19 @@ pick Spotify → Start → no crash".
   Bluetooth, the real Auto Detect crash path, a call interruption.
 - Small: the speaker row says "AirPlay" instead of the speaker's name in 905; Composer's Music strip
   still says "Nothing playing" while Spotify plays (it shows the music *source*, not the receiver).
+
+## 2026-10-01 — [Claude] Main + TestFlight 907: Luminous with the Spotify experiment
+
+- Brian ordered the Luminous + Spotify work onto `main` and TestFlight ("push everything", "that's a direct order").
+- `main`: `c2368c8` → `a719b23`, pushed with branch `experiment/luminous-spotify-pcm`, tags
+  `checkpoint/pre-main-luminous-spotify` (revert: `git push --force origin checkpoint/pre-main-luminous-spotify^{commit}:main`)
+  and `testflight/build-907`.
+- Build 906: Brian archived `HueHome 1` (Release) from Xcode and uploaded it — Spotify is compiled out of Release, so
+  906 has none. Build 907 (`a719b23`): `xcodebuild archive -scheme "HueHome Spotify Experimental" -configuration
+  Debug-SpotifyExperimental`, exported with `testFlightInternalTestingOnly` → "Upload succeeded" (15:54). Debug build:
+  no dSYMs (TestFlight crash logs unsymbolicated; pull them off the phone with devicectl instead).
+- The experiment's Rust library (`Experimental/SpotifyReceiver/build/`) is gitignored: a fresh clone must run
+  `Scripts/build_spotify_receiver.sh` (needs rustup) before the experimental scheme builds; `HueHome 1` never needs it.
+- Still open on hardware: AirPlay light timing (lights wait 3.2 s — do they hit the beat?), two AirPlay speakers,
+  lock screen, Bluetooth, the real Auto Detect crash path. Next build: speaker row shows the speaker's name, and the
+  "Listens to the room" wording follows the Spotify source.
