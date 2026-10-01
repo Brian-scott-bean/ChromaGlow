@@ -62,9 +62,26 @@ TEST_FILES = {
   'HueHomeTests/LuminousKitTests.swift' => ['HueHomeTests'],
 }
 
+# Files the redesign retired. Their references are dropped from the project
+# (and the files deleted from disk by the commit that retired them).
+REMOVED_FILES = [
+  'HueHome/UI/Scenes/SceneMoodCard.swift',
+]
+
 existing = existing_paths(project)
 added = 0
 APP_FILES.each  { |rel, grp| added += add_file(project, app_target,  File.join(ROOT, rel), grp, existing) }
 TEST_FILES.each { |rel, grp| added += add_file(project, test_target, File.join(ROOT, rel), grp, existing) }
-project.save if added > 0
-puts "Done — #{added} file(s) added."
+
+removed = 0
+REMOVED_FILES.each do |rel|
+  target = File.expand_path(File.join(ROOT, rel))
+  project.files.select { |f| (File.expand_path(f.real_path.to_s) rescue nil) == target }.each do |ref|
+    project.targets.each { |t| t.source_build_phase.files.select { |bf| bf.file_ref == ref }.each(&:remove_from_project) }
+    ref.remove_from_project
+    puts "   xx Removed: #{rel}"
+    removed += 1
+  end
+end
+project.save if added > 0 || removed > 0
+puts "Done — #{added} file(s) added, #{removed} removed."

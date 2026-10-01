@@ -140,4 +140,101 @@ final class AppGallerySnapshotTests: XCTestCase {
         }
         orchestrator.exitDemoMode()
     }
+
+    // MARK: - Lane Scenes
+
+    /// Like `render`, but on a canvas tall enough to see a whole page.
+    private func renderScenesPage<V: View>(_ view: V, named name: String,
+                                          height: CGFloat = 1700, settle: TimeInterval = 1.2) async throws {
+        let orchestrator = await demoOrchestrator()
+        let tall = CGSize(width: size.width, height: height)
+        let root = AnyView(
+            view
+                .environment(orchestrator)
+                .environment(DeepLinkCoordinator())
+                .environment(MusicSessionCoordinator.shared)
+                .modelContainer(try container())
+                .preferredColorScheme(.dark)
+        )
+        let controller = UIHostingController(rootView: root)
+        controller.overrideUserInterfaceStyle = .dark
+        let window = UIWindow(frame: CGRect(origin: .zero, size: tall))
+        window.overrideUserInterfaceStyle = .dark
+        window.rootViewController = controller
+        window.isHidden = false
+        controller.view.layoutIfNeeded()
+        pump(settle)
+        let image = UIGraphicsImageRenderer(size: tall).image { _ in
+            controller.view.drawHierarchy(in: CGRect(origin: .zero, size: tall), afterScreenUpdates: true)
+        }
+        let attachment = XCTAttachment(image: image)
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        XCTAssertNotNil(image.cgImage, name)
+        dismantle(window)
+        orchestrator.exitDemoMode()
+    }
+
+    /// Runs `body` with the given favorites CSV, restoring the previous one.
+    private func withSceneFavorites(_ csv: String, _ body: () async throws -> Void) async rethrows {
+        let key = "favoriteSceneIDs"
+        let previous = UserDefaults.standard.string(forKey: key)
+        UserDefaults.standard.set(csv, forKey: key)
+        defer {
+            if let previous { UserDefaults.standard.set(previous, forKey: key) }
+            else { UserDefaults.standard.removeObject(forKey: key) }
+        }
+        try await body()
+    }
+
+    /// The whole Scenes tab, grouped by room, with favorites on the shelf.
+    func testScenesGroupedPage() async throws {
+        try await withSceneFavorites("ds-lv-3,ds-pt-2,ds-bd-1") {
+            try await renderScenesPage(NavigationStack { ScenesTabView() }, named: "gallery-scenes-page")
+        }
+    }
+
+    /// The tab filtered by a search — one flat grid of results.
+    func testScenesSearch() async throws {
+        try await renderScenesPage(NavigationStack { ScenesTabView(initialSearchText: "Relax") },
+                                   named: "gallery-scenes-search", height: 874)
+    }
+
+    /// Every card state side by side: on, dynamic, favorite, Studio,
+    /// a real bridge palette, a full-width card.
+    func testSceneCardStates() async throws {
+        let b = "demo-bridge"
+        let cards: [(GlobalSceneItem, Bool, Bool)] = [
+            (GlobalSceneItem(id: "\(b):s1", bridgeSceneID: "s1", name: "Movie Night", roomID: "r1", bridgeID: b,
+                             isActive: true, isDynamic: false, speed: 0.5), true, false),
+            (GlobalSceneItem(id: "\(b):s2", bridgeSceneID: "s2", name: "Party", roomID: "r1", bridgeID: b,
+                             isActive: false, isDynamic: true, speed: 0.6), false, false),
+            (GlobalSceneItem(id: "\(b):s3", bridgeSceneID: "s3", name: "Northern Lights", roomID: "r1", bridgeID: b,
+                             isActive: true, isDynamic: true, speed: 0.4,
+                             paletteXY: [SceneXY(x: 0.20, y: 0.35), SceneXY(x: 0.24, y: 0.52), SceneXY(x: 0.26, y: 0.13)]),
+             false, false),
+            (GlobalSceneItem(id: "\(b):s4", bridgeSceneID: "s4", name: "Golden Hour", roomID: "r1", bridgeID: b,
+                             isActive: false, isDynamic: false, speed: 0.5), true, true),
+            (GlobalSceneItem(id: "\(b):s5", bridgeSceneID: "s5", name: "Sleep", roomID: "r1", bridgeID: b,
+                             isActive: false, isDynamic: false, speed: 0.5), false, false),
+            (GlobalSceneItem(id: "\(b):s6", bridgeSceneID: "s6", name: "Bright", roomID: "r1", bridgeID: b,
+                             isActive: false, isDynamic: false, speed: 0.5), false, false),
+        ]
+        let grid = ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
+                    ForEach(cards, id: \.0.id) { card in
+                        LuminousSceneCard(scene: card.0, roomName: "Living Room", isFavorite: card.1,
+                                          isStudio: card.2, onActivate: {}, onSpeed: {})
+                    }
+                }
+                LuminousSceneCard(scene: cards[2].0, roomName: "Living Room", isFavorite: true,
+                                  onActivate: {}, onSpeed: {})
+            }
+            .padding(20)
+        }
+        .background { LuminousAmbience(colors: [LuminousPalette.violet]) }
+        try await renderScenesPage(grid, named: "gallery-scene-cards", height: 1000)
+    }
 }
