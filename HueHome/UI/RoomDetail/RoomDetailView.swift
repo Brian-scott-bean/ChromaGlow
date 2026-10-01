@@ -826,14 +826,13 @@ struct RoomDetailView: View {
         let isFav = favoriteSceneIDs.contains(scene.id)
         Group {
             if vm.isSelectingScenes {
-                // Select mode: tap toggles the selection.
-                Button {
+                // Select mode: the tile's own tap toggles the selection. (It
+                // used to sit inside a Button with hit testing switched off on
+                // its label, which left the Button nothing to hit.)
+                RoomSceneTile(scene: scene, isActivating: false, isFavorite: false,
+                              isSelecting: true) {
                     vm.toggleSceneSelection(id: scene.id)
-                } label: {
-                    RoomSceneTile(scene: scene, isActivating: false, isFavorite: false) { /* no-op in select mode */ }
-                        .allowsHitTesting(false)
                 }
-                .buttonStyle(.plain)
                 .overlay(alignment: .topTrailing) {
                     Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                         .font(.system(size: 20, weight: .semibold))

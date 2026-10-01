@@ -15,7 +15,14 @@ struct RoomSceneTile: View {
     /// True while the recall is in flight → spinner, no double tap.
     let isActivating: Bool
     var isFavorite: Bool = false
+    /// Select mode: the tap picks the scene instead of recalling it.
+    var isSelecting: Bool = false
     let onTap: () -> Void
+
+    private var statusLine: String {
+        if isSelecting { return "Tap to select" }
+        return scene.isActive ? "On now" : (isActivating ? "Setting…" : "Tap to set")
+    }
 
     var body: some View {
         Button(action: onTap) {
@@ -38,9 +45,9 @@ struct RoomSceneTile: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
                 }
-                Text(scene.isActive ? "On now" : (isActivating ? "Setting…" : "Tap to set"))
+                Text(statusLine)
                     .font(.caption2.weight(.semibold))
-                    .foregroundStyle(scene.isActive ? LuminousPalette.live : LuminousPalette.inkSecondary)
+                    .foregroundStyle(scene.isActive && !isSelecting ? LuminousPalette.live : LuminousPalette.inkSecondary)
             }
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -60,6 +67,6 @@ struct RoomSceneTile: View {
         .buttonStyle(LuminousPressStyle(scale: 0.95))
         .disabled(isActivating)
         .accessibilityLabel("\(scene.name) scene\(scene.isActive ? ", active" : "")\(isFavorite ? ", favourite" : "")")
-        .accessibilityHint(isActivating ? "Activating…" : "Tap to activate")
+        .accessibilityHint(isSelecting ? "Selects this scene" : (isActivating ? "Activating…" : "Tap to activate"))
     }
 }
