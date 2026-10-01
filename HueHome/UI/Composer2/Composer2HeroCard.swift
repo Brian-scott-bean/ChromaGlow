@@ -227,13 +227,18 @@ enum Composer2HeroPainter {
         }
 
         let spots = placements(size: size, layout: layout, geometry: geometry)
+        let labels = stageLabels(layout.slots.map(\.name))
         let hasSelection = !selected.isEmpty
         // Back to front, so nearer lights sit on top.
         let order = spots.indices.sorted { spots[$0].depth < spots[$1].depth }
 
         // Pass 1 — light in the room: washes and floor pools, additive.
+        // Additive washes add up: eight full-room washes saturated the stage
+        // to one white blob (device round, build 58). Each light's share of
+        // the room shrinks with the count so the total stays a 3-light room's.
         var light = ctx
         light.blendMode = .plusLighter
+        let crowd = CGFloat(min(1, (3.0 / Double(count)).squareRoot()))
         for i in order {
             let slot = layout.slots[i]
             guard let frame = slot.index < frames.count ? frames[slot.index] : nil else { continue }
@@ -244,13 +249,13 @@ enum Composer2HeroPainter {
             // The room around the light.
             let washR = r * 13
             light.fill(Path(ellipseIn: CGRect(x: p.x - washR, y: p.y - washR * 0.8, width: washR * 2, height: washR * 1.6)),
-                       with: .radialGradient(Gradient(colors: [color.opacity(0.16 * b), color.opacity(0)]),
+                       with: .radialGradient(Gradient(colors: [color.opacity(0.16 * b * crowd), color.opacity(0)]),
                                              center: p, startRadius: 0, endRadius: washR))
             // The pool it throws on the floor.
             let floorY = p.y + r * 2.2
             let poolW = r * 7, poolH = r * 2.2
             light.fill(Path(ellipseIn: CGRect(x: p.x - poolW, y: floorY - poolH, width: poolW * 2, height: poolH * 2)),
-                       with: .radialGradient(Gradient(colors: [color.opacity(0.42 * b), color.opacity(0)]),
+                       with: .radialGradient(Gradient(colors: [color.opacity(0.42 * b * crowd), color.opacity(0)]),
                                              center: CGPoint(x: p.x, y: floorY), startRadius: 0, endRadius: poolW))
             // A soft column between the lamp and its pool.
             var column = Path()
@@ -259,7 +264,7 @@ enum Composer2HeroPainter {
             column.addLine(to: CGPoint(x: p.x + r * 2.4, y: floorY))
             column.addLine(to: CGPoint(x: p.x - r * 2.4, y: floorY))
             column.closeSubpath()
-            light.fill(column, with: .linearGradient(Gradient(colors: [color.opacity(0.18 * b), color.opacity(0)]),
+            light.fill(column, with: .linearGradient(Gradient(colors: [color.opacity(0.18 * b * crowd), color.opacity(0)]),
                                                      startPoint: p, endPoint: CGPoint(x: p.x, y: floorY)))
         }
 
@@ -302,12 +307,38 @@ enum Composer2HeroPainter {
                 ctx.stroke(Path(ellipseIn: CGRect(x: p.x - ring, y: p.y - ring, width: ring * 2, height: ring * 2)),
                            with: .color(Composer2Theme.cyan), lineWidth: 2)
             }
-            if count <= 8 {
-                let label = Text(slot.name).font(.system(size: 9, weight: .semibold))
+            if count <= 8, let labels, slot.index < labels.count {
+                let label = Text(labels[slot.index]).font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(Composer2Theme.ink.opacity(0.45 * dim))
                 ctx.draw(label, at: CGPoint(x: p.x, y: p.y + r * 2.9 + 6))
             }
         }
+    }
+
+    /// What each light is called on the stage. Lights that share a name
+    /// ("Main bathroom 1" … "8") are told apart by what differs — eight full
+    /// names ran together into one unreadable line (device round, build 58).
+    /// Up to four lights keep their names; more keep them only while short
+    /// enough to fit beside each other, and otherwise none are drawn.
+    static func stageLabels(_ names: [String]) -> [String]? {
+        guard names.count > 1 else { return names }
+        let prefix = commonWordPrefix(names)
+        if !prefix.isEmpty {
+            let short = names.map { String($0.dropFirst(prefix.count)).trimmingCharacters(in: .whitespaces) }
+            if short.allSatisfy({ !$0.isEmpty }) { return short }
+        }
+        return names.count <= 4 || names.allSatisfy({ $0.count <= 12 }) ? names : nil
+    }
+
+    /// The longest shared prefix that ends at a word boundary ("Main bathroom ").
+    static func commonWordPrefix(_ names: [String]) -> String {
+        guard var prefix = names.first else { return "" }
+        for name in names.dropFirst() {
+            while !name.hasPrefix(prefix) { prefix.removeLast() }
+            if prefix.isEmpty { return "" }
+        }
+        guard let lastSpace = prefix.lastIndex(of: " ") else { return "" }
+        return String(prefix[...lastSpace])
     }
 
     /// The room: a dark floor receding to a horizon, with the faintest grid.

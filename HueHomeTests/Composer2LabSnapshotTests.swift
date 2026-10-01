@@ -108,6 +108,47 @@ final class Composer2LabSnapshotTests: XCTestCase {
         .preferredColorScheme(.dark)
     }
 
+    // MARK: Crowded rooms (device round, build 58)
+
+    /// Main bathroom: eight bulbs, positions estimated. On build 57 they sat
+    /// on a half-width arc and the additive washes fused into one white blob.
+    /// Rendered warm-white (how the room was) and as a C9 string, for review.
+    func testEightBulbRoomStaysReadable() {
+        let bulbs = (1...8).map {
+            LightDisplayItem(id: "B\($0)", name: "Main bathroom \($0)", archetype: "sultan_bulb", isOn: true,
+                             brightness: 100, colorX: 0.45, colorY: 0.41, colorTempMirek: nil,
+                             mirekMin: 153, mirekMax: 500)
+        }
+        let layout = Composer2SlotLayout.estimated(lights: bulbs)
+        let c9: [(Double, Double)] = [(0.68, 0.31), (0.56, 0.41), (0.17, 0.70), (0.15, 0.06), (0.38, 0.16)]
+        for (name, frames) in [
+            ("hero-8-bulbs-warm", (0..<8).map { Composer2Frame(slot: $0, x: 0.5222, y: 0.4138, brightness: 1) }),
+            ("hero-8-bulbs-c9", (0..<8).map { Composer2Frame(slot: $0, x: c9[$0 % 5].0, y: c9[$0 % 5].1, brightness: 0.9) }),
+        ] {
+            let view = Canvas { ctx, size in
+                Composer2HeroPainter.draw(in: &ctx, size: size, layout: layout, frames: frames, selected: [],
+                                          motion: Composer2Motion(kind: .static), geometry: layout.geometry,
+                                          time: 0, showTrace: false)
+            }
+            .frame(width: 361, height: 220)
+            .background(Composer2Theme.background)
+            render(view, size: CGSize(width: 361, height: 220), named: name)
+        }
+    }
+
+    func testStageLabelsTellSameNamedLightsApartAndNeverCollide() {
+        typealias P = Composer2HeroPainter
+        XCTAssertEqual(P.stageLabels((1...8).map { "Main bathroom \($0)" }), (1...8).map { "\($0)" })
+        XCTAssertEqual(P.stageLabels(["TV Strip · 1/3", "TV Strip · 2/3", "TV Strip · 3/3"]), ["1/3", "2/3", "3/3"])
+        XCTAssertEqual(P.stageLabels(["Floor Lamp", "TV Strip", "Ceiling"]), ["Floor Lamp", "TV Strip", "Ceiling"])
+        XCTAssertEqual(P.stageLabels(["Kitchen light 1", "Kitchen sink 1"]), ["light 1", "sink 1"])
+        XCTAssertNil(P.stageLabels((1...6).map { "Unrelated long light name \($0 * 7919)" }.map { String($0.reversed()) }),
+                     "six long, unrelated names would collide — none are drawn")
+        XCTAssertEqual(P.stageLabels(["Desk"]), ["Desk"])
+        XCTAssertEqual(P.commonWordPrefix(["Main bathroom 1", "Main bathroom 2"]), "Main bathroom ")
+        XCTAssertEqual(P.commonWordPrefix(["Bathroom", "Bedroom"]), "", "only whole words are shared")
+    }
+
     // MARK: Screens
 
     private func content(_ doc: Composer2Document, center: Composer2PlaybackCenter) -> some View {
