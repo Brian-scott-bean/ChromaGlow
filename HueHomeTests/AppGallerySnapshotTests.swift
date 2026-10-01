@@ -268,4 +268,18 @@ final class AppGallerySnapshotTests: XCTestCase {
         try await renderScenesPage(RenameSceneSheet(scene: scene, initialName: scene.name) { _ in },
                                    named: "gallery-scene-rename", height: 500)
     }
+
+    /// Studio Classic's share sheet, the scanner (unsupported on the
+    /// Simulator) and the import failure sheet.
+    func testSceneShareSheets() async throws {
+        let missing = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("no-such-compositions.json")
+        let preset = try XCTUnwrap(CompositionStore.readPresets(from: missing).presets
+            .first { $0.name.localizedCaseInsensitiveContains("aurora") }
+            ?? CompositionStore.readPresets(from: missing).presets.first)
+        try await renderScenesPage(ShareSceneSheet(preset: preset), named: "gallery-scene-share",
+                                   height: 1000, settle: 1.5)
+        try await renderScenesPage(ScanSceneView { _ in }, named: "gallery-scene-scan", height: 874)
+        try await renderScenesPage(ImportSceneFailureSheet(error: ScenePayloadError.unsupportedVersion(99)),
+                                   named: "gallery-scene-import-failure", height: 600)
+    }
 }

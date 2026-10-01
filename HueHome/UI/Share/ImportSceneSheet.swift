@@ -26,11 +26,15 @@ struct ImportSceneSheet: View {
     }
 
     var body: some View {
-        StageSheetScaffold(title: "Add \(scene.name)") {
-            StageCard(icon: scene.icon, title: scene.name, subtitle: scene.category.rawValue) {
-                VStack(alignment: .leading, spacing: HueSpacing.md) {
-                    ScenePaletteRibbon(palette: scene.palette)
-
+        ShareSheetScaffold(eyebrow: "Add a scene",
+                           symbol: scene.icon,
+                           tint: LuminousPalette.cyan,
+                           title: scene.name,
+                           subtitle: "\(scene.category.rawValue). Someone shared it with you — see what it is, then decide.",
+                           colors: scene.palette.sampleColors()) {
+            VStack(alignment: .leading, spacing: HueSpacing.md) {
+                ScenePaletteRibbon(palette: scene.palette)
+                VStack(spacing: 10) {
                     factRow("Palette", value: Self.humanized(scene.palette.mode.rawValue))
                     factRow("Motion", value: Self.humanized(scene.motion.pattern.rawValue))
                     factRow("Brightness Shape", value: Self.humanized(scene.envelope.shape.rawValue))
@@ -45,19 +49,17 @@ struct ImportSceneSheet: View {
                     }
                 }
             }
+            .padding(16)
+            .luminousGlass()
 
             if collides {
                 // Not a blocker — the import gets its own id, so both can coexist.
                 // But the user should not be surprised by two identical names.
-                Text("You already have a scene called \"\(scene.name)\". This one will be added alongside it.")
-                    .font(HueFont.stageStatus)
-                    .foregroundStyle(HuePalette.amber.opacity(0.85))
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, HueSpacing.xs)
+                LuminousNotice(text: "You already have a scene called \"\(scene.name)\". This one will be added alongside it.",
+                               symbol: "exclamationmark.circle.fill", tint: LuminousPalette.amber)
             }
 
-            Button {
+            LuminousPrimaryButton(title: "Add to My Scenes", symbol: "plus.circle.fill") {
                 guard !didImport else { return }
                 didImport = true
                 let preset = scene.makePreset()
@@ -65,15 +67,7 @@ struct ImportSceneSheet: View {
                 HapticManager.shared.medium()
                 onImported(preset)
                 dismiss()
-            } label: {
-                Label("Add to My Scenes", systemImage: "plus.circle.fill")
-                    .font(HueFont.stageChip)
-                    .foregroundStyle(Color.black.opacity(0.85))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-                    .background(RoundedRectangle(cornerRadius: HueRadius.lg).fill(HuePalette.amber))
             }
-            .buttonStyle(.plain)
             .disabled(didImport)
             .padding(.top, HueSpacing.sm)
         }
@@ -87,15 +81,16 @@ struct ImportSceneSheet: View {
     private func factRow(_ title: String, value: String) -> some View {
         HStack {
             Text(title)
-                .font(HueFont.stageControl)
-                .foregroundStyle(StagePalette.muted)
+                .font(.subheadline)
+                .foregroundStyle(LuminousPalette.inkSecondary)
             Spacer(minLength: HueSpacing.sm)
             Text(value)
-                .font(HueFont.stageValue)
-                .foregroundStyle(StagePalette.ink)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(LuminousPalette.ink)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
         }
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -108,14 +103,13 @@ struct ImportSceneFailureSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        StageSheetScaffold(title: "Can't add scene") {
-            StageCard(icon: "exclamationmark.triangle", title: "Scene not added") {
-                Text(error.localizedDescription)
-                    .font(HueFont.stageControl)
-                    .foregroundStyle(StagePalette.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
+        ShareSheetScaffold(eyebrow: "Can't add scene",
+                           symbol: "exclamationmark.triangle.fill",
+                           tint: LuminousPalette.amber,
+                           title: "Scene not added",
+                           colors: [LuminousPalette.amber]) {
+            LuminousNotice(text: error.localizedDescription, symbol: "exclamationmark.triangle.fill",
+                           tint: LuminousPalette.amber)
         }
     }
 }
