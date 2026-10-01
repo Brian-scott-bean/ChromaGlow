@@ -25,6 +25,7 @@
 
 #if CHROMAGLOW_EXPERIMENTAL_SPOTIFY
 
+import AVFoundation
 import ChromaGlowSpotifyFFI
 import Foundation
 import Network
@@ -152,6 +153,7 @@ final class SpotifyConnectReceiver {
     @ObservationIgnored private var pollTask: Task<Void, Never>?
     @ObservationIgnored private var lastFrames: UInt64 = 0
     @ObservationIgnored private var lastConsoleAt: Double = 0
+    @ObservationIgnored private var lastAutoResumeAt: Double = 0
     @ObservationIgnored private var pathMonitor: NWPathMonitor?
     @ObservationIgnored private var networkWasSatisfied = true
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
@@ -465,6 +467,15 @@ final class SpotifyConnectReceiver {
         next.analyzerOnSpotify = engine.sourceKind == .spotifyConnect
         if next != snapshot { snapshot = next }
         SpotifyNowPlaying.shared.update(next)
+        if Self.shouldAutoResume(
+            outputInterrupted: output.state == .interrupted, playsOnPhone: playsOnPhone,
+            playback: next.playback, handoff: next.handoff,
+            otherAudioPlaying: AVAudioSession.sharedInstance().isOtherAudioPlaying,
+            sinceLastAttempt: now - lastAutoResumeAt
+        ) {
+            lastAutoResumeAt = now
+            output.autoResume()
+        }
         levels = AudioAnalysisEngine.latestFeatures()
         let tail = Array(Self.copyLog(capacity: 4096).split(separator: "\n").suffix(8).map(String.init))
         if tail != logTail { logTail = tail }
@@ -541,6 +552,16 @@ final class SpotifyConnectReceiver {
         case Int(CGSpotifyPlaybackPaused): .paused
         default: .idle
         }
+    }
+
+    /// Spotify is playing HERE, the speaker was interrupted and nobody else is
+    /// playing: take the speaker back (at most every 3 s).
+    nonisolated static func shouldAutoResume(
+        outputInterrupted: Bool, playsOnPhone: Bool, playback: Playback, handoff: Handoff,
+        otherAudioPlaying: Bool, sinceLastAttempt: Double
+    ) -> Bool {
+        outputInterrupted && playsOnPhone && playback == .playing && handoff == .active
+            && !otherAudioPlaying && sinceLastAttempt >= 3
     }
 
     private static func handoff(_ raw: UInt32) -> Handoff {

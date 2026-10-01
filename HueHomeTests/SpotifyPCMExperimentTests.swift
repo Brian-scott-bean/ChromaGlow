@@ -272,6 +272,21 @@ final class SpotifyPCMExperimentTests: XCTestCase {
         XCTAssertFalse(SpotifyConnectReceiver.shared.send(.next), "receiver not started")
     }
 
+    func testSpeakerAutoResumesOnlyWhenSpotifyPlaysHereAndNothingElseDoes() {
+        func check(interrupted: Bool = true, phone: Bool = true, playback: SpotifyConnectReceiver.Playback = .playing,
+                   handoff: SpotifyConnectReceiver.Handoff = .active, other: Bool = false, since: Double = 5) -> Bool {
+            SpotifyConnectReceiver.shouldAutoResume(outputInterrupted: interrupted, playsOnPhone: phone, playback: playback,
+                                                    handoff: handoff, otherAudioPlaying: other, sinceLastAttempt: since)
+        }
+        XCTAssertTrue(check())
+        XCTAssertFalse(check(other: true), "a call or another app is playing")
+        XCTAssertFalse(check(playback: .paused))
+        XCTAssertFalse(check(handoff: .movedAway))
+        XCTAssertFalse(check(phone: false))
+        XCTAssertFalse(check(interrupted: false))
+        XCTAssertFalse(check(since: 1), "throttled")
+    }
+
     func testTrackPositionAdvancesOnlyWhilePlaying() {
         XCTAssertEqual(SpotifyConnectReceiver.position(reportedMs: 78_000, ageMs: 2_500, durationMs: 220_000, playing: true), 80.5)
         XCTAssertEqual(SpotifyConnectReceiver.position(reportedMs: 78_000, ageMs: 2_500, durationMs: 220_000, playing: false), 78)

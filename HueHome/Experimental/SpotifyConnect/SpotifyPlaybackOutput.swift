@@ -173,6 +173,7 @@ final class SpotifyPlaybackOutput {
 
     private func interruption(_ type: AVAudioSession.InterruptionType?, shouldResume: Bool) {
         guard wanted, let type else { return }
+        print("[SpotifyPCM] audio interruption \(type == .began ? "began" : "ended") (shouldResume=\(shouldResume))")
         switch type {
         case .began:
             // The system has already silenced us; drop the queued audio.
@@ -192,6 +193,19 @@ final class SpotifyPlaybackOutput {
     func resume() {
         guard wanted else { return }
         rebuild(reason: "resume")
+    }
+
+    /// Take the music back after an interruption iOS didn't ask us to resume
+    /// from — called only while Spotify is actively playing on this device and
+    /// no other app is playing (so never over a call). Device round, build 904:
+    /// opening and closing the phone's own Spotify app interrupted us and iOS
+    /// never sent `.shouldResume`. A refused activation stays `.interrupted`
+    /// so the caller can retry.
+    func autoResume() {
+        guard wanted, state == .interrupted else { return }
+        print("[SpotifyPCM] auto-resume (Spotify is playing on this device)")
+        rebuild(reason: "auto-resume")
+        if case .failed = state { state = .interrupted }
     }
 
     /// Media services reset or a failed renderer: start over with fresh
