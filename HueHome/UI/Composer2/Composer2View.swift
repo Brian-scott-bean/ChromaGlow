@@ -92,6 +92,17 @@ struct Composer2View: View {
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
+        // The banner sits over the ✕, room picker and undo/redo, so it must
+        // not stay: "Saved · …" was still up after a minute (build-60 M-5).
+        // Confirmations clear quickly; a microphone problem stays long
+        // enough to read (it asks the user to do something).
+        .task(id: localNotice) {
+            guard let shown = localNotice else { return }
+            let isProblem = shown == Composer2Copy.micDenied || shown == Composer2Copy.micCaptureFailed
+            try? await Task.sleep(for: .seconds(isProblem ? 8 : (shown == Composer2Copy.applied ? 5 : 3)))
+            guard !Task.isCancelled, localNotice == shown else { return }
+            withAnimation(reduceMotion ? nil : HueAnimation.fast) { localNotice = nil }
+        }
         .sheet(item: $doc.activeEditor) { editor in
             Composer2EditorSheet(document: document, editor: editor, feed: feed)
                 .environment(orchestrator)
