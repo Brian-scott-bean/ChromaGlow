@@ -441,6 +441,15 @@ struct MainTabView: View {
                     .safeAreaInset(edge: .bottom, spacing: 0) {
                         Color.clear.frame(height: HueTabBarMetrics.height)
                     }
+                    // The clear inset above never reaches the scroll views
+                    // inside each tab's NavigationStack (the same reason the
+                    // Select docks pad themselves), so the last card or line of
+                    // every long page stopped under the floating bar. Margin
+                    // the scroll content itself — environment-wide, so pushed
+                    // pages (Room, Light, Settings…) get it too. Studio Classic
+                    // clears the bar its own way.
+                    .contentMargins(.bottom, tab == .studio ? 0 : HueTabBarMetrics.dockClearance,
+                                    for: .scrollContent)
                     .opacity(selectedTab == tab ? 1 : 0)
                     .allowsHitTesting(selectedTab == tab)
                     // Pause off-screen tabs' animation clocks (kept mounted for state).
