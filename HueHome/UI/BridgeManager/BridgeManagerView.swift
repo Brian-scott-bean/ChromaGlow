@@ -1,9 +1,10 @@
 // BridgeManagerView.swift
-// CastChroma — Stage 2A Multi-Bridge
+// ChromaGlow — Bridges (Luminous).
 //
-// Settings sub-screen for managing all registered bridges.
-// Shows each bridge with live status, device count, and CRUD controls.
-// "Add Bridge" triggers a new BridgeSetupView pairing flow.
+// Every registered bridge with its live connection, rooms and accent; add,
+// rename, reorder, remove. Stays a List so swipe-to-delete, Edit and drag
+// reordering keep working — each row is a glass card over the dark room.
+// "Add Another Bridge" opens the same pairing flow as first launch.
 
 import SwiftUI
 import SwiftData
@@ -11,7 +12,6 @@ import SwiftData
 struct BridgeManagerView: View {
 
     @Environment(\.modelContext)    private var modelContext
-    @Environment(\.colorScheme)     private var colorScheme
     @Environment(UnifiedOrchestrator.self) private var orchestrator
 
     @Query(sort: \BridgeRecord.sortOrder) private var bridges: [BridgeRecord]
@@ -21,56 +21,72 @@ struct BridgeManagerView: View {
     @State private var showDeleteAlert   = false
     @State private var editingBridge:    BridgeRecord? = nil
 
+    private static let rowInsets = EdgeInsets(top: 5, leading: HueSpacing.screenH, bottom: 5, trailing: HueSpacing.screenH)
+
     var body: some View {
-        ZStack {
-            background.ignoresSafeArea()
+        List {
+            LuminousScreenTitle(title: "Bridges",
+                                eyebrow: "System",
+                                eyebrowSymbol: "network",
+                                eyebrowTint: LuminousPalette.cyan,
+                                subtitle: bridges.isEmpty
+                                    ? "Pair a bridge and every room it knows appears on Home."
+                                    : "Hold a bridge to rename or remove it. Edit to reorder.")
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+                .listRowInsets(EdgeInsets(top: 8, leading: HueSpacing.screenH, bottom: 12, trailing: HueSpacing.screenH))
 
             if bridges.isEmpty {
                 emptyState
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                    .listRowInsets(Self.rowInsets)
             } else {
-            List {
-                    ForEach(bridges) { bridge in
-                        BridgeRow(bridge: bridge, orchestrator: orchestrator)
-                            .listRowBackground(Color.clear)
-                            .listRowSeparator(.hidden)
-                            .contextMenu {
-                                // Long-press context menu: backup delete path
-                                Button(role: .destructive) {
-                                    bridgeToDelete = bridge
-                                    showDeleteAlert = true
-                                } label: {
-                                    Label("Remove Bridge", systemImage: "trash")
-                                }
-                                Button {
-                                    editingBridge = bridge
-                                } label: {
-                                    Label("Rename", systemImage: "pencil")
-                                }
-                            }
-                    }
-                    .onDelete { indexSet in
-                        // Standard iOS swipe-to-delete — fires before custom alert
-                        if let idx = indexSet.first {
-                            bridgeToDelete = bridges[idx]
-                            showDeleteAlert = true
-                        }
-                    }
-                    .onMove(perform: reorder)
-
-                    addBridgeButton
+                ForEach(bridges) { bridge in
+                    BridgeRow(bridge: bridge, orchestrator: orchestrator)
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
+                        .listRowInsets(Self.rowInsets)
+                        .contextMenu {
+                            // Long-press context menu: backup delete path
+                            Button(role: .destructive) {
+                                bridgeToDelete = bridge
+                                showDeleteAlert = true
+                            } label: {
+                                Label("Remove Bridge", systemImage: "trash")
+                            }
+                            Button {
+                                editingBridge = bridge
+                            } label: {
+                                Label("Rename", systemImage: "pencil")
+                            }
+                        }
                 }
-                .listStyle(.plain)
-                .scrollContentBackground(.hidden)
+                .onDelete { indexSet in
+                    // Standard iOS swipe-to-delete — fires before custom alert
+                    if let idx = indexSet.first {
+                        bridgeToDelete = bridges[idx]
+                        showDeleteAlert = true
+                    }
+                }
+                .onMove(perform: reorder)
+
+                addBridgeButton
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                    .listRowInsets(Self.rowInsets)
             }
         }
-        .navigationTitle("Bridges")
-        .navigationBarTitleDisplayMode(.large)
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .background { LuminousAmbience(colors: [LuminousPalette.cyan, LuminousPalette.violet], intensity: 0.6) }
+        .luminousPageChrome(title: "Bridges")
         .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                EditButton()
-                    .foregroundStyle(HuePalette.amber)
+            if !bridges.isEmpty {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    EditButton()
+                        .foregroundStyle(LuminousPalette.cyan)
+                }
             }
         }
         .alert("Remove Bridge?", isPresented: $showDeleteAlert, presenting: bridgeToDelete) { bridge in
@@ -99,38 +115,11 @@ struct BridgeManagerView: View {
     // MARK: - Empty State
 
     private var emptyState: some View {
-        VStack(spacing: HueSpacing.xl) {
-            AmberRadialGlow(radius: 50)
-                .overlay {
-                    Image(systemName: "network.slash")
-                        .font(.system(size: 36, weight: .light))
-                        .foregroundStyle(HuePalette.amber)
-                }
-                .frame(width: 80, height: 80)
-
-            VStack(spacing: HueSpacing.sm) {
-                Text("No Bridges")
-                    .font(HueFont.displaySmall)
-                    .foregroundStyle(colorScheme == .dark ? HuePalette.Noir.textPrimary : HuePalette.Estate.textPrimary)
-                Text("Pair your first Hue Bridge to get started.")
-                    .font(HueFont.body)
-                    .foregroundStyle(colorScheme == .dark ? HuePalette.Noir.textSecondary : HuePalette.Estate.textSecondary)
-                    .multilineTextAlignment(.center)
-            }
-
-            Button {
-                showAddBridge = true
-            } label: {
-                Label("Pair a Bridge", systemImage: "plus.circle.fill")
-                    .font(HueFont.callout.weight(.semibold))
-                    .foregroundStyle(.black)
-                    .padding(.horizontal, HueSpacing.xxl)
-                    .padding(.vertical, HueSpacing.md)
-                    .background(HuePalette.amber)
-                    .clipShape(Capsule())
-            }
-        }
-        .padding(HueSpacing.section)
+        LuminousEmptyState(symbol: "network.slash",
+                           title: "No Bridges",
+                           message: "Pair your first Hue Bridge to get started.",
+                           actionTitle: "Pair a Bridge",
+                           action: { showAddBridge = true })
     }
 
     // MARK: - Add Bridge Button
@@ -139,31 +128,25 @@ struct BridgeManagerView: View {
         Button {
             showAddBridge = true
         } label: {
-            HStack(spacing: HueSpacing.md) {
-                Image(systemName: "plus.circle.fill")
-                    .font(.system(size: 22))
-                    .foregroundStyle(HuePalette.amber)
+            HStack(spacing: 14) {
+                Image(systemName: "plus")
+                    .font(.system(size: 16, weight: .heavy))
+                    .foregroundStyle(LuminousPalette.void)
+                    .frame(width: 36, height: 36)
+                    .background(Circle().fill(LuminousPalette.signalGradient))
+                    .shadow(color: LuminousPalette.cyan.opacity(0.5), radius: 8)
                 Text("Add Another Bridge")
-                    .font(HueFont.body.weight(.medium))
-                    .foregroundStyle(colorScheme == .dark ? HuePalette.Noir.textPrimary : HuePalette.Estate.textPrimary)
-                Spacer()
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(LuminousPalette.ink)
+                Spacer(minLength: 0)
             }
-            .padding(HueSpacing.lg)
-            .background {
-                RoundedRectangle(cornerRadius: HueRadius.lg)
-                    .fill(colorScheme == .dark
-                      ? HuePalette.Noir.surface.opacity(0.6)
-                      : HuePalette.Estate.surface.opacity(0.8))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: HueRadius.lg)
-                            .strokeBorder(
-                                colorScheme == .dark ? Color.white.opacity(0.08) : Color.black.opacity(0.06),
-                                lineWidth: 1
-                            )
-                    }
-            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .frame(minHeight: 60)
+            .luminousGlass(radius: LuminousPalette.cardRadius, accent: LuminousPalette.cyan, selected: true)
+            .contentShape(RoundedRectangle(cornerRadius: LuminousPalette.cardRadius, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(LuminousPressStyle())
     }
 
     // MARK: - Actions
@@ -192,30 +175,24 @@ struct BridgeManagerView: View {
         }
         try? modelContext.save()
     }
-
-    private var background: Color {
-        colorScheme == .dark ? HuePalette.Noir.background : HuePalette.Estate.background
-    }
 }
 
 // MARK: - Bridge Row
 
+/// One bridge: its accent glowing in a badge, its name and place, its live
+/// connection, and how many rooms it carries.
 private struct BridgeRow: View {
-    @Environment(\.colorScheme) private var colorScheme
     let bridge: BridgeRecord
     let orchestrator: UnifiedOrchestrator
 
+    private var status: BridgeConnectionStatus? { orchestrator.connectionStatus[bridge.id] }
+
     var statusColor: Color {
-        switch orchestrator.connectionStatus[bridge.id] {
-        case .connected:          return .green
-        case .connecting:         return HuePalette.amber
-        case .error:              return .red
-        case .disabled, nil:      return .gray
-        }
+        status?.luminousTint ?? LuminousPalette.inkSecondary
     }
 
     var statusLabel: String {
-        switch orchestrator.connectionStatus[bridge.id] {
+        switch status {
         case .connected:          return "Connected"
         case .connecting:         return "Connecting…"
         case .error(let msg):     return msg
@@ -228,64 +205,46 @@ private struct BridgeRow: View {
     }
 
     var body: some View {
-        HStack(spacing: HueSpacing.lg) {
-            // Bridge icon with accent color
-            let accentColor: Color = bridge.accentHex.map { Color(hex: $0) } ?? HuePalette.amber
-            ZStack {
-                Circle()
-                    .fill(accentColor.opacity(0.18))
-                    .frame(width: 48, height: 48)
-                Image(systemName: "network")
-                    .font(.system(size: 20, weight: .medium))
-                    .foregroundStyle(accentColor)
-            }
+        let accentColor: Color = bridge.accentHex.map { Color(hex: $0) } ?? LuminousPalette.cyan
+        return HStack(spacing: 14) {
+            LuminousIconBadge(symbol: "network", tint: accentColor, size: 46)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(bridge.name)
-                    .font(HueFont.callout.weight(.semibold))
-                    .foregroundStyle(colorScheme == .dark ? HuePalette.Noir.textPrimary : HuePalette.Estate.textPrimary)
-
+                    .font(LuminousType.cardTitle)
+                    .foregroundStyle(LuminousPalette.ink)
+                    .lineLimit(1)
                 if let label = bridge.locationLabel {
                     Text(label)
-                        .font(HueFont.caption)
-                        .foregroundStyle(colorScheme == .dark ? HuePalette.Noir.textSecondary : HuePalette.Estate.textSecondary)
+                        .font(.footnote)
+                        .foregroundStyle(LuminousPalette.inkSecondary)
                 }
-
-                HStack(spacing: 4) {
+                HStack(spacing: 6) {
                     Circle()
                         .fill(statusColor)
-                        .frame(width: 6, height: 6)
+                        .frame(width: 7, height: 7)
+                        .shadow(color: statusColor, radius: 3)
                     Text(statusLabel)
-                        .font(HueFont.micro)
-                        .foregroundStyle(colorScheme == .dark ? HuePalette.Noir.textTertiary : HuePalette.Estate.textTertiary)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(statusColor)
+                        .lineLimit(2)
                 }
             }
 
-            Spacer()
+            Spacer(minLength: 0)
 
-            VStack(alignment: .trailing, spacing: 3) {
+            VStack(alignment: .trailing, spacing: 1) {
                 Text("\(bridgeRooms.count)")
-                    .font(HueFont.callout.weight(.bold))
-                    .foregroundStyle(colorScheme == .dark ? HuePalette.Noir.textPrimary : HuePalette.Estate.textPrimary)
-                Text("rooms")
-                    .font(HueFont.micro)
-                    .foregroundStyle(colorScheme == .dark ? HuePalette.Noir.textTertiary : HuePalette.Estate.textTertiary)
+                    .font(LuminousType.bigValue)
+                    .foregroundStyle(LuminousPalette.ink)
+                Text(bridgeRooms.count == 1 ? "room" : "rooms")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(LuminousPalette.inkSecondary)
             }
         }
-        .padding(HueSpacing.lg)
-        .background {
-            RoundedRectangle(cornerRadius: HueRadius.lg)
-                .fill(colorScheme == .dark
-                      ? HuePalette.Noir.surface.opacity(0.6)
-                      : HuePalette.Estate.surface.opacity(0.8))
-                .overlay {
-                    RoundedRectangle(cornerRadius: HueRadius.lg)
-                        .strokeBorder(
-                            colorScheme == .dark ? Color.white.opacity(0.08) : Color.black.opacity(0.06),
-                            lineWidth: 1
-                        )
-                }
-        }
+        .padding(16)
+        .luminousPanel(radius: LuminousPalette.cardRadius, glow: accentColor, glowStrength: status.map { if case .connected = $0 { return 0.6 } else { return 0.2 } } ?? 0.2)
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -294,7 +253,6 @@ private struct BridgeRow: View {
 private struct BridgeRenameSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
-    @Environment(\.colorScheme) private var colorScheme
 
     let bridge: BridgeRecord
     @State private var name: String = ""
@@ -302,19 +260,28 @@ private struct BridgeRenameSheet: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section("Bridge Name") {
-                    TextField("e.g. Main Bridge", text: $name)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    LuminousScreenTitle(title: "Edit Bridge", eyebrow: "Bridges", eyebrowSymbol: "network",
+                                        eyebrowTint: LuminousPalette.cyan)
+                    LuminousTextField(caption: "Bridge Name", placeholder: "e.g. Main Bridge", text: $name)
+                    LuminousTextField(caption: "Location (optional)", placeholder: "e.g. Living Area, Garage",
+                                      text: $locationLabel)
                 }
-                Section("Location (optional)") {
-                    TextField("e.g. Living Area, Garage", text: $locationLabel)
-                }
+                .padding(.horizontal, HueSpacing.screenH)
+                .padding(.top, 8)
             }
+            .background { LuminousAmbience(colors: [LuminousPalette.cyan], intensity: 0.6) }
             .navigationTitle("Edit Bridge")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(.hidden, for: .navigationBar)
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Color.clear.frame(width: 1, height: 1).accessibilityHidden(true)
+                }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                        .foregroundStyle(LuminousPalette.ink.opacity(0.75))
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
@@ -324,10 +291,12 @@ private struct BridgeRenameSheet: View {
                         dismiss()
                     }
                     .fontWeight(.semibold)
-                    .foregroundStyle(HuePalette.amber)
+                    .foregroundStyle(LuminousPalette.cyan)
                 }
             }
         }
+        .luminousSheet()
+        .presentationDetents([.medium, .large])
         .onAppear {
             name = bridge.name
             locationLabel = bridge.locationLabel ?? ""

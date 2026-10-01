@@ -166,7 +166,12 @@ final class AppGallerySnapshotTests: XCTestCase {
         window.rootViewController = controller
         window.isHidden = false
         controller.view.layoutIfNeeded()
-        pump(settle)
+        // Await rather than pump: a synchronous run-loop pump inside this
+        // main-actor test never lets the screen's own `.task` work run, so
+        // views that load on appear would be captured mid-load.
+        pump(0.2)
+        try await Task.sleep(for: .seconds(settle))
+        pump(0.2)
         let image = UIGraphicsImageRenderer(size: tall).image { _ in
             controller.view.drawHierarchy(in: CGRect(origin: .zero, size: tall), afterScreenUpdates: true)
         }
@@ -188,7 +193,7 @@ final class AppGallerySnapshotTests: XCTestCase {
     }
 
     func testLaneMoreAutomations() async throws {
-        try await renderTall(NavigationStack { AutomationsView() }, named: "lane-more-automations", height: 1300)
+        try await renderTall(NavigationStack { AutomationsView() }, named: "lane-more-automations", height: 1300, settle: 3)
     }
 
     func testLaneMoreCreateAutomation() async throws {
@@ -196,7 +201,7 @@ final class AppGallerySnapshotTests: XCTestCase {
     }
 
     func testLaneMoreDevices() async throws {
-        try await renderTall(NavigationStack { DevicesView() }, named: "lane-more-devices", height: 1300, settle: 2)
+        try await renderTall(NavigationStack { DevicesView() }, named: "lane-more-devices", height: 1300, settle: 3)
     }
 
     func testLaneMoreBridgeManager() async throws {
