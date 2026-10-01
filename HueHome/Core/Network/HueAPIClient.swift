@@ -10,6 +10,7 @@
 
 import Foundation
 import OSLog
+import os
 
 // MARK: - HueAPIError
 
@@ -70,6 +71,53 @@ class HueAPIClient: @unchecked Sendable {
     /// never-wipe-on-transient-failure contract is unit-testable.
     static func isExplicitUnauthorizedStatus(_ status: Int) -> Bool {
         status == 401 || status == 403
+    }
+
+    // MARK: Light reachability (device round, build 58)
+    /// Lights whose most recent per-light PUT the bridge answered with a
+    /// `communication_error` — a 207 that ACCEPTS the command while saying
+    /// the bulb is unreachable (switched off at the wall, out of range), so
+    /// the write "may not have effect". Partial errors otherwise only log,
+    /// which let a live look claim a dead bulb. A later clean PUT to the
+    /// light clears it. Only replies through `execute` (production) count.
+    private let unresponsiveLights = OSAllocatedUnfairLock<Set<String>>(initialState: [])
+
+    /// Fired when a light's reachability CHANGES — (lightID, responding).
+    /// Set by the orchestrator, which publishes it to the UI.
+    var onLightReachabilityChanged: (@Sendable (String, Bool) -> Void)?
+
+    /// Did the bridge's last reply to a PUT on this light say it cannot reach it?
+    func isLightUnresponsive(_ lightID: String) -> Bool {
+        unresponsiveLights.withLock { $0.contains(lightID) }
+    }
+
+    /// The light a PUT path addresses, or nil for anything else.
+    static func lightID(fromPutPath path: String) -> String? {
+        let prefix = "/clip/v2/resource/light/"
+        guard path.hasPrefix(prefix) else { return nil }
+        let id = path.dropFirst(prefix.count)
+        return id.isEmpty || id.contains("/") ? nil : String(id)
+    }
+
+    /// Does a 2xx body report that the bridge cannot reach the device?
+    static func reportsCommunicationIssue(_ data: Data) -> Bool {
+        guard !data.isEmpty,
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let errs = obj["errors"] as? [[String: Any]] else { return false }
+        return errs.contains { err in
+            (err["error_code"] as? String) == "communication_error"
+                || ((err["description"] as? String)?.contains("has communication issues") ?? false)
+        }
+    }
+
+    /// Record what a PUT reply said about the light it addressed.
+    func noteLightReply(path: String, data: Data) {
+        guard let lightID = Self.lightID(fromPutPath: path) else { return }
+        let responding = !Self.reportsCommunicationIssue(data)
+        let changed = unresponsiveLights.withLock { set -> Bool in
+            responding ? set.remove(lightID) != nil : set.insert(lightID).inserted
+        }
+        if changed { onLightReachabilityChanged?(lightID, responding) }
     }
 
     // MARK: URLSession (pinned bridge trust — H-01/D-016)
@@ -715,6 +763,7 @@ class HueAPIClient: @unchecked Sendable {
         // surface it so callers (and their rollbacks) stop reading silence
         // as success. Partial errors log and proceed.
         try applyBridgeBodyPolicy(data, context: resourcePath)
+        if method == "PUT" { noteLightReply(path: resourcePath, data: data) }
         return data
     }
 

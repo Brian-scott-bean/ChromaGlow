@@ -70,6 +70,8 @@ final class Composer2FakeGateway: Composer2LiveGateway {
         stopHandler = handler
         stopHandlerInstalls += 1
     }
+    var unresponsive: [String] = []
+    func unresponsiveLightNames(roomID: String, bridgeID: String?) -> [String] { unresponsive }
 }
 
 enum Composer2LabFixtures {
@@ -352,6 +354,36 @@ final class Composer2LabLifecycleTests: XCTestCase {
         // Claimed by a box that is not ours: replaced, at once.
         XCTAssertEqual(H.verdict(lastLiveRenderAt: 100, startedAt: 90, now: 101.2, roomStillClaimed: true,
                                  drivingOurs: false), .replaced)
+    }
+
+    /// Device round (build 58): a bulb the bridge cannot reach is NAMED
+    /// while live — the Laundry room bulb was off at the wall and the screen
+    /// still said LIVE — and the name clears when it answers again or the
+    /// session stops.
+    func testHeartbeatNamesLightsTheBridgeCannotReachAndClearsThem() async {
+        let gw = Composer2FakeGateway()
+        let c = center(now: 100)
+        let doc = document()
+        let out = Composer2LiveOutput(composition: doc.composition)
+        _ = await c.start(document: doc, output: out, gateway: gw, audition: false)
+        XCTAssertEqual(c.unresponsiveLights, [])
+        gw.unresponsive = ["Laundry room light 1"]
+        c.now = { 100.4 }
+        XCTAssertTrue(c.tickHeartbeat())
+        XCTAssertEqual(c.unresponsiveLights, ["Laundry room light 1"])
+        XCTAssertEqual(Composer2Copy.liveUnresponsive(c.unresponsiveLights),
+                       "Laundry room light 1 isn't responding — check it's switched on.")
+        XCTAssertEqual(Composer2Copy.liveUnresponsive(["A", "B"]),
+                       "2 lights aren't responding — check they're switched on.")
+        gw.unresponsive = []
+        c.now = { 100.8 }
+        XCTAssertTrue(c.tickHeartbeat())
+        XCTAssertEqual(c.unresponsiveLights, [], "a bulb that answers again is no longer named")
+        gw.unresponsive = ["Laundry room light 1"]
+        c.now = { 101.2 }
+        XCTAssertTrue(c.tickHeartbeat())
+        await c.stop(gateway: gw)
+        XCTAssertEqual(c.unresponsiveLights, [], "stopping clears the notice")
     }
 
     func testHeartbeatEndedNeverCallsStopAndReleasesTheRuntime() async {

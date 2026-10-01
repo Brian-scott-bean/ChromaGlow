@@ -87,4 +87,55 @@ final class BridgeAuthorizationMonitorTests: XCTestCase {
         }
         XCTAssertEqual(fired.value, 2)
     }
+
+    // MARK: - Light reachability (device round, build 58)
+
+    /// Brian's bridge's real reply to a PUT on a bulb switched off at the
+    /// wall (build 57): HTTP 207 carrying data AND a communication error.
+    private static let unreachableReply = #"{"data":[{"rid":"a7325ab7-32db-4b43-ae7b-216b10919c62","rtype":"light"}],"errors":[{"description":"device (light) a7325ab7-32db-4b43-ae7b-216b10919c62 has communication issues, command (.on.on) may not have effect","error_code":"communication_error"}]}"#
+
+    func testCommunicationErrorReplyIsRecognisedAndNothingElseIs() {
+        XCTAssertTrue(HueAPIClient.reportsCommunicationIssue(Data(Self.unreachableReply.utf8)))
+        XCTAssertFalse(HueAPIClient.reportsCommunicationIssue(
+            Data(#"{"data":[{"rid":"x","rtype":"light"}],"errors":[]}"#.utf8)))
+        XCTAssertFalse(HueAPIClient.reportsCommunicationIssue(
+            Data(#"{"data":[],"errors":[{"description":"invalid value for brightness"}]}"#.utf8)))
+        XCTAssertFalse(HueAPIClient.reportsCommunicationIssue(Data()))
+        XCTAssertFalse(HueAPIClient.reportsCommunicationIssue(Data("[]".utf8)))
+    }
+
+    func testOnlyASingleLightPutPathNamesALight() {
+        XCTAssertEqual(HueAPIClient.lightID(fromPutPath: "/clip/v2/resource/light/abc-1"), "abc-1")
+        XCTAssertNil(HueAPIClient.lightID(fromPutPath: "/clip/v2/resource/grouped_light/abc-1"))
+        XCTAssertNil(HueAPIClient.lightID(fromPutPath: "/clip/v2/resource/light/"))
+        XCTAssertNil(HueAPIClient.lightID(fromPutPath: "/clip/v2/resource/light"))
+        XCTAssertNil(HueAPIClient.lightID(fromPutPath: "/clip/v2/resource/light/abc/extra"))
+    }
+
+    func testLightRepliesMarkAndClearAndReportOnlyChanges() {
+        final class Events: @unchecked Sendable { var list: [String] = [] }
+        let events = Events()
+        let client = BridgeAPIClient(bridgeID: "bridge-1", bridgeName: "Test",
+                                     ip: "192.0.2.10", token: "t")
+        client.onLightReachabilityChanged = { id, ok in events.list.append("\(id):\(ok)") }
+        let clean = Data(#"{"data":[{"rid":"L1","rtype":"light"}],"errors":[]}"#.utf8)
+        let dead = Data(Self.unreachableReply.utf8)
+
+        client.noteLightReply(path: "/clip/v2/resource/light/L1", data: clean)
+        XCTAssertFalse(client.isLightUnresponsive("L1"))
+        XCTAssertEqual(events.list, [], "a clean reply for a responding light is not a change")
+
+        client.noteLightReply(path: "/clip/v2/resource/light/L1", data: dead)
+        client.noteLightReply(path: "/clip/v2/resource/light/L1", data: dead)
+        XCTAssertTrue(client.isLightUnresponsive("L1"))
+        XCTAssertEqual(events.list, ["L1:false"], "reported once, on the change")
+
+        client.noteLightReply(path: "/clip/v2/resource/grouped_light/G1", data: clean)
+        XCTAssertTrue(client.isLightUnresponsive("L1"), "a group reply says nothing about one bulb")
+
+        client.noteLightReply(path: "/clip/v2/resource/light/L1", data: clean)
+        XCTAssertFalse(client.isLightUnresponsive("L1"))
+        XCTAssertEqual(events.list, ["L1:false", "L1:true"])
+    }
+
 }

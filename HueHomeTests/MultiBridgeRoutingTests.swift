@@ -2946,6 +2946,35 @@ final class MultiBridgeRoutingTests: XCTestCase {
             "each light must receive ITS OWN frame, addressed absolutely")
     }
 
+    // 33c. Device round (build 58): a light the bridge says it cannot reach
+    //      (207 + communication_error — off at the wall) is NOT a delivery.
+    //      The Laundry room bulb was dead and the sweep reported failures=0.
+    func testAnUnreachableBulbIsCountedAsAFailedDelivery() async {
+        let clock = TelemetryTestClock(100)
+        stageTelemetrySession(room: "room-u", bridge: "bridge-a", clock: clock)
+        let sender = orchestrator.testRestSender(for: "bridge-a")
+        let dead = Data(#"{"data":[{"rid":"L5","rtype":"light"}],"errors":[{"description":"device (light) L5 has communication issues, command (.on.on) may not have effect","error_code":"communication_error"}]}"#.utf8)
+        bridgeA.noteLightReply(path: "/clip/v2/resource/light/L5", data: dead)
+        let frames = (0..<6).map {
+            LightFrame(channelID: $0, x: 0.4, y: 0.35, brightness: 0.5)
+        }
+        let orch = orchestrator!
+        _ = await orchestrator.testEnqueueComposerWork(
+            roomID: "room-u", bridgeID: "bridge-a", generation: 1
+        ) { token in
+            orch.testMakeComposerPerLightWork(
+                token: token,
+                targets: [(frameIndex: 4, lightID: "L4"), (frameIndex: 5, lightID: "L5")],
+                frames: frames,
+                api: self.bridgeA, gamut: .c, sentX: 0.4, sentY: 0.35, sentBri: 50)
+        }
+        await drain(sender)
+
+        let snap = telemetrySnap("room-u", "bridge-a")
+        XCTAssertEqual(snap.attemptedOperations, 2, "both lights were still sent their frame")
+        XCTAssertEqual(snap.failures, 1, "the unreachable bulb is a failed delivery, not a success")
+    }
+
     // 34. The REAL closures still probe before the FIRST batch (packet 3), and
     //     the cancellation they report is honest: started, zero operations.
     func testRealComposerClosuresProbeBeforeTheFirstBatch() async {

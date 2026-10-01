@@ -46,6 +46,9 @@ final class Composer2PlaybackCenter {
     private(set) var status: Status = .idle
     /// Several Entertainment Areas cover the room — the orchestrator played Room mode.
     private(set) var severalAreas = false
+    /// Lights in the live room the bridge says it cannot reach — the
+    /// status line names them instead of claiming them (build 58).
+    private(set) var unresponsiveLights: [String] = []
     /// A third party holds the bridge and the user must answer the prompt.
     private(set) var takeoverPending = false
 
@@ -415,6 +418,7 @@ final class Composer2PlaybackCenter {
         status = .stopping
         heartbeatTask?.cancel()
         heartbeatTask = nil
+        unresponsiveLights = []
         answerTakeover(false)
         gateway?.retireNowPlaying(roomID: current.roomID, bridgeID: current.bridgeID)
         // Only a transport that still plays OUR box is ours to stop.
@@ -520,6 +524,8 @@ final class Composer2PlaybackCenter {
             drivingOurs: driving)
         switch verdict {
         case .alive, .reconnecting:
+            let unreachable = gateway.unresponsiveLightNames(roomID: current.roomID, bridgeID: current.bridgeID)
+            if unreachable != unresponsiveLights { unresponsiveLights = unreachable }
             if verdict == .alive, status == .reconnecting { status = .live }
             if verdict == .reconnecting { status = .reconnecting }
             // A stream that failed over to Room mode keeps playing our box;
@@ -554,6 +560,7 @@ final class Composer2PlaybackCenter {
     }
 
     private func endSession(_ current: Session, text: String) {
+        unresponsiveLights = []
         heartbeatTask?.cancel()
         heartbeatTask = nil
         gateway?.retireNowPlaying(roomID: current.roomID, bridgeID: current.bridgeID)

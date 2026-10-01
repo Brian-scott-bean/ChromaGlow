@@ -990,6 +990,11 @@ final class UnifiedOrchestrator {
     /// partially applied All Off/automation is never silent (M-08).
     private(set) var lastBulkFailure: BulkWriteFailure?
 
+    /// Lights whose last per-light command the bridge said it could not
+    /// deliver (`communication_error` — off at the wall, out of range).
+    /// Cleared per light by its next clean reply (device round, build 58).
+    private(set) var unresponsiveLightIDs: Set<String> = []
+
     /// The pacing gate for a bridge — one per bridge, created lazily.
     func commandGate(for bridgeID: String?) -> BridgeCommandGate {
         let key = bridgeID ?? "legacy"
@@ -3202,6 +3207,18 @@ final class UnifiedOrchestrator {
         client.onExplicitUnauthorized = {
             Task { @MainActor in
                 BridgeAuthorizationMonitor.shared.reportExplicitUnauthorized(bridgeID: bridgeID)
+            }
+        }
+        // Device round (build 58): the bridge's "cannot reach this bulb"
+        // replies reach the UI — a live look names the light instead of
+        // claiming it.
+        client.onLightReachabilityChanged = { [weak self] lightID, responding in
+            Task { @MainActor in
+                if responding {
+                    self?.unresponsiveLightIDs.remove(lightID)
+                } else {
+                    self?.unresponsiveLightIDs.insert(lightID)
+                }
             }
         }
     }
@@ -7565,7 +7582,8 @@ final class UnifiedOrchestrator {
                                         mirek: mirek,
                                         duration: 200)
                                 }
-                                return (entryIndices, true)
+                                // Unreachable bulb: accepted, not delivered.
+                                return (entryIndices, !api.isLightUnresponsive(entry.lightID))
                             } catch {
                                 return (entryIndices, false)
                             }
@@ -7734,7 +7752,10 @@ final class UnifiedOrchestrator {
                                         duration: 200
                                     )
                                 }
-                                return (frameIndex, true)
+                                // A 207 "communication issues" accepted the
+                                // command but never reached the bulb: not a
+                                // delivery (its lamp stays unknown — dark).
+                                return (frameIndex, !api.isLightUnresponsive(lightID))
                             } catch {
                                 return (frameIndex, false)
                             }
