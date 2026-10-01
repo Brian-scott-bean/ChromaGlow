@@ -1,0 +1,5 @@
+module ChromaGlowSpotifyFFI {
+    header "chromaglow_spotify.h"
+    link "chromaglow_spotify"
+    export *
+}
