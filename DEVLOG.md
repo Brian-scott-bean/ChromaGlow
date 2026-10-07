@@ -4,13 +4,18 @@
 
 ---
 
-## Current Status Snapshot (updated 2026-10-01)
+## Current Status Snapshot (updated 2026-10-07)
 
 ### Pointers
 - Canonical agent context: `AGENTS.md`. Claude Code entry point: `CLAUDE.md` points there.
 - Live shared handoff: append-only entries in this `DEVLOG.md`. Git is the shared memory between tools.
 
 ### iOS — where we are RIGHT NOW
+- **PLAY ALONG — BUILD 908 ON `experiment/play-along`, NOT MERGED (2026-10-07).** Any look moves with the music
+  in the room: a new beat tracker + BeatClock v2, render-ahead by the light path, Play Along (Glide · Groove · Hit),
+  On the One, song memory, song colors. Worktree `.claude/worktrees/play-along`; rollback tag
+  `checkpoint/pre-play-along` (= `main` `9e0de1f`). Simulator only — **hardware NOT verified.** Entry below; design
+  and implementation record `docs/ios/play-along/README.md`.
 - **MAIN = LUMINOUS + SPOTIFY EXPERIMENT, BUILD 907 → TESTFLIGHT (INTERNAL ONLY) (2026-10-01, Brian's order).**
   `main` fast-forwarded `c2368c8` → `a719b23` (the Luminous redesign + the Spotify Connect experiment) and pushed.
   Rollback: tag `checkpoint/pre-main-luminous-spotify` (= old `main`, pushed). TestFlight **907** is the
@@ -13885,3 +13890,46 @@ pick Spotify → Start → no crash".
 - Still open on hardware: AirPlay light timing (lights wait 3.2 s — do they hit the beat?), two AirPlay speakers,
   lock screen, Bluetooth, the real Auto Detect crash path. Next build: speaker row shows the speaker's name, and the
   "Listens to the room" wording follows the Spotify source.
+
+## 2026-10-07 — [Claude] Play Along built: build 908 on `experiment/play-along` (not merged)
+
+- Brian: "lets go ahead and put it on xcode please" — build the Play Along design (`docs/ios/play-along/README.md`)
+  and get it into Xcode. Branch `experiment/play-along` (worktree `.claude/worktrees/play-along`) off `main` @
+  `9e0de1f`; rollback tag `checkpoint/pre-play-along` (= `9e0de1f`). Nothing on `main` changed.
+- One commit per item, in the design's §9 order:
+  - `c7eff67` P0.1 a live mic estimate never takes the music-service hold
+  - `595c144` P0.2 a beat-locked rhythm requests the beat clock
+  - `7c19cd5` P0.3 the DTLS composition loop paces to 40 ms deadlines
+  - `112fe07` P1 onset frames, the new beat tracker, BeatClock v2 (old tracker behind `audio.legacyBeatTracker`)
+  - `e37d1d4` P2 render each frame for the moment the room shows it (Entertainment lead 100 ms + Light timing)
+  - `0a64a7b` P3+P4 Play Along (Glide · Groove · Hit) and On the One
+  - `2d7cd8b` P5 song memory ("Remembered": a song played before locks on its first beat)
+  - `314cf8b` P6 song colors (album art paints the look; never Spotify's art)
+  - then: build 908 (all 18 `CURRENT_PROJECT_VERSION` entries — the project has 18 now, not 12), this entry,
+    README §13.
+- P0.4 (instant zero-duration REST writes) deferred: it would also sharpen `EffectEngine` strobes (up to 8 Hz) and
+  needs its own photosensitivity pass.
+- In the app: the **Play Along** button on the Composer library hero (while a look plays), the instrument's
+  performance bar (while live) and the room page's playing card. Tap = on/off; touch and hold = Feel, On the One,
+  Song colors, Tap the one, Light timing (per bridge). The first tap explains the listening before the iOS prompt.
+- Decided while building (README §13): song colors only while Play Along is on (the Composer tab's album art
+  toggles it); Room mode plays along as Glide; no main-thread audio-session calls in the new code (iOS 27 reports
+  them as hang risks).
+- Tests (Xcode 27.0, iOS 27.0 simulator iPhone 17 Pro `C10C70A7-A702-40A9-8810-A6F13B98C57B`): new suites
+  FrameDeadlinePacerTests, OnsetFrameAnalyzerTests, BeatTrackerTests, BeatClockPlayAlongTests,
+  OutputLatencyModelTests, Composer2LabPlayAlongTests, Composer2LabQuantizerTests, SongMemoryTests,
+  Composer2LabAlbumPaletteTests, plus one test each in MusicSourceContractTests and Composer2LabEngineTests.
+  Affected suites 222/222. Full suite **2533/2533** (0 failed, 0 skipped; 2 parallel workers, ~23 min). Guards:
+  all passed. Device build (generic iOS, Debug, unsigned): succeeded, CFBundleVersion 908. The split commits were cut from the tested tree and not built one by one; the tip was.
+- Found, pre-existing, not fixed: `AudioAnalysisSourceTests.testFailedPreflightOrStartLeavesNothingRunning` takes
+  2–12 min on the iOS 27 simulator. `AudioAnalysisEngine.stopEngine` calls
+  `MicrophoneAudioSource.deactivateSession()` on the main thread, iOS 27 reports a hang risk, and XCTest
+  symbolicates it slowly off the external drive. It passes.
+- Not verified on hardware: all of it (README §8 device plan, §11 open questions). First checks on the phone: lock
+  time and light timing on Brian's bridge (240 fps slo-mo against a 120 BPM click), On the One landing on bar 1 in
+  pop/dance, a second play of an Apple Music song showing "Remembered", song colors from Apple Music art, Room
+  mode = Glide, nothing punches on speech or TV.
+- Not built yet: the Debug Beat HUD, 50 fps while engaged, coast's accent fade, the per-beat haptic, the
+  "Following Apple Music" readout, Sync Check, capture on `AVAudioSinkNode` (`installTap` is deprecated in the iOS
+  27 SDK), and the legacy feature extractor still reads 4096 of each 4800-frame buffer (the new onset path reads
+  every frame).

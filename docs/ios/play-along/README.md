@@ -1,6 +1,7 @@
 # Play Along: implementation design (2026-10-06)
 
-> Status: design only. Nothing in the app has changed; this folder holds the design and a reproducible beat lab.
+> Status: **implemented on `experiment/play-along` (2026-10-07, build 908)** — P0.1–P0.3 and P1–P6; P0.4
+> deferred. What landed, and what was decided while building, is in §13. Not yet verified on hardware.
 > Base: `main` @ `9e0de1f` (Luminous + the Spotify experiment, TestFlight 907).
 > Scope: the Play Along button, beat and tempo lock that holds, "On the One", song colors, automatic listening, and
 > the groundwork for timing compensation. iOS only.
@@ -781,3 +782,38 @@ URLs:
   - https://apps.apple.com/au/app/lumina-spatial-light-dj/id6760628430
   - https://apps.apple.com/app/id6759938225
   - https://apps.apple.com/us/app/huedynamic-for-philips-hue/id1405195207
+
+## 13. Implementation record (2026-10-07)
+
+Branch `experiment/play-along` off `main` @ `9e0de1f`, rollback tag `checkpoint/pre-play-along`, build 908. One
+commit per item, in the §9 order (P3 and P4 share one commit: the director lands on the quantizer's boundaries).
+
+| # | What landed | Where |
+|---|---|---|
+| P0.1 | A live mic estimate never takes the music-service hold | `MusicSessionCoordinator.driveClockIfReady` |
+| P0.2 | A beat-locked rhythm counts as using the beat clock, so mic demand follows | `Composer2Composition.usesBeatClock` |
+| P0.3 | The DTLS composition loop sleeps to 40 ms deadlines instead of 40 ms after its work | `FrameDeadlinePacer`, `UnifiedOrchestrator` |
+| P0.4 | **Deferred.** Instant zero-duration REST writes would also sharpen `EffectEngine` strobes (up to 8 Hz); it needs its own photosensitivity pass | — |
+| P1 | 10 ms onset frames stamped at capture; ACF + comb tempo with a metadata prior; comb phase; bar from low-band flux and harmonic change; BeatClock v2 (phase and bar confidences, whole-beat bar re-labels, the track's learned offset, "Tap the one") | `OnsetFrameAnalyzer`, `BeatTracker`, `BeatClock`, `AudioAnalysisEngine` (old tracker behind `audio.legacyBeatTracker`) |
+| P2 | Render ahead by the light path: Entertainment 80 ms + ½ × 40 ms + the bridge's Light timing; REST 250 ms. The screen shows the frame that is due now | `OutputLatencyModel`, `CompositionParamBox.outputLead`, `Composer2LiveOutput`, `Composer2PreviewFeed` |
+| P3 | Play Along: motion beat-lock, beat-synced events, the transform (Glide · Groove · Hit; Calm never re-timed; authored sound kept), the director (engage on the one, coast, release after 20 s), the button, sheet and consent | `Composer2Motion.quantizeBeats`, `Composer2EventSpec.beatSync`, `Composer2Engine`, `Composer2PlayAlong`, `Composer2PlayAlongDirector`, `Composer2PlayAlongControls` |
+| P4 | On the One: bar, half-bar or beat landings, never more than a bar away; look switches crossfade onto the bar line; beat dots | `Composer2Quantizer`, `Composer2LandingSource`, `Composer2PlaybackCenter` |
+| P5 | Song memory: hashed track + route key; learned only while the mic confirms the offset; stored after 8 agreeing bars. The drive trusts a remembered grid at once (with the one when it was known), and keeps the mic's phase when a service tempo arrives | `SongMemory`, `BeatClock.driveFromTrack(beatOffset:barKnown:)`, `MusicSessionCoordinator` |
+| P6 | Song colors: OKLab, chroma-weighted swatches by role; the transform; colours land on the one; the Composer tab's album art toggles it | `ArtworkPaletteExtractor.swatches`, `Composer2AlbumPalette`, `Composer2LiveOutput.songSwatches` |
+
+**Decided while building (not in the sections above):**
+- Song colors apply only while Play Along is on. The sheet has the toggle; the album art on the Composer tab's music
+  strip toggles it too. Spotify's art is never used.
+- Room mode (REST) plays along as Glide whatever the chosen feel (§5.9), including a stream that fails over to it.
+- Play Along listens through the existing reaction-source mirror (`.micAmplitude` while it is on) rather than a new
+  `AudioDemand` case.
+- No audio-session call on the main thread from the new code: iOS 27 reports them as hang risks. The microphone
+  source reads the input latency while it configures the session; the song memory's route is read on a utility
+  queue and cached, refreshed on route changes.
+- "Remembered" shows only when the song memory set the grid at the start of a track.
+
+**Not built yet:** the Debug Beat HUD; 50 fps while engaged; coast's "accents fade within a beat" (the director
+coasts at full weight until it releases); the per-beat haptic; the "Following Apple Music" readout; Sync Check.
+
+**Verified:** on the iOS 27 simulator (counts in the DEVLOG entry). **Not verified on hardware:** all of §8's
+device plan, and §11's open questions.
