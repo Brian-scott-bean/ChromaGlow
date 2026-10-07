@@ -13919,7 +13919,8 @@ pick Spotify → Start → no crash".
   FrameDeadlinePacerTests, OnsetFrameAnalyzerTests, BeatTrackerTests, BeatClockPlayAlongTests,
   OutputLatencyModelTests, Composer2LabPlayAlongTests, Composer2LabQuantizerTests, SongMemoryTests,
   Composer2LabAlbumPaletteTests, plus one test each in MusicSourceContractTests and Composer2LabEngineTests.
-  Affected suites 222/222. Full suite **2533/2533** (0 failed, 0 skipped; 2 parallel workers, ~23 min). Guards:
+  Affected suites 222/222. Full suite **2543/2543** (result bundle: 0 failed, 0 skipped; 2 parallel workers,
+  ~23 min). Guards:
   all passed. Device build (generic iOS, Debug, unsigned): succeeded, CFBundleVersion 908. The split commits were cut from the tested tree and not built one by one; the tip was.
 - Found, pre-existing, not fixed: `AudioAnalysisSourceTests.testFailedPreflightOrStartLeavesNothingRunning` takes
   2–12 min on the iOS 27 simulator. `AudioAnalysisEngine.stopEngine` calls
