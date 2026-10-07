@@ -1,0 +1,78 @@
+# Beat lab results — 2026-10-06, main @ 9e0de1f, macOS 27.0.1, Swift version 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)
+
+## Full comparison (run.sh)
+── 120 rock  (49 s)
+  v1   tempoOK   0% (x2  0% x½ 100% other  0% none  0%) | phase med   nan p90   nan bias    nan ms | ≤30ms   0% ≤50ms   0% | bar-1 nan% | lock never
+  v2   tempoOK 100% (x2  0% x½  0% other  0% none  0%) | phase med   0.7 p90   0.7 bias   +0.7 ms | ≤30ms 100% ≤50ms 100% | bar-1 100% | lock 6.0s
+  v2+b tempoOK 100% (x2  0% x½  0% other  0% none  0%) | phase med   0.7 p90   0.7 bias   +0.7 ms | ≤30ms 100% ≤50ms 100% | bar-1 100% | lock 6.0s
+  v2++ tempoOK 100% (x2  0% x½  0% other  0% none  0%) | phase med   0.7 p90   0.7 bias   +0.7 ms | ≤30ms 100% ≤50ms 100% | bar-1 100% | lock 5.0s
+── 128 rock  (61 s)
+  v1   tempoOK   0% (x2  0% x½  0% other 100% none  0%) | phase med   nan p90   nan bias    nan ms | ≤30ms   0% ≤50ms   0% | bar-1 nan% | lock never
+  v2   tempoOK 100% (x2  0% x½  0% other  0% none  0%) | phase med   4.0 p90   6.6 bias   -3.4 ms | ≤30ms 100% ≤50ms 100% | bar-1   0% | lock 6.1s
+  v2+b tempoOK 100% (x2  0% x½  0% other  0% none  0%) | phase med   4.0 p90   6.6 bias   -3.4 ms | ≤30ms 100% ≤50ms 100% | bar-1 100% | lock 6.1s
+  v2++ tempoOK 100% (x2  0% x½  0% other  0% none  0%) | phase med   3.7 p90   6.4 bias   -2.8 ms | ≤30ms 100% ≤50ms 100% | bar-1 100% | lock 9.8s
+── 100.5 rock  (49 s)
+  v1   tempoOK 100% (x2  0% x½  0% other  0% none  0%) | phase med  78.8 p90 124.8 bias  -80.7 ms | ≤30ms   6% ≤50ms  16% | bar-1   0% | lock 16.1s
+  v2   tempoOK 100% (x2  0% x½  0% other  0% none  0%) | phase med   1.2 p90   3.7 bias   +0.7 ms | ≤30ms 100% ≤50ms 100% | bar-1   0% | lock 6.0s
+  v2+b tempoOK 100% (x2  0% x½  0% other  0% none  0%) | phase med   1.2 p90   3.7 bias   +0.7 ms | ≤30ms 100% ≤50ms 100% | bar-1 100% | lock 6.0s
+  v2++ tempoOK 100% (x2  0% x½  0% other  0% none  0%) | phase med   1.4 p90   3.5 bias   +0.7 ms | ≤30ms 100% ≤50ms 100% | bar-1 100% | lock 4.8s
+── 87 rock  (45 s)
+  v1   tempoOK 100% (x2  0% x½  0% other  0% none  0%) | phase med 202.3 p90 331.0 bias -149.8 ms | ≤30ms   0% ≤50ms   0% | bar-1  92% | lock never
+  v2   tempoOK 100% (x2  0% x½  0% other  0% none  0%) | phase med   2.1 p90   3.4 bias   +0.5 ms | ≤30ms 100% ≤50ms 100% | bar-1   0% | lock 6.9s
+  v2+b tempoOK 100% (x2  0% x½  0% other  0% none  0%) | phase med   2.1 p90   3.4 bias   +0.5 ms | ≤30ms 100% ≤50ms 100% | bar-1 100% | lock 6.9s
+  v2++ tempoOK 100% (x2  0% x½  0% other  0% none  0%) | phase med   2.1 p90   4.1 bias   +0.5 ms | ≤30ms 100% ≤50ms 100% | bar-1 100% | lock 5.5s
+── 140 rock  (56 s)
+  v1   tempoOK   0% (x2  0% x½  0% other 100% none  0%) | phase med   nan p90   nan bias    nan ms | ≤30ms   0% ≤50ms   0% | bar-1 nan% | lock never
+  v2   tempoOK 100% (x2  0% x½  0% other  0% none  0%) | phase med   3.7 p90   8.5 bias   -3.9 ms | ≤30ms 100% ≤50ms 100% | bar-1   0% | lock 5.6s
+  v2+b tempoOK 100% (x2  0% x½  0% other  0% none  0%) | phase med   3.7 p90   8.5 bias   -3.9 ms | ≤30ms 100% ≤50ms 100% | bar-1 100% | lock 5.6s
+  v2++ tempoOK 100% (x2  0% x½  0% other  0% none  0%) | phase med   3.4 p90   8.1 bias   -3.2 ms | ≤30ms 100% ≤50ms 100% | bar-1 100% | lock 9.4s
+── 174 dnb-ish  (56 s)
+  v1   tempoOK   0% (x2  0% x½ 47% other 53% none  0%) | phase med   nan p90   nan bias    nan ms | ≤30ms   0% ≤50ms   0% | bar-1 nan% | lock never
+  v2   tempoOK   0% (x2  0% x½ 100% other  0% none  0%) | phase med   nan p90   nan bias    nan ms | ≤30ms   0% ≤50ms   0% | bar-1 nan% | lock never
+  v2+b tempoOK   0% (x2  0% x½ 100% other  0% none  0%) | phase med   nan p90   nan bias    nan ms | ≤30ms   0% ≤50ms   0% | bar-1 nan% | lock never
+  v2++ tempoOK   0% (x2  0% x½ 95% other  5% none  0%) | phase med   nan p90   nan bias    nan ms | ≤30ms   0% ≤50ms   0% | bar-1 nan% | lock never
+── 124 house 4otf  (63 s)
+  v1   tempoOK   0% (x2  0% x½  0% other 100% none  0%) | phase med   nan p90   nan bias    nan ms | ≤30ms   0% ≤50ms   0% | bar-1 nan% | lock never
+  v2   tempoOK 100% (x2  0% x½  0% other  0% none  0%) | phase med   1.9 p90   5.0 bias   +0.8 ms | ≤30ms 100% ≤50ms 100% | bar-1 100% | lock 5.8s
+  v2+b tempoOK 100% (x2  0% x½  0% other  0% none  0%) | phase med   1.9 p90   5.0 bias   +0.8 ms | ≤30ms 100% ≤50ms 100% | bar-1 100% | lock 5.8s
+  v2++ tempoOK 100% (x2  0% x½  0% other  0% none  0%) | phase med   1.9 p90   5.2 bias   +0.9 ms | ≤30ms 100% ≤50ms 100% | bar-1 100% | lock 4.8s
+── 120 noisy -12dB  (49 s)
+  v1   tempoOK   0% (x2  0% x½ 100% other  0% none  0%) | phase med   nan p90   nan bias    nan ms | ≤30ms   0% ≤50ms   0% | bar-1 nan% | lock never
+  v2   tempoOK 100% (x2  0% x½  0% other  0% none  0%) | phase med   0.7 p90   0.7 bias   +0.7 ms | ≤30ms 100% ≤50ms 100% | bar-1 100% | lock 10.0s
+  v2+b tempoOK 100% (x2  0% x½  0% other  0% none  0%) | phase med   0.7 p90   0.7 bias   +0.7 ms | ≤30ms 100% ≤50ms 100% | bar-1 100% | lock 10.0s
+  v2++ tempoOK 100% (x2  0% x½  0% other  0% none  0%) | phase med   0.7 p90   0.7 bias   +0.7 ms | ≤30ms 100% ≤50ms 100% | bar-1 100% | lock 10.0s
+── 112 live drift ±2%  (62 s)
+  v1   tempoOK   9% (x2  0% x½ 33% other 58% none  0%) | phase med 127.8 p90 154.4 bias -124.4 ms | ≤30ms   0% ≤50ms   0% | bar-1   0% | lock never
+  v2   tempoOK  42% (x2  0% x½  0% other 58% none  0%) | phase med  10.4 p90  46.2 bias   +1.8 ms | ≤30ms  79% ≤50ms  92% | bar-1   0% | lock 5.8s
+  v2+b tempoOK  42% (x2  0% x½  0% other 58% none  0%) | phase med  10.4 p90  46.2 bias   +1.8 ms | ≤30ms  79% ≤50ms  92% | bar-1 100% | lock 5.8s
+  v2++ tempoOK  48% (x2  0% x½  0% other 52% none  0%) | phase med  11.7 p90  46.4 bias   +0.5 ms | ≤30ms  76% ≤50ms  91% | bar-1 100% | lock 4.8s
+── 96 swing 8ths  (51 s)
+  v1   tempoOK  83% (x2  0% x½  0% other 17% none  0%) | phase med 256.3 p90 288.3 bias +136.5 ms | ≤30ms   2% ≤50ms   4% | bar-1  75% | lock never
+  v2   tempoOK 100% (x2  0% x½  0% other  0% none  0%) | phase med   0.7 p90   2.9 bias   +1.0 ms | ≤30ms 100% ≤50ms 100% | bar-1   0% | lock 6.2s
+  v2+b tempoOK 100% (x2  0% x½  0% other  0% none  0%) | phase med   0.7 p90   2.9 bias   +1.0 ms | ≤30ms 100% ≤50ms 100% | bar-1 100% | lock 6.2s
+  v2++ tempoOK 100% (x2  0% x½  0% other  0% none  0%) | phase med   0.8 p90   2.1 bias   +1.0 ms | ≤30ms 100% ≤50ms 100% | bar-1 100% | lock 5.6s
+── song change 128→96  (73 s)
+  v1   tempoOK  28% (x2  0% x½  0% other 72% none  0%) | phase med 132.5 p90 180.2 bias +127.7 ms | ≤30ms   0% ≤50ms   0% | bar-1   0% | lock never/never
+  v2   tempoOK 100% (x2  0% x½  0% other  0% none  0%) | phase med   1.7 p90   5.7 bias   -1.2 ms | ≤30ms 100% ≤50ms 100% | bar-1   0% | lock 6.1s/10.0s
+  v2+b tempoOK 100% (x2  0% x½  0% other  0% none  0%) | phase med   1.7 p90   5.7 bias   -1.2 ms | ≤30ms 100% ≤50ms 100% | bar-1 100% | lock 6.1s/10.0s
+  v2++ tempoOK 100% (x2  0% x½  0% other  0% none  0%) | phase med   1.9 p90   6.7 bias   -0.7 ms | ≤30ms 100% ≤50ms 100% | bar-1 100% | lock 9.8s/10.6s
+── ambient pad only  (49 s)
+  v1 claims a confident lock 100% of the time; v2  43%; v2++  43% (v2 raw conf mean 0.28 max 0.42)
+── speech-like bursts  (40 s)
+  v1 claims a confident lock  99% of the time; v2   0%; v2++   0% (v2 raw conf mean 0.09 max 0.19)
+── noise only  (40 s)
+  v1 claims a confident lock  64% of the time; v2   0%; v2++   0% (v2 raw conf mean 0.07 max 0.15)
+
+## Music-service drive vs mic (run.sh -service)
+120.0 BPM lead-in 0.37s  service only phase med 130.0 p90 130.0 bias -130.0 ms | ≤30ms   0% ≤50ms   0% 
+120.0 BPM lead-in 0.37s  service + today's mic phase med 110.0 p90 110.0 bias  -95.0 ms | ≤30ms   0% ≤50ms   0% 
+120.0 BPM lead-in 0.37s  service + v2 mic phase med  70.0 p90 130.0 bias  -68.4 ms | ≤30ms  13% ≤50ms  39% 
+100.5 BPM lead-in 0.60s  service only phase med   3.0 p90   3.0 bias   +3.0 ms | ≤30ms 100% ≤50ms 100% 
+100.5 BPM lead-in 0.60s  service + today's mic phase med  57.0 p90 100.7 bias  -58.2 ms | ≤30ms  24% ≤50ms  41% 
+100.5 BPM lead-in 0.60s  service + v2 mic phase med   2.6 p90   3.0 bias   +1.7 ms | ≤30ms 100% ≤50ms 100% 
+128.0 BPM lead-in 0.05s  service only phase med  50.0 p90  50.0 bias  +50.0 ms | ≤30ms   0% ≤50ms  82% 
+128.0 BPM lead-in 0.05s  service + today's mic phase med  25.0 p90  61.3 bias  +34.1 ms | ≤30ms  55% ≤50ms  85% 
+128.0 BPM lead-in 0.05s  service + v2 mic phase med   4.8 p90  29.4 bias   +9.2 ms | ≤30ms  92% ≤50ms 100% 
+
+## CPU (run.sh -cpu)
+audio 117 s | v1 0.1 ms CPU per s of audio | v2++ 0.8 ms CPU per s of audio (prototype, unoptimised, M-series Mac)
