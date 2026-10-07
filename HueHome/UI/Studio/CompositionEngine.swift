@@ -57,6 +57,12 @@ final class CompositionParamBox: @unchecked Sendable {
     /// (`renderSlots[k]` describes `channelIDs[k]`). Published at start on both
     /// transports; empty when unknown. Runtime plumbing, never observed.
     @ObservationIgnored var renderSlots: [CompositionRenderSlot] = []
+    /// Play Along P2: seconds between a frame leaving the app and the room
+    /// showing it on the transport this box streams through
+    /// (`OutputLatencyModel`). The orchestrator refreshes it every frame; a
+    /// frame source that renders musical time renders `hostNow + outputLead`.
+    /// 0 = render for "now", as every loop did before.
+    @ObservationIgnored var outputLead: Double = 0
 
     // ── Spatial Motion ────────────────────────────────────────
     /// Pre-computed normalized spatial positions (0–1) for each channel.

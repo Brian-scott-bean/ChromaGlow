@@ -47,7 +47,8 @@ final class Composer2PreviewFeed {
     func displayFrames(hostNow: Double, features: AudioFeatures = .silent, beat: BeatSnapshot = .none) -> [Composer2Frame] {
         let frames: [Composer2Frame]
         if isMirroringLive(hostNow: hostNow) {
-            frames = output.lastFrames
+            // The frame the room shows NOW — live frames render a lead ahead.
+            frames = output.liveFrames(at: hostNow)
         } else {
             frames = output.evaluate(time: previewTime(hostNow: hostNow), features: features, beat: beat, hostNow: hostNow)
         }

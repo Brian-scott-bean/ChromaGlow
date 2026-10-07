@@ -6883,6 +6883,10 @@ final class UnifiedOrchestrator {
             if await entClient.isTerminallyFailed { break }
             await refreshCompositionMicDemand()
             let elapsed = CFAbsoluteTimeGetCurrent() - startTime
+            // Play Along P2: how far ahead this frame must be rendered to show
+            // when the room hears it (refreshed per frame so a Light timing
+            // change applies at once).
+            paramBox.outputLead = OutputLatencyModel.lead(transport: .entertainment, bridgeID: bridgeID)
 
             // Render all channels in one frame — through the Perform mixer
             // when this composition is the live deck A (Round 3 C).
@@ -8149,6 +8153,11 @@ final class UnifiedOrchestrator {
                 }
                 return Array(0..<lightCount)
             }()
+
+            // Play Along P2: Room mode's render lead (bar-length fades only —
+            // REST is not beat-accurate; see OutputLatencyModel).
+            runtime.paramBox.outputLead = OutputLatencyModel.lead(transport: .rest,
+                                                                  bridgeID: runtime.restBridgeIdentity)
 
             let frames: [LightFrame]
             if let mix = activePerformanceMix, mix.deckA === runtime.paramBox {

@@ -98,6 +98,30 @@ final class Composer2LiveOutput: CompositionFrameSource, @unchecked Sendable {
         cachedAngular = []
         liveSlots = []
         lastLiveRenderAt = 0
+        liveHistory = []
+    }
+
+    // MARK: Live frames for the screen
+
+    /// Recent live frames with the host time the room shows each one. Live
+    /// frames are rendered a lead AHEAD of now; the hero picks the one that is
+    /// due, so the screen matches the sound instead of running ahead of it.
+    private var liveHistory: [(at: Double, frames: [Composer2Frame])] = []
+    private static let liveHistorySeconds = 1.0
+
+    private func noteLiveFrames(_ frames: [Composer2Frame], shownAt: Double) {
+        liveHistory.append((shownAt, frames))
+        let oldest = shownAt - Composer2LiveOutput.liveHistorySeconds
+        if let keepFrom = liveHistory.firstIndex(where: { $0.at >= oldest }), keepFrom > 0 {
+            liveHistory.removeFirst(keepFrom)
+        }
+    }
+
+    /// The live frames the room is showing at `hostNow` (the newest whose
+    /// moment has come; the oldest kept if none has yet).
+    func liveFrames(at hostNow: Double) -> [Composer2Frame] {
+        if let due = liveHistory.last(where: { $0.at <= hostNow }) { return due.frames }
+        return liveHistory.first?.frames ?? lastFrames
     }
 
     // MARK: CompositionFrameSource
@@ -107,7 +131,11 @@ final class Composer2LiveOutput: CompositionFrameSource, @unchecked Sendable {
         lastLiveRenderAt = hostNow
         installGeometry(count: channelIDs.count, radial: params.radialPositions,
                         angular: params.angularPositions, slots: params.renderSlots)
-        let frames = evaluate(time: time, features: features, beat: beat, hostNow: hostNow)
+        // Play Along P2: render the moment the room will SHOW this frame, so a
+        // beat lands when it is heard rather than one bridge delay late.
+        let lead = params.outputLead.isFinite ? Composer2Math.clamp(params.outputLead, 0, 1) : 0
+        let frames = evaluate(time: time + lead, features: features, beat: beat, hostNow: hostNow + lead)
+        noteLiveFrames(frames, shownAt: hostNow + lead)
         guard frames.count == channelIDs.count else { return [] }
         var out: [LightFrame] = []
         out.reserveCapacity(frames.count)
