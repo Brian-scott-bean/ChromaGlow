@@ -6853,7 +6853,11 @@ final class UnifiedOrchestrator {
         gamut: HueColorUtils.Gamut
     ) async {
         // Note: paramBox cleanup is handled by stopCompositionMode (keyed by bridgeID).
-        let frameInterval: UInt64 = 40_000_000  // 40ms = 25fps
+        // 25 fps on a fixed grid (Play Along P0.3): every frame sleeps until its
+        // own slot, not a fixed 40 ms after its own render, gate and send — the
+        // old sleep-after-work drifted the loop below 25 fps by a different
+        // amount every frame. See FrameDeadlinePacer.
+        var pacer = FrameDeadlinePacer(interval: .milliseconds(40), start: .now)
         let startTime = CFAbsoluteTimeGetCurrent()
         // THE bridge's ledger, shared with every uniform flash loop on the same
         // wire — see `emitGatedCompositionFrame`. Resolved once: `flashOnsetLedger`
@@ -6918,7 +6922,7 @@ final class UnifiedOrchestrator {
             guard frames.count == channelIDs.count else {
                 assertionFailure(
                     "render returned \(frames.count) frames for \(channelIDs.count) channels")
-                try? await Task.sleep(nanoseconds: frameInterval)
+                try? await Task.sleep(until: pacer.deadline(after: .now), clock: .continuous)
                 continue
             }
             let channels = zip(channelIDs, frames).map { pair in
@@ -6936,7 +6940,7 @@ final class UnifiedOrchestrator {
             ) else { break }   // cancelled inside the emit
             if gated.outcome.delivered { lastEmitted = gated.onWire }
 
-            try? await Task.sleep(nanoseconds: frameInterval)
+            try? await Task.sleep(until: pacer.deadline(after: .now), clock: .continuous)
         }
     }
 

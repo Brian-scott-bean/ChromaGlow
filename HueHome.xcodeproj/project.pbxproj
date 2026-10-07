@@ -119,6 +119,7 @@
 		5DD976D318F91D80244E9562 /* Composer2Engine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49BA89D3358BA489DEF52EEF /* Composer2Engine.swift */; };
 		5F5A9E31424E22F1877CF67D /* RoomColorPopover.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47D8011899F8FB42484555C0 /* RoomColorPopover.swift */; };
 		5FA5C770A74D540B1AA19AEE /* Composer2Palette.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0920734BD7DCDE40052831D4 /* Composer2Palette.swift */; };
+		615416AFC41ACC4D2377EAC1 /* FrameDeadlinePacerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1443FA00769F48276077BBCF /* FrameDeadlinePacerTests.swift */; };
 		6233D410B9EB81E0EAAD5140 /* Composer2RESTCharacterizationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 222FAB7A86D789E6EC2C8099 /* Composer2RESTCharacterizationTests.swift */; };
 		62A8278BC97912B6F8CCC355 /* SceneQRRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5FE8BB403C3BA723AFC596B6 /* SceneQRRenderer.swift */; };
 		63F6E5F4113B3F6DFE5A7F44 /* Composer2EventsEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3578A2B4C4DC87866AA168A /* Composer2EventsEditor.swift */; };
@@ -234,6 +235,7 @@
 		A1D00083D0D00083D0D00083 /* StudioBoardAvailabilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D00084D0D00084D0D00084 /* StudioBoardAvailabilityTests.swift */; };
 		A1D00091D0D00091D0D00091 /* StudioPreviewLiveProductionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D00092D0D00092D0D00092 /* StudioPreviewLiveProductionTests.swift */; };
 		A1D00093D0D00093D0D00093 /* StudioLifecycleSerializationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D00094D0D00094D0D00094 /* StudioLifecycleSerializationTests.swift */; };
+		A32B71B3CBDBE5636CA1B9F1 /* FrameDeadlinePacer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60DE6C014C8B60AA31B63454 /* FrameDeadlinePacer.swift */; };
 		A3656E52A0873CDFE7372F4F /* TempoProviders.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79CB619727FAB73BB5417A2E /* TempoProviders.swift */; };
 		A3E41E37DF79D56E57CD9B1E /* SiriColorTableTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67A65C8709FD82E100FA2A2E /* SiriColorTableTests.swift */; };
 		A47252DC03C35BD018C4DDFF /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B983F6E356486FF116DE5D82 /* Foundation.framework */; };
@@ -538,6 +540,7 @@
 		116B182DF95D3F33E6F0EA32 /* JoinSharedHomeView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = JoinSharedHomeView.swift; path = ./HueHome/UI/Invite/JoinSharedHomeView.swift; sourceTree = "<group>"; };
 		12D0ED5E69F39077FFDF968F /* BridgeDynamicSceneExporterTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BridgeDynamicSceneExporterTests.swift; path = HueHomeTests/BridgeDynamicSceneExporterTests.swift; sourceTree = "<group>"; };
 		1341A038B7CF19D1F8DCE27A /* GuestAccessModelsTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GuestAccessModelsTests.swift; path = ./HueHomeTests/GuestAccessModelsTests.swift; sourceTree = "<group>"; };
+		1443FA00769F48276077BBCF /* FrameDeadlinePacerTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = FrameDeadlinePacerTests.swift; path = ./HueHomeTests/FrameDeadlinePacerTests.swift; sourceTree = "<group>"; };
 		1503A7C27BEF5B41FABF3E38 /* GuestInviteAcceptorTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GuestInviteAcceptorTests.swift; path = ./HueHomeTests/GuestInviteAcceptorTests.swift; sourceTree = "<group>"; };
 		153817FECE5A8809EC68A1E0 /* LookPreviewMathTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = LookPreviewMathTests.swift; path = ./HueHomeTests/LookPreviewMathTests.swift; sourceTree = "<group>"; };
 		179E94935F0BF6B2C6D06CEA /* Composer2View.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = Composer2View.swift; path = ./HueHome/UI/Composer2/Composer2View.swift; sourceTree = "<group>"; };
@@ -626,6 +629,7 @@
 		5E160194C0069C28F43BCB1F /* Composer2LabEventTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = Composer2LabEventTests.swift; path = ./HueHomeTests/Composer2LabEventTests.swift; sourceTree = "<group>"; };
 		5F8043CD9345FBFA1ED49CF7 /* GuestRevocationService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GuestRevocationService.swift; path = ./HueHome/Core/Share/GuestRevocationService.swift; sourceTree = "<group>"; };
 		5FE8BB403C3BA723AFC596B6 /* SceneQRRenderer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SceneQRRenderer.swift; path = ./HueHome/Core/Share/SceneQRRenderer.swift; sourceTree = "<group>"; };
+		60DE6C014C8B60AA31B63454 /* FrameDeadlinePacer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = FrameDeadlinePacer.swift; path = ./HueHome/Core/Network/FrameDeadlinePacer.swift; sourceTree = "<group>"; };
 		6135738C5F72FCC699CF515B /* HueIntentEntityTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueIntentEntityTests.swift; path = ./HueHomeTests/HueIntentEntityTests.swift; sourceTree = "<group>"; };
 		6278B21D6E2592BB36A4CB8F /* BridgeDiscoveryService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BridgeDiscoveryService.swift; path = HueHome/Core/Network/BridgeDiscoveryService.swift; sourceTree = "<group>"; };
 		63C8F3767D9E9548F65D6205 /* CopySceneSheet.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CopySceneSheet.swift; path = ./HueHome/UI/Scenes/CopySceneSheet.swift; sourceTree = "<group>"; };
@@ -1117,6 +1121,7 @@
 				4F6F9DF77264770C0649F75D /* ApplicationKeyMinter.swift */,
 				A6609C15561D9E6C1AC9B53F /* BridgeAuthorizationMonitor.swift */,
 				F8F5392478EF06A22DA972A2 /* RestSender.swift */,
+				60DE6C014C8B60AA31B63454 /* FrameDeadlinePacer.swift */,
 			);
 			name = Network;
 			sourceTree = "<group>";
@@ -1787,6 +1792,7 @@
 				C3AC2496879097465197C009 /* Composer2LabThemeTests.swift */,
 				409BDE56CC1784DD0892A3D6 /* AudioAnalysisSourceTests.swift */,
 				7EC1CF98A39CF92F173DD39F /* SpotifyPCMExperimentTests.swift */,
+				1443FA00769F48276077BBCF /* FrameDeadlinePacerTests.swift */,
 			);
 			name = HueHomeTests;
 			sourceTree = "<group>";
@@ -2470,6 +2476,7 @@
 				8FCDC5C1D0460C0A18F76D66 /* SpotifyConnectExperimentSection.swift in Sources */,
 				E4927FD14340445700C072DD /* SpotifyPlaybackOutput.swift in Sources */,
 				E12A6661A3F1D7F2CC3CCECE /* SpotifyNowPlaying.swift in Sources */,
+				A32B71B3CBDBE5636CA1B9F1 /* FrameDeadlinePacer.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -2599,6 +2606,7 @@
 				8CB81EA7042A2B28682E8249 /* Composer2LabThemeTests.swift in Sources */,
 				7BD3FC84F3C550AF16866A0A /* AudioAnalysisSourceTests.swift in Sources */,
 				BD80D97202029B9FF0085D6B /* SpotifyPCMExperimentTests.swift in Sources */,
+				615416AFC41ACC4D2377EAC1 /* FrameDeadlinePacerTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
