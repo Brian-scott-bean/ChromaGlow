@@ -26,6 +26,12 @@ struct BeatSnapshot: Sendable, Equatable {
     var bpm: Double = 0
     var beatEpoch: Double = 0     // host time of beat 0 (bar-aligned)
     var beatsPerBar: Int = 4
+    /// 0–1: how sure the grid's beats sit where the music's beats are. Taps
+    /// and a phase-locked microphone are sure; a music service's guess that
+    /// beat 1 falls at track t=0 is not.
+    var phaseConfidence: Double = 0
+    /// 0–1: how sure beat 0 of each bar is "the one".
+    var barConfidence: Double = 0
 
     static let none = BeatSnapshot()
 
@@ -89,6 +95,9 @@ final class BeatClock {
     private(set) var source: DriveSource = .none
     private(set) var isPinned = false
     private(set) var beatsPerBar = 4
+    /// See `BeatSnapshot.phaseConfidence` / `barConfidence`.
+    private(set) var phaseConfidence: Double = 0
+    private(set) var barConfidence: Double = 0
 
     // Tap-tempo state.
     private var tapTimes: [Double] = []
@@ -113,6 +122,15 @@ final class BeatClock {
     /// without endServiceDrive() self-heals after serviceDriveTimeout.
     private var lastServiceDriveAt: Double = 0
     private static let serviceDriveTimeout = 10.0
+
+    // ── Bar ("the one") ──
+    /// The user named the one (`resyncDownbeat`): no tracker guess may move it.
+    private var barSetByUser = false
+    /// A bar re-label the tracker proposes, and how many passes in a row it won.
+    private var pendingBarShift = 0
+    private var pendingBarRuns = 0
+    private static let barRunsToShift = 3
+    private static let minBarConfidence = 0.15
 
     /// Read by the mic-demand evaluator: a `.beat` reaction needs no
     /// microphone while a music service drives the clock. Stale-aware:
@@ -139,7 +157,8 @@ final class BeatClock {
     }
 
     private func publishMirror() {
-        let snap = BeatSnapshot(bpm: bpm, beatEpoch: beatEpoch, beatsPerBar: beatsPerBar)
+        let snap = BeatSnapshot(bpm: bpm, beatEpoch: beatEpoch, beatsPerBar: beatsPerBar,
+                                phaseConfidence: phaseConfidence, barConfidence: barConfidence)
         Self.mirrorLock.lock()
         Self.mirror = snap
         Self.mirrorLock.unlock()
@@ -177,6 +196,8 @@ final class BeatClock {
         bpm = tappedBPM
         confidence = 1.0
         beatEpoch = now   // the tap re-anchors phase
+        phaseConfidence = 1
+        if !barSetByUser { barConfidence = 0 }
         source = .tap
         isPinned = true
         publishMirror()
@@ -215,6 +236,33 @@ final class BeatClock {
     /// Declare "now" to be beat 1 of the bar (re-anchors bar alignment).
     func resyncDownbeat(now: Double = CACurrentMediaTime()) {
         beatEpoch = now
+        // The user named the one: it outranks every guess until the song
+        // changes (`endServiceDrive(trackChanged:)`) or the clock is cleared.
+        barConfidence = 1
+        barSetByUser = true
+        if bpm > 0 { phaseConfidence = 1 }
+        publishMirror()
+    }
+
+    /// "Tap the one" (Play Along): the beat nearest `now` becomes a bar start.
+    /// Only the bar LABEL moves, by whole beats — a tap's own timing error
+    /// never shifts a beat. With no running beat it declares `now` the
+    /// downbeat, like `resyncDownbeat`.
+    func markDownbeat(near now: Double = CACurrentMediaTime()) {
+        guard bpm > 0, beatEpoch != 0 else {
+            resyncDownbeat(now: now)
+            return
+        }
+        let interval = 60.0 / bpm
+        let nearest = ((now - beatEpoch) / interval).rounded()
+        guard nearest.isFinite, abs(nearest) < 1e9 else { return }
+        let perBar = max(1, beatsPerBar)
+        let shift = ((Int(nearest) % perBar) + perBar) % perBar
+        beatEpoch += Double(shift) * interval
+        barConfidence = 1
+        barSetByUser = true
+        pendingBarShift = 0
+        pendingBarRuns = 0
         publishMirror()
     }
 
@@ -260,20 +308,68 @@ final class BeatClock {
         bpm = 0; confidence = 0; source = .none; isPinned = false
         tapTimes = []; beatEpoch = 0; serviceHold = false
         lastServiceDriveAt = 0
+        phaseConfidence = 0; barConfidence = 0; barSetByUser = false
+        pendingBarShift = 0; pendingBarRuns = 0
+        resetServiceOffset()
         publishMirror()
     }
 
     // MARK: - Service drive (~1 Hz from MusicSessionCoordinator)
 
+    /// Where the track's beat grid sits relative to track t=0, in seconds,
+    /// modulo one BAR (so it carries the bar label as well as the phase).
+    /// Songs rarely start on a beat: the drive used to assume they always
+    /// did, and with the microphone pulling toward the true beat the two
+    /// fought — 70–130 ms off in docs/ios/play-along/beatlab. Learned from the
+    /// mic while a track plays (or handed in from the song memory) and
+    /// cleared on a track change; a seek keeps it, because it is
+    /// track-relative.
+    private(set) var serviceBeatOffset: Double?
+    /// Confident mic passes that agreed with the grid (minus disagreements).
+    private var serviceOffsetAgreement = 0
+    /// The service grid's t=0 anchor as of the latest drive.
+    private var lastServiceCandidateEpoch: Double?
+    /// Capture time of the latest confident mic phase under a service hold.
+    private var lastMicPhaseAt: Double = -.infinity
+    /// Passes the offset must agree on before the drive trusts it.
+    private static let offsetAgreementToTrust = 6
+    private static let offsetAgreementTolerance = 0.015
+    /// While the mic has spoken within this window, an untrusted service grid
+    /// drives tempo only.
+    private static let micPhaseFreshness = 2.0
+    /// A service grid's own phase and bar are guesses (beat 1 at t=0).
+    private static let serviceGuessPhaseConfidence = 0.3
+    private static let serviceGuessBarConfidence = 0.2
+
+    private var serviceOffsetTrusted: Bool { serviceOffsetAgreement >= Self.offsetAgreementToTrust }
+
+    private func resetServiceOffset() {
+        serviceBeatOffset = nil
+        serviceOffsetAgreement = 0
+        lastServiceCandidateEpoch = nil
+        lastMicPhaseAt = -.infinity
+    }
+
+    private static func wrapped(_ x: Double, _ m: Double) -> Double {
+        guard m > 0, x.isFinite else { return 0 }
+        let r = x.truncatingRemainder(dividingBy: m)
+        return r < 0 ? r + m : r
+    }
+
     /// Track-metadata drive: a playing track's position plus a known BPM
-    /// steer the clock. The beat grid is anchored at track t=0 (sidecar
-    /// BPMs carry no phase). Explicit tap/manual pins always win; re-poll
-    /// jitter is absorbed as gentle ≤30 ms corrections; a phase error
-    /// beyond serviceResyncThreshold (seek, track change) re-anchors
-    /// outright. Out-of-range BPMs are rejected, not clamped — a bad
-    /// sidecar value must not bend the clock.
+    /// steer the clock. Explicit tap/manual pins always win; re-poll jitter is
+    /// absorbed as gentle ≤30 ms corrections; a phase error beyond
+    /// serviceResyncThreshold (seek, track change) re-anchors outright.
+    /// Out-of-range BPMs are rejected, not clamped — a bad sidecar value must
+    /// not bend the clock.
+    ///
+    /// The grid's anchor is track t=0 plus the track's beat offset once that
+    /// offset is trusted (`beatOffset` from the song memory, or learned from
+    /// the mic). Until then, while the mic is phase-locked, the service drives
+    /// tempo only — the mic owns the phase and nothing fights.
     func driveFromTrack(bpm newBPM: Double, position: PlaybackPosition,
                         confidence newConfidence: Double = 1.0,
+                        beatOffset knownOffset: Double? = nil,
                         now: Double = CACurrentMediaTime()) {
         guard position.isPlaying, newBPM >= 20, newBPM <= 300 else { return }
         // Refresh the hold BEFORE the pin guard: a pinned clock still knows
@@ -287,13 +383,22 @@ final class BeatClock {
         let interval = 60.0 / newBPM
         let positionSec = Double(position.positionMs) / 1000.0 + (now - position.capturedAt)
         let candidateEpoch = now - positionSec
+        lastServiceCandidateEpoch = candidateEpoch
+        if serviceBeatOffset == nil, let knownOffset, knownOffset.isFinite {
+            serviceBeatOffset = Self.wrapped(knownOffset, interval * Double(max(1, beatsPerBar)))
+            serviceOffsetAgreement = Self.offsetAgreementToTrust
+        }
+        let trusted = serviceOffsetTrusted
+        let target = candidateEpoch + (trusted ? (serviceBeatOffset ?? 0) : 0)
 
         if source != .service || bpm == 0 {
             // Entering service drive: adopt tempo + phase outright.
             bpm = newBPM
             confidence = newConfidence
             source = .service
-            beatEpoch = candidateEpoch
+            beatEpoch = target
+            phaseConfidence = trusted ? 0.9 : Self.serviceGuessPhaseConfidence
+            if !barSetByUser { barConfidence = trusted ? max(barConfidence, 0.6) : Self.serviceGuessBarConfidence }
             publishMirror()
             return
         }
@@ -301,10 +406,17 @@ final class BeatClock {
         if bpm != newBPM { bpm = newBPM }
         if confidence != newConfidence { confidence = newConfidence }
 
+        // The mic holds the phase and the track's offset is not yet trusted:
+        // re-anchoring to t=0 here is the tug of war the mic used to lose.
+        if !trusted, now - lastMicPhaseAt < Self.micPhaseFreshness {
+            publishMirror()
+            return
+        }
+
         // Signed error in seconds: how far the track's grid sits from ours,
         // wrapped to ±half-beat (same semantics as the audio ingest path).
         let snap = BeatSnapshot(bpm: bpm, beatEpoch: beatEpoch, beatsPerBar: beatsPerBar)
-        var error = snap.beatPhase(at: candidateEpoch) * interval
+        var error = snap.beatPhase(at: target) * interval
         if error > interval / 2 { error -= interval }
 
         // The wrap caps |error| at interval/2, which sits below the fixed
@@ -313,7 +425,7 @@ final class BeatClock {
         // trigger down with the interval so fast tempos still snap.
         let resyncThreshold = min(Self.serviceResyncThreshold, interval / 4)
         if abs(error) > resyncThreshold {
-            beatEpoch = candidateEpoch
+            beatEpoch = target
         } else {
             beatEpoch += min(Self.maxPhaseCorrection, max(-Self.maxPhaseCorrection, error))
         }
@@ -322,11 +434,35 @@ final class BeatClock {
 
     /// End the track-metadata drive (pause, track gone, session end). Keeps
     /// the last tempo running and returns the clock to audio-follow — the
-    /// mic pass re-adopts tempo on its next confident estimate.
-    func endServiceDrive() {
+    /// mic pass re-adopts tempo on its next confident estimate. A TRACK
+    /// change also forgets the track's beat offset and any downbeat the user
+    /// named for it; a pause keeps both.
+    func endServiceDrive(trackChanged: Bool = false) {
+        if trackChanged {
+            resetServiceOffset()
+            // The last song's one says nothing about the next song's.
+            barSetByUser = false
+            barConfidence = 0
+            pendingBarShift = 0
+            pendingBarRuns = 0
+            publishMirror()
+        }
         guard serviceHold || source == .service else { return }
         serviceHold = false
         if source == .service { source = bpm > 0 ? .audio : .none }
+    }
+
+    /// After a confident mic correction under a service hold: remember where
+    /// the grid sits relative to the track and count whether the mic agreed.
+    private func learnServiceOffset(residual: Double) {
+        guard let candidate = lastServiceCandidateEpoch, bpm > 0 else { return }
+        let bar = 60.0 / bpm * Double(max(1, beatsPerBar))
+        serviceBeatOffset = Self.wrapped(beatEpoch - candidate, bar)
+        if abs(residual) < Self.offsetAgreementTolerance {
+            serviceOffsetAgreement += 1
+        } else {
+            serviceOffsetAgreement = max(0, serviceOffsetAgreement - 2)
+        }
     }
 
     // MARK: - Audio drive (~2 Hz from the tempo pass)
@@ -359,6 +495,9 @@ final class BeatClock {
                 var error = snap.beatPhase(at: audioLastBeat) * interval
                 if error > interval / 2 { error -= interval }
                 beatEpoch += min(Self.maxPhaseCorrection, max(-Self.maxPhaseCorrection, error))
+                lastMicPhaseAt = endTime
+                learnServiceOffset(residual: error)
+                phaseConfidence = estimate.confidence
                 publishMirror()
                 return   // tempo, source, and confidence stay the service's
             }
@@ -384,6 +523,8 @@ final class BeatClock {
             bpm = clampedBPM
             beatEpoch = audioLastBeat
             source = .audio
+            phaseConfidence = estimate.confidence
+            if !barSetByUser { barConfidence = 0 }
             publishMirror()
             return
         }
@@ -403,6 +544,116 @@ final class BeatClock {
         if error > interval / 2 { error -= interval }   // wrap to ±half-beat
         let correction = min(Self.maxPhaseCorrection, max(-Self.maxPhaseCorrection, error))
         beatEpoch += correction
+        phaseConfidence = estimate.confidence
         publishMirror()
+    }
+
+    // MARK: - Beat tracker drive (Play Along P1, ~2 Hz)
+
+    /// Feed a BeatTracker observation. The same ownership rules as
+    /// `ingest(estimate:endTime:)`: a pin ignores it; a music-service hold
+    /// keeps its tempo and accepts phase and bar corrections only. New here:
+    /// the grid's phase and bar confidences, the bar label — a confident
+    /// downbeat re-labels the grid by WHOLE beats, never moving a beat — and,
+    /// under a service hold, learning the track's beat offset so the drive
+    /// stops pulling the grid back to t=0.
+    func ingest(observation o: BeatObservation) {
+        guard o.bpm.isFinite, o.bpm > 0, o.lastBeat.isFinite else { return }
+        if serviceHold {
+            if o.lastBeat - lastServiceDriveAt > Self.serviceDriveTimeout {
+                // Self-heal: the driving source died without endServiceDrive.
+                serviceHold = false
+                if source == .service { source = bpm > 0 ? .audio : .none }
+                // Fall through — audio-follow resumes normally below.
+            } else if isPinned {
+                return
+            } else {
+                // The track's tempo stays the service's. A tracker at the same
+                // tempo — or at half of it, whose beats are every other one of
+                // ours — may correct the phase; one at double could be naming
+                // the off-beats, so it may not.
+                let ratio = bpm > 0 ? o.bpm / bpm : 0
+                guard o.phaseConfidence >= Self.minAudioConfidence,
+                      abs(ratio - 1) < 0.03 || abs(ratio - 0.5) < 0.015 else { return }
+                let error = phaseError(of: o.lastBeat)
+                beatEpoch += min(Self.maxPhaseCorrection, max(-Self.maxPhaseCorrection, error))
+                lastMicPhaseAt = o.lastBeat
+                learnServiceOffset(residual: error)
+                phaseConfidence = o.phaseConfidence
+                if abs(ratio - 1) < 0.03 { applyBar(o) }
+                publishMirror()
+                return
+            }
+        }
+        confidence = o.tempoConfidence
+        guard !isPinned else { return }
+        guard o.tempoConfidence >= Self.minAudioConfidence else { return }
+        // Same 20…300 window every other drive holds itself to (see ingest).
+        let clampedBPM = min(300, max(20, o.bpm))
+
+        if bpm == 0 || source != .audio {
+            // First lock: adopt tempo and phase outright — and the bar, when
+            // the tracker already has a confident opinion about it.
+            bpm = clampedBPM
+            beatEpoch = o.lastBeat
+            source = .audio
+            phaseConfidence = o.phaseConfidence
+            if !barSetByUser { barConfidence = 0 }
+            pendingBarShift = 0
+            pendingBarRuns = 0
+            applyBar(o, immediately: true)
+            publishMirror()
+            return
+        }
+
+        retime(to: clampedBPM, keepingPhaseAt: o.lastBeat)
+        if o.phaseConfidence >= Self.minAudioConfidence {
+            let error = phaseError(of: o.lastBeat)
+            beatEpoch += min(Self.maxPhaseCorrection, max(-Self.maxPhaseCorrection, error))
+        }
+        phaseConfidence = o.phaseConfidence
+        applyBar(o)
+        publishMirror()
+    }
+
+    /// Signed seconds from our nearest grid beat to `beat`, wrapped to
+    /// ±half a beat (positive: our grid is early).
+    private func phaseError(of beat: Double) -> Double {
+        guard bpm > 0 else { return 0 }
+        let interval = 60.0 / bpm
+        let snap = BeatSnapshot(bpm: bpm, beatEpoch: beatEpoch, beatsPerBar: beatsPerBar)
+        var error = snap.beatPhase(at: beat) * interval
+        if error > interval / 2 { error -= interval }
+        return error
+    }
+
+    /// The tracker's bar: downbeats fall at beat indices ≡ `barSlot` (mod 4)
+    /// counted from its last beat. Re-label the grid by whole beats once the
+    /// same shift has won `barRunsToShift` passes in a row (or at once on a
+    /// first lock). Agreement raises the bar confidence; a named one wins.
+    private func applyBar(_ o: BeatObservation, immediately: Bool = false) {
+        guard !barSetByUser, beatsPerBar == 4, bpm > 0, let slot = o.barSlot,
+              o.barConfidence >= Self.minBarConfidence else { return }
+        let interval = 60.0 / bpm
+        let beatsSinceEpoch = (o.lastBeat - beatEpoch) / interval
+        guard beatsSinceEpoch.isFinite, abs(beatsSinceEpoch) < 1e9 else { return }
+        let n0 = Int(beatsSinceEpoch.rounded())
+        let shift = ((n0 + slot) % 4 + 4) % 4
+        if shift == 0 {
+            pendingBarRuns = 0
+            barConfidence += (o.barConfidence - barConfidence) * 0.3
+            return
+        }
+        if shift == pendingBarShift {
+            pendingBarRuns += 1
+        } else {
+            pendingBarShift = shift
+            pendingBarRuns = 1
+        }
+        guard immediately || pendingBarRuns >= Self.barRunsToShift else { return }
+        beatEpoch += Double(shift) * interval
+        pendingBarShift = 0
+        pendingBarRuns = 0
+        barConfidence = o.barConfidence
     }
 }

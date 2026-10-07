@@ -77,6 +77,10 @@ final class MicrophoneAudioSource: AudioAnalysisSource {
                 options: [.mixWithOthers, .allowBluetoothA2DP, .defaultToSpeaker]
             )
             try session.setActive(true, options: [])
+            // Play Along: stamp onset frames when the sound reached the mic,
+            // not when iOS time-stamped the buffer (read while the session is
+            // configured here, not as a separate main-thread session call).
+            sink.onsets?.setInputLatency(session.inputLatency)
 
             // Read the input format ONLY after the session is active. Before
             // activation — e.g. a background→foreground restart that fires

@@ -92,9 +92,18 @@ final class AudioAnalysisEngine {
     /// activation gives each source its own extractor: a straggler finishes on
     /// the one it started with, which nothing reads.
     private var activeExtractor: AudioFeatureExtractor?
+    /// The current activation's 10 ms onset front end (Play Along P1) — fresh
+    /// per activation for the same reason as the extractor.
+    private var activeOnsets: OnsetFrameAnalyzer?
     /// Generation of the activation this instance started (0 = none).
     private var activeGeneration: UInt64 = 0
     private let tempoEstimator = TempoEstimator()
+    private let beatTracker = BeatTracker()
+
+    /// The pre-Play-Along tracker (one value per ~100 ms buffer). Kept for
+    /// side-by-side checks on a device: `defaults write com.huehome.pro
+    /// audio.legacyBeatTracker -bool YES`. Read when capture starts.
+    static let legacyTrackerDefaultsKey = "audio.legacyBeatTracker"
 
     // ── Published features (audio thread writes, anyone reads) ──
     nonisolated private static let featuresLock = NSLock()
@@ -391,8 +400,9 @@ final class AudioAnalysisEngine {
         guard !engineRunning else { return true }
 
         let extractor = AudioFeatureExtractor()
+        let onsets = OnsetFrameAnalyzer()
         let generation = Self.beginActivation()
-        let sink = AudioPCMSink(generation: generation, extractor: extractor)
+        let sink = AudioPCMSink(generation: generation, extractor: extractor, onsets: onsets)
         // Hardware reconfiguration: the source reports it stopped on its own.
         // Identity-checked, so a report that lands after a rebuild cannot
         // tear down its successor.
@@ -407,6 +417,7 @@ final class AudioAnalysisEngine {
         }
         activeSource = source
         activeExtractor = extractor
+        activeOnsets = onsets
         activeGeneration = generation
         engineRunning = true
         startTempoTask()
@@ -440,6 +451,7 @@ final class AudioAnalysisEngine {
         // No `extractor.reset()`: the next activation builds a fresh
         // extractor, so nothing here touches one a callback may be using.
         activeExtractor = nil
+        activeOnsets = nil
     }
 
     // MARK: - Hardware reconfiguration
@@ -461,32 +473,64 @@ final class AudioAnalysisEngine {
         tempoTask?.cancel()
         let previous = tempoTask
         guard let extractor = activeExtractor else { return }
+        let onsets = activeOnsets
         let estimator = self.tempoEstimator
+        let tracker = self.beatTracker
+        let legacy = onsets == nil
+            || UserDefaults.standard.bool(forKey: Self.legacyTrackerDefaultsKey)
         tempoTask = Task { @MainActor [weak self] in
             // Drain the predecessor before reset(): cancel can't reach its
-            // in-flight detached update(), and TempoEstimator is single-
-            // writer — resetting under a live update both loses the reset
-            // and races the hysteresis state.
+            // in-flight detached update(), and TempoEstimator / BeatTracker
+            // are single-writer — resetting under a live update both loses
+            // the reset and races the hysteresis state.
             await previous?.value
             estimator.reset()
+            tracker.reset()
             while !Task.isCancelled, self?.engineRunning == true {
-                let snapshot = extractor.onsetEnvelopeSnapshot()
-                if !snapshot.envelope.isEmpty {
-                    let estimate = await Task.detached(priority: .utility) {
-                        estimator.update(onsetEnvelope: snapshot.envelope, hopRate: snapshot.hopRate)
-                    }.value
-                    // stopEngine() may have landed while we were suspended on
-                    // the detached estimate — publishing now would overwrite
-                    // its zeroed tempo with a stale one that then haunts
-                    // latestFeatures() through the whole off period.
-                    guard !Task.isCancelled, self?.engineRunning == true else { break }
-                    if let estimate {
-                        Self.publishTempo(bpm: estimate.bpm, confidence: estimate.confidence)
-                        BeatClock.shared.ingest(estimate: estimate, endTime: snapshot.endTime)
+                if !legacy, let onsets {
+                    await self?.trackerPass(onsets: onsets, tracker: tracker)
+                } else {
+                    let snapshot = extractor.onsetEnvelopeSnapshot()
+                    if !snapshot.envelope.isEmpty {
+                        let estimate = await Task.detached(priority: .utility) {
+                            estimator.update(onsetEnvelope: snapshot.envelope, hopRate: snapshot.hopRate)
+                        }.value
+                        // stopEngine() may have landed while we were suspended on
+                        // the detached estimate — publishing now would overwrite
+                        // its zeroed tempo with a stale one that then haunts
+                        // latestFeatures() through the whole off period.
+                        guard !Task.isCancelled, self?.engineRunning == true else { break }
+                        if let estimate {
+                            Self.publishTempo(bpm: estimate.bpm, confidence: estimate.confidence)
+                            BeatClock.shared.ingest(estimate: estimate, endTime: snapshot.endTime)
+                        }
                     }
                 }
                 try? await Task.sleep(for: .milliseconds(500))
             }
+        }
+    }
+
+    /// One BeatTracker pass (Play Along P1): copy the recent 10 ms frames,
+    /// track off the main actor, publish to the clock. A tempo the music
+    /// service already knows becomes the tracker's prior — it settles the
+    /// metre (×2 / ×½) the microphone alone can only guess.
+    private func trackerPass(onsets: OnsetFrameAnalyzer, tracker: BeatTracker) async {
+        let frames = onsets.snapshot(seconds: BeatTracker.windowSeconds + 2)
+        guard !frames.isEmpty else { return }
+        var prior: TempoPrior?
+        let music = MusicSessionCoordinator.shared
+        if music.isPlaying, let tempo = music.tempo, tempo.origin != .liveEstimate {
+            prior = TempoPrior(bpm: tempo.bpm, strength: 0.8)
+        }
+        let observation = await Task.detached(priority: .utility) { [prior] in
+            tracker.update(frames, prior: prior)
+        }.value
+        // Same race as the legacy pass: a stop may have landed meanwhile.
+        guard !Task.isCancelled, engineRunning else { return }
+        if let observation {
+            Self.publishTempo(bpm: observation.bpm, confidence: observation.tempoConfidence)
+            BeatClock.shared.ingest(observation: observation)
         }
     }
 }

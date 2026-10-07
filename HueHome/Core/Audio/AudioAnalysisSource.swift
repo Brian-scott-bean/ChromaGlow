@@ -65,6 +65,10 @@ protocol AudioAnalysisSource: AnyObject {
 struct AudioPCMSink: Sendable {
     let generation: UInt64
     let extractor: AudioFeatureExtractor
+    /// The beat tracker's 10 ms front end (Play Along P1). Fed the same
+    /// samples, stamped with their capture time. nil in tests that only
+    /// exercise the legacy features.
+    var onsets: OnsetFrameAnalyzer? = nil
 
     /// True while this sink's activation is the live one.
     var isCurrent: Bool { AudioAnalysisEngine.isCurrentActivation(generation) }
@@ -93,6 +97,13 @@ struct AudioPCMSink: Sendable {
             ) {
                 AudioAnalysisEngine.publish(features, generation: generation)
             }
+            if let onsets {
+                // The buffer's first sample, from its AVAudioTime; without a
+                // valid time, the arrival time less the buffer's length.
+                let start = when.flatMap { $0.isHostTimeValid ? AVAudioTime.seconds(forHostTime: $0.hostTime) : nil }
+                    ?? hostTime - Double(frameCount) / Double(sampleRate)
+                onsets.process(data, frameCount: frameCount, sampleRate: Double(sampleRate), bufferStart: start)
+            }
         }
         AudioAnalysisEngine.fanOut(buffer, sampleRate: sampleRate)
     }
@@ -119,6 +130,10 @@ struct AudioPCMSink: Sendable {
         ) {
             AudioAnalysisEngine.publish(features, generation: generation)
         }
+        // Heard-time stamps: the beat grid is predicted ahead anyway, so a
+        // hop that plays out later simply lands its beats in the future.
+        onsets?.process(mono, frameCount: frameCount, sampleRate: Double(sampleRate),
+                        bufferStart: presentationTime)
         if let buffer {
             AudioAnalysisEngine.fanOut(buffer, sampleRate: sampleRate)
         }

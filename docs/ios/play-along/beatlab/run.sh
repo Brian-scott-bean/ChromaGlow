@@ -17,5 +17,7 @@ xcrun swiftc -O -swift-version 5 -o "$OUT/beatlab" "$HERE"/*.swift \
   "$REPO/HueHome/Core/Audio/AudioFeatureExtractor.swift" \
   "$REPO/HueHome/Core/Audio/TempoEstimator.swift" \
   "$REPO/HueHome/Core/Audio/BeatClock.swift" \
+  "$REPO/HueHome/Core/Audio/OnsetFrameAnalyzer.swift" \
+  "$REPO/HueHome/Core/Audio/BeatTracker.swift" \
   "$REPO/HueHome/Core/Music/MusicSource.swift"
 "$OUT/beatlab" "$@"

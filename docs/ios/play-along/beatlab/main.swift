@@ -243,8 +243,9 @@ MainActor.assumeIsolated {
         print("── \(c.name)  (\(String(format: "%.0f", Double(r.samples.count) / r.fs)) s)")
         let s1 = runV1(r), s2 = runV2(r, bar: false, log: verbose), s3 = runV2(r, bar: true)
         let s4 = runV2(r, bar: true, opts: V2Options(minSeconds: 3, silenceReset: true, pll: true))
+        let s5 = runProd(r)
         if c.rhythmic {
-            for (name, snaps) in [("v1", s1), ("v2", s2), ("v2+b", s3), ("v2++", s4)] {
+            for (name, snaps) in [("v1", s1), ("v2", s2), ("v2+b", s3), ("v2++", s4), ("prod", s5)] {
                 var st = evaluate(name, snaps: snaps, beats: r.beats, warmup: 10, segmentStarts: segStarts)
                 st.lockTime = nil
                 let locks = lockTimes(snaps: snaps, beats: r.beats, segmentStarts: segStarts)
@@ -252,8 +253,8 @@ MainActor.assumeIsolated {
                 print("  " + st.line().replacingOccurrences(of: "| lock —", with: "| lock " + locks))
             }
         } else {
-            print(String(format: "  v1 claims a confident lock %3.0f%% of the time; v2 %3.0f%%; v2++ %3.0f%% (v2 raw conf mean %.2f max %.2f)",
-                         claimsLock(s1, after: 5), claimsLock(s2, after: 5), claimsLock(s4, after: 5),
+            print(String(format: "  v1 claims a confident lock %3.0f%% of the time; v2 %3.0f%%; v2++ %3.0f%%; prod %3.0f%% (v2 raw conf mean %.2f max %.2f)",
+                         claimsLock(s1, after: 5), claimsLock(s2, after: 5), claimsLock(s4, after: 5), claimsLock(s5, after: 5),
                          s2.filter { $0.t > 5 }.map(\.raw).reduce(0, +) / Double(max(1, s2.filter { $0.t > 5 }.count)),
                          s2.map(\.raw).max() ?? 0))
         }

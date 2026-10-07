@@ -108,7 +108,7 @@ final class MusicSessionCoordinator {
         if tempo != nil { tempo = nil }
         if artworkPalette != nil { artworkPalette = nil }
         lastPosition = nil
-        clock.endServiceDrive()
+        clock.endServiceDrive(trackChanged: true)
     }
 
     func transport(_ action: TransportAction) async {
@@ -164,8 +164,9 @@ final class MusicSessionCoordinator {
         // mic demand whose ingest self-heal could have cleared it (audit
         // R9, F1). driveClockIfReady re-enters the drive when the new
         // tempo lands; until then the look runs at the last tempo on
-        // audio-follow, exactly like a pause.
-        clock.endServiceDrive()
+        // audio-follow, exactly like a pause. The track CHANGED, so the old
+        // track's learned beat offset and named downbeat go with it.
+        clock.endServiceDrive(trackChanged: true)
         guard let track else { return }
         let gen = generation
         tempoTask = Task { [weak self] in
