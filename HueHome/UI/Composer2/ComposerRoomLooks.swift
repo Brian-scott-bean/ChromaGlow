@@ -123,6 +123,7 @@ struct ComposerRoomLooks: View {
     // MARK: Playing
 
     private func playingCard(_ look: Composer2Composition) -> some View {
+        VStack(spacing: 12) {
         HStack(spacing: 14) {
             Composer2MiniStage(composition: look, lights: 5)
                 .frame(width: 72, height: 72)
@@ -157,6 +158,9 @@ struct ComposerRoomLooks: View {
                 }
                 .accessibilityLabel("Open \(look.name) in the Composer")
             }
+        }
+            // Play Along: the playing look moves with the music.
+            Composer2PlayAlongButton(bridgeID: center.session?.bridgeID)
         }
         .padding(12)
         .luminousGlass(radius: 22, accent: LuminousPalette.live, selected: true)

@@ -39,6 +39,9 @@ struct Composer2LayerState: Equatable {
     /// the palette on a hit can no longer swallow the "trigger events on
     /// hits" opportunity of the same hit.
     var lastEventOnsetSeen: Double = 0
+    /// The last beat-grid slot (`beatSync` beats wide) that opened an event
+    /// opportunity (Play Along).
+    var lastEventBeatIndex: Int = .min
     /// The event spec and seed the running schedule was built from. A change
     /// to either (an edited delay, a reseed) re-arms the schedule from now,
     /// instead of waiting out an opportunity drawn from the old values.
@@ -253,7 +256,26 @@ enum Composer2Engine {
             let maxWarp = Swift.max(1, plan.motionPeriod / Composer2Motion.minimumPeriod / Composer2Engine.maxJitterSpeedFactor)
             let speedMult = Swift.min(maxWarp, masterSpeed * mod.speedMultiplier(drive: drive))
             if speedMult != 1 { ls.warpOffset += dt * (speedMult - 1) }
-            let motionTime = time + ls.warpOffset
+            var motionTime = time + ls.warpOffset
+
+            // ── Motion beat lock (Play Along) ──
+            // One motion cycle every N beats of the running clock, doubled
+            // until it clears the motion's flash floor exactly as rhythm's
+            // lock does. Motion time is DERIVED from the beat count, so the
+            // travel lands on bars; speed warp and per-light speed jitter are
+            // ignored while locked (either would drift the lights off the beat).
+            let motionLocked = layer.motion.quantizeBeats > 0 && beat.bpm > 0 && hostNow > 0
+                && beat.beatInterval.isFinite && beat.beatInterval > 0
+            if motionLocked {
+                var beatsPerCycle = Swift.max(layer.motion.quantizeBeats, 1e-6)
+                var guardSteps = 0
+                while beatsPerCycle * beat.beatInterval < layer.motion.sanitizedPeriodFloor - 1e-9 && guardSteps < 16 {
+                    beatsPerCycle *= 2
+                    guardSteps += 1
+                }
+                let beats = (hostNow - beat.beatEpoch) / beat.beatInterval
+                motionTime = beats / beatsPerCycle * plan.motionPeriod
+            }
 
             // ── Palette stepping on beat / onset ──
             if mod.isActive, mod.targets.contains(.palettePosition) {
@@ -303,6 +325,17 @@ enum Composer2Engine {
                 if mod.triggerEventsOnOnset, mod.isActive, audio.lastOnsetAt > 0, audio.lastOnsetAt > ls.lastEventOnsetSeen {
                     force = true
                     ls.lastEventOnsetSeen = audio.lastOnsetAt
+                }
+                // Play Along: an opportunity every `beatSync` beats, on the
+                // predicted beat (the frame is rendered for when it is shown).
+                if spec.beatSync > 0, beat.bpm > 0, hostNow > 0, beat.beatInterval.isFinite, beat.beatInterval > 0 {
+                    let slot = Composer2Math.safeFloorInt((hostNow - beat.beatEpoch) / beat.beatInterval / spec.beatSync)
+                    if ls.lastEventBeatIndex == .min || slot < ls.lastEventBeatIndex {
+                        ls.lastEventBeatIndex = slot
+                    } else if slot > ls.lastEventBeatIndex {
+                        force = true
+                        ls.lastEventBeatIndex = slot
+                    }
                 }
                 ls.events?.advance(to: time, spec: spec, eventSeed: plan.eventSeed, geometry: geometry,
                                    timingVariation: timing, probabilityBoost: mod.probabilityBoost(drive: drive),
@@ -360,7 +393,7 @@ enum Composer2Engine {
                 // long the look had played (Lava Lamp ran ~14× its authored
                 // speed after ten minutes, with reversals). Phase, position
                 // and brightness jitter may still wander.
-                let tSlot = motionTime * (1 + plan.jitters[i].speed)
+                let tSlot = motionLocked ? motionTime : motionTime * (1 + plan.jitters[i].speed)
                 let levels = ls.events?.levels(slot: i, time: time) ?? (level: 0, core: 0)
                 let e = Composer2Math.clamp01(levels.level * cap)
 

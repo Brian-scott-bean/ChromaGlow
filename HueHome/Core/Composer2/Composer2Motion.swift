@@ -60,11 +60,15 @@ struct Composer2Motion: Codable, Equatable {
     var edge: Edge = .wrap
     /// Organic spatial frequency (0.25 = broad, 4 = fine).
     var scale: Double = 1
+    /// 0 = free running; N = one cycle every N beats when a clock is running
+    /// (Play Along locks motion to bars the way rhythm's Beat lock does).
+    var quantizeBeats: Double = 0
 
     init(kind: Kind = .flow, periodSeconds: Double = 8, axisKind: AxisKind = .principal,
          angleDegrees: Double = 0, spread: Double = 1, phaseOffset: Double = 0,
          reverse: Bool = false, mirror: Bool = false, smoothness: Double = 0.5,
-         travelWidth: Double = 1, steps: Int = 0, edge: Edge = .wrap, scale: Double = 1) {
+         travelWidth: Double = 1, steps: Int = 0, edge: Edge = .wrap, scale: Double = 1,
+         quantizeBeats: Double = 0) {
         self.kind = kind
         self.periodSeconds = periodSeconds
         self.axisKind = axisKind
@@ -78,11 +82,12 @@ struct Composer2Motion: Codable, Equatable {
         self.steps = steps
         self.edge = edge
         self.scale = scale
+        self.quantizeBeats = quantizeBeats
     }
 
     enum CodingKeys: String, CodingKey {
         case kind, periodSeconds, axisKind, angleDegrees, spread, phaseOffset, reverse, mirror
-        case smoothness, travelWidth, steps, edge, scale
+        case smoothness, travelWidth, steps, edge, scale, quantizeBeats
     }
 
     init(from decoder: Decoder) throws {
@@ -101,19 +106,21 @@ struct Composer2Motion: Codable, Equatable {
         steps = (try? c.decode(Int.self, forKey: .steps)) ?? d.steps
         edge = (try? c.decode(Edge.self, forKey: .edge)) ?? d.edge
         scale = (try? c.decode(Double.self, forKey: .scale)) ?? d.scale
+        quantizeBeats = (try? c.decode(Double.self, forKey: .quantizeBeats)) ?? d.quantizeBeats
     }
 
     static let minimumPeriod: Double = BeatMath.FlashSafety.minOnsetLedgerPeriod
     static let maximumPeriod: Double = 600
 
+    /// The shortest legal cycle: the flash budget, and for a march one budget
+    /// PER STEP (every step can turn a light on).
+    var sanitizedPeriodFloor: Double {
+        kind == .march ? Composer2Motion.minimumPeriod * Double(patternLength) : Composer2Motion.minimumPeriod
+    }
+
     /// The period the engine actually runs: never faster than the flash budget.
-    /// A march steps `patternLength` times per cycle, and every step can turn
-    /// a light on, so its floor is one flash budget PER STEP.
     var sanitizedPeriod: Double {
-        let floorValue = kind == .march
-            ? Composer2Motion.minimumPeriod * Double(patternLength)
-            : Composer2Motion.minimumPeriod
-        return Composer2Math.clamp(periodSeconds, floorValue, Composer2Motion.maximumPeriod)
+        Composer2Math.clamp(periodSeconds, sanitizedPeriodFloor, Composer2Motion.maximumPeriod)
     }
 
     /// Cells in a march pattern (`steps`, or 3 when unset), 2…16.

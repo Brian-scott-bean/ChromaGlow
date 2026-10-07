@@ -17,8 +17,38 @@ final class Composer2LiveOutput: CompositionFrameSource, @unchecked Sendable {
     /// The composition being played. Edits land here synchronously; the next
     /// frame picks them up — no session restart, no task per slider tick.
     var composition: Composer2Composition {
-        didSet { if composition != oldValue { plansDirty = true } }
+        didSet {
+            if composition != oldValue {
+                plansDirty = true
+                derivedDirty = true
+            }
+        }
     }
+
+    // MARK: Play Along (P3)
+
+    /// The user wants this look to play along with the music. The room
+    /// changes only once the clock has a beat — on the one (see
+    /// `Composer2PlayAlongDirector`).
+    var playAlongRequested = false {
+        didSet { director.requested = playAlongRequested }
+    }
+
+    var playAlongFeel: Composer2PlayAlong.Feel = .groove {
+        didSet { if playAlongFeel != oldValue { derivedDirty = true } }
+    }
+
+    /// When the play-along look takes over and lets go.
+    private(set) var director = Composer2PlayAlongDirector()
+    /// The latest frame's blend: 0 = the look as authored, 1 = playing along.
+    private(set) var playAlongWeight: Double = 0
+    /// The play-along look, re-derived on a tempo change or an edit.
+    private(set) var derived: Composer2Composition?
+    private var derivedBPM: Double = 0
+    private var derivedDirty = true
+    private var derivedState = Composer2EngineState()
+    private var derivedPlans: [Composer2LayerPlan] = []
+    private var derivedBuffer: [Composer2Frame] = []
 
     /// 0…1 cap on event flashes (Dim Flashing Lights ⇒ 0.3). Applied on the
     /// wire and on screen alike. Every output starts from the system setting;
@@ -79,6 +109,10 @@ final class Composer2LiveOutput: CompositionFrameSource, @unchecked Sendable {
         plansDirty = true
         lastRenderTime = nil
         lastLiveRenderAt = 0
+        director.reset()
+        derivedState.reset()
+        derivedDirty = true
+        playAlongWeight = 0
     }
 
     /// The preview's geometry (a UI layout). Ignored once a live loop has
@@ -155,17 +189,44 @@ final class Composer2LiveOutput: CompositionFrameSource, @unchecked Sendable {
         var time = rawTime.isFinite ? rawTime : (lastRenderTime ?? 0)
         if let last = lastRenderTime, time < last - Composer2LiveOutput.backwardsResetTolerance {
             state.reset()
+            derivedState.reset()
             shaper.reset()
             plansDirty = true
         }
         if time.isNaN { time = 0 }
         if plansDirty {
             plans = Composer2Engine.plans(for: composition, geometry: geometry)
+            derivedPlans = []
             plansDirty = false
         }
-        Composer2Engine.evaluate(composition, time: time, geometry: geometry, plans: &plans, state: &state,
-                                 audio: features, beat: beat, hostNow: hostNow, eventCap: eventCap,
-                                 into: &frameBuffer)
+
+        // Play Along: the plain look, the play-along look, or a crossfade
+        // landing on the one. `hostNow` is the moment this frame is SHOWN.
+        let mix = director.update(at: hostNow, beat: beat)
+        playAlongWeight = mix.weight
+        if mix.weight < 1 {
+            Composer2Engine.evaluate(composition, time: time, geometry: geometry, plans: &plans, state: &state,
+                                     audio: features, beat: beat, hostNow: hostNow, eventCap: eventCap,
+                                     into: &frameBuffer)
+        }
+        if mix.weight > 0 {
+            if derived == nil || derivedDirty || derivedBPM != mix.bpm {
+                derived = Composer2PlayAlong.apply(composition, feel: playAlongFeel, bpm: mix.bpm,
+                                                   category: Composer2ThemeCatalog.entry(id: composition.id)?.category)
+                derivedBPM = mix.bpm
+                derivedDirty = false
+            }
+            if let derived {
+                Composer2Engine.evaluate(derived, time: time, geometry: geometry, plans: &derivedPlans,
+                                         state: &derivedState, audio: features, beat: beat, hostNow: hostNow,
+                                         eventCap: eventCap, into: &derivedBuffer)
+                if mix.weight >= 1 || frameBuffer.count != derivedBuffer.count {
+                    swap(&frameBuffer, &derivedBuffer)
+                } else {
+                    frameBuffer = Composer2FlashShaper.blend(frameBuffer, derivedBuffer, mix.weight)
+                }
+            }
+        }
         frameBuffer = shaper.shape(frameBuffer, at: time)
         lastRenderTime = time
         lastFrames = frameBuffer
@@ -221,6 +282,11 @@ final class Composer2LiveOutput: CompositionFrameSource, @unchecked Sendable {
     /// The legacy reaction source that makes the orchestrator hold the
     /// microphone exactly when this composition needs it.
     func mirroredReactionSource() -> ReactionConfig.Source {
+        // Play Along always listens: the room's beat is the only true phase
+        // (a music service's grid is a guess until the song's offset is
+        // learned), and its loudness drives the swell — so the microphone is
+        // held even while a music service drives the tempo.
+        if playAlongRequested { return .micAmplitude }
         if composition.usesMicrophoneBands { return .micAmplitude }
         if composition.usesBeatClock { return .beat }
         return .none

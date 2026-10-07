@@ -254,6 +254,10 @@ struct ComposerLibraryHome: View {
                         }
                     }
                 }
+                if isLive {
+                    // Play Along: the playing look moves with the music.
+                    Composer2PlayAlongButton(bridgeID: center.session?.bridgeID)
+                }
             }
             .padding(16)
         }

@@ -27,6 +27,10 @@ struct Composer2PerformanceBar: View {
     var body: some View {
         VStack(spacing: 10) {
             statusLine
+            if isLiveHere {
+                // Play Along: this look, in time with the music in the room.
+                Composer2PlayAlongButton(bridgeID: ownSession?.bridgeID)
+            }
             if dynamicTypeSize.isAccessibilitySize {
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) { buttons }
             } else {

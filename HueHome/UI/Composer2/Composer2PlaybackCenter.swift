@@ -92,6 +92,30 @@ final class Composer2PlaybackCenter {
                                             object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.output?.eventCap = Composer2LiveOutput.accessibilityEventCap() }
         })
+        // Play Along: a settings change reaches the live look on its next frame.
+        Composer2PlayAlongSettings.shared.onChange = { [weak self] in self?.applyPlayAlong() }
+    }
+
+    // MARK: Play Along
+
+    /// Push the app-wide Play Along settings into the live look, and mirror
+    /// its microphone need onto the box the orchestrator reads (Play Along
+    /// always listens — see `Composer2LiveOutput.mirroredReactionSource`).
+    func applyPlayAlong() {
+        guard let output else { return }
+        Self.configurePlayAlong(output, roomMode: session?.playMode == .roomMode)
+        if let box {
+            let mirrored = output.mirroredReactionSource()
+            if box.reaction.source != mirrored { box.reaction.source = mirrored }
+        }
+    }
+
+    private static func configurePlayAlong(_ output: Composer2LiveOutput, roomMode: Bool = false) {
+        let settings = Composer2PlayAlongSettings.shared
+        output.playAlongRequested = settings.isOn
+        // Room mode sweeps the lights one command at a time — it cannot land a
+        // punch on the beat, so it plays along as Glide (cycles locked to bars).
+        output.playAlongFeel = roomMode ? .glide : settings.feel
     }
 
     // MARK: Derived state
@@ -220,6 +244,8 @@ final class Composer2PlaybackCenter {
         // output may not have seen the latest edits or mood change.
         output.composition = document.composition
         output.eventCap = Composer2LiveOutput.accessibilityEventCap()
+        // Before the box mirrors the reaction source: Play Along listens.
+        Self.configurePlayAlong(output)
 
         let box = Composer2PlaybackCenter.makeBox(for: document.composition, output: output)
         self.box = box
@@ -323,13 +349,25 @@ final class Composer2PlaybackCenter {
             new.roomContext.layout = previous.roomContext.layout
             new.roomContext.lights = previous.roomContext.lights
         }
-        if let previousOutput = self.output, previousOutput !== newOutput {
-            previousOutput.releaseLiveGeometry()
-        }
         newOutput.layoutLightIDs = new.roomContext.layout.lightIDs
         newOutput.composition = new.composition
         newOutput.eventCap = Composer2LiveOutput.accessibilityEventCap()
-        box.frameSource = newOutput
+        Self.configurePlayAlong(newOutput, roomMode: s.playMode == .roomMode)
+        if let previousOutput = self.output, previousOutput !== newOutput {
+            if Composer2PlayAlongSettings.shared.onTheOne, Composer2Quantizer.grid(for: BeatClock.snapshot()) != nil {
+                // On the One: the new look lands on the next bar line; the
+                // heartbeat unwraps the landing once it has.
+                if let landing = box.frameSource as? Composer2LandingSource {
+                    landing.outgoing.releaseLiveGeometry()   // a switch during a switch
+                }
+                box.frameSource = Composer2LandingSource(outgoing: previousOutput, incoming: newOutput)
+            } else {
+                previousOutput.releaseLiveGeometry()
+                box.frameSource = newOutput
+            }
+        } else {
+            box.frameSource = newOutput
+        }
         self.output = newOutput
         self.document = new
         new.onEdit = { [weak self] in self?.noteEdit() }
@@ -527,6 +565,13 @@ final class Composer2PlaybackCenter {
     @discardableResult
     func tickHeartbeat() -> Bool {
         guard var current = session, let output, let gateway else { return false }
+        // On the One: a look switch that has landed no longer needs its wrapper.
+        if let landing = box?.frameSource as? Composer2LandingSource, landing.hasLanded {
+            box?.frameSource = landing.incoming
+            landing.outgoing.releaseLiveGeometry()
+        }
+        // A stream that failed over to Room mode plays along as Glide.
+        Self.configurePlayAlong(output, roomMode: current.playMode == .roomMode)
         guard isApplicationActive else { return true }
         let driving = box.map { gateway.isDriving(box: $0) } ?? true
         let verdict = Composer2Heartbeat.verdict(

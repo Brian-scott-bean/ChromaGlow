@@ -101,6 +101,10 @@ struct Composer2EventSpec: Codable, Equatable {
     var activityPeriod: Double = 0
     /// 0…1 how quiet the quiet end of the cycle is (fewer, farther events).
     var activityDepth: Double = 0
+    /// Play Along: N > 0 gives the schedule an opportunity every N beats of
+    /// the running clock (4 = on the one), so events START on the beat
+    /// instead of trailing a detected hit. 0 = the random schedule alone.
+    var beatSync: Double = 0
 
     init(timing: Timing = .random, interval: Double = 8, minDelay: Double = 4, maxDelay: Double = 14,
          probability: Double = 1, burstMin: Int = 1, burstMax: Int = 3,
@@ -111,7 +115,8 @@ struct Composer2EventSpec: Codable, Equatable {
          cooldown: Double = 0, majorProbability: Double = 0, seed: UInt64? = nil,
          modulates: Set<Modulation> = [.brightness], color: Composer2XY? = nil, motionKick: Double = 0,
          shape: Shape = .flash, distance: Double = 0.35, propagation: Double = 0,
-         colors: [Composer2XY] = [], activityPeriod: Double = 0, activityDepth: Double = 0) {
+         colors: [Composer2XY] = [], activityPeriod: Double = 0, activityDepth: Double = 0,
+         beatSync: Double = 0) {
         self.timing = timing
         self.interval = interval
         self.minDelay = minDelay
@@ -141,6 +146,7 @@ struct Composer2EventSpec: Codable, Equatable {
         self.colors = colors
         self.activityPeriod = activityPeriod
         self.activityDepth = activityDepth
+        self.beatSync = beatSync
     }
 
     enum CodingKeys: String, CodingKey {
@@ -148,7 +154,7 @@ struct Composer2EventSpec: Codable, Equatable {
         case spacingMin, spacingMax, durationMin, durationMax, decaySeconds
         case intensityMin, intensityMax, targeting, targetCount, spatialBias
         case cooldown, majorProbability, seed, modulates, color, motionKick
-        case shape, distance, propagation, colors, activityPeriod, activityDepth
+        case shape, distance, propagation, colors, activityPeriod, activityDepth, beatSync
     }
 
     init(from decoder: Decoder) throws {
@@ -187,6 +193,7 @@ struct Composer2EventSpec: Codable, Equatable {
         colors = (try? c.decode([Composer2XY].self, forKey: .colors)) ?? d.colors
         activityPeriod = (try? c.decode(Double.self, forKey: .activityPeriod)) ?? d.activityPeriod
         activityDepth = (try? c.decode(Double.self, forKey: .activityDepth)) ?? d.activityDepth
+        beatSync = (try? c.decode(Double.self, forKey: .beatSync)) ?? d.beatSync
     }
 
     func encode(to encoder: Encoder) throws {
@@ -220,6 +227,7 @@ struct Composer2EventSpec: Codable, Equatable {
         if !colors.isEmpty { try c.encode(colors, forKey: .colors) }
         try c.encode(activityPeriod, forKey: .activityPeriod)
         try c.encode(activityDepth, forKey: .activityDepth)
+        if beatSync > 0 { try c.encode(beatSync, forKey: .beatSync) }
     }
 
     /// The spec the generator actually runs: ordered ranges, sane floors.
@@ -257,6 +265,7 @@ struct Composer2EventSpec: Codable, Equatable {
         let period = activityPeriod.isFinite ? activityPeriod : 0
         s.activityPeriod = period <= 0 ? 0 : Composer2Math.clamp(period, 10, 3600)
         s.activityDepth = Composer2Math.clamp01(activityDepth)
+        s.beatSync = beatSync.isFinite ? Composer2Math.clamp(beatSync, 0, 64) : 0
         return s
     }
 
