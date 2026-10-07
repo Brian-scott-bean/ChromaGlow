@@ -62,8 +62,11 @@ final class Composer2PlayAlongSettings {
 enum Composer2BeatReadout {
     case off
     case listening
-    case locked(bpm: Int, beatInBar: Int, beatsPerBar: Int, knowsTheOne: Bool)
+    /// `remembered`: the grid came from the song memory (this song, these
+    /// speakers, learned before).
+    case locked(bpm: Int, beatInBar: Int, beatsPerBar: Int, knowsTheOne: Bool, remembered: Bool)
 
+    @MainActor
     static func current(at now: Double = CACurrentMediaTime(), isOn: Bool) -> Composer2BeatReadout {
         guard isOn else { return .off }
         let beat = BeatClock.snapshot()
@@ -71,14 +74,15 @@ enum Composer2BeatReadout {
         let index = beat.beatIndex(at: now)
         let perBar = max(1, beat.beatsPerBar)
         return .locked(bpm: Int(beat.bpm.rounded()), beatInBar: ((index % perBar) + perBar) % perBar,
-                       beatsPerBar: perBar, knowsTheOne: beat.barConfidence >= Composer2Quantizer.barConfidenceForBar)
+                       beatsPerBar: perBar, knowsTheOne: beat.barConfidence >= Composer2Quantizer.barConfidenceForBar,
+                       remembered: MusicSessionCoordinator.shared.beatRemembered)
     }
 
     var text: String {
         switch self {
         case .off: return "Play Along"
         case .listening: return "Listening…"
-        case .locked(let bpm, _, _, _): return "\(bpm) BPM"
+        case .locked(let bpm, _, _, _, let remembered): return remembered ? "\(bpm) BPM · Remembered" : "\(bpm) BPM"
         }
     }
 }
@@ -151,7 +155,7 @@ struct Composer2PlayAlongButton: View {
                 }
             }
             Spacer(minLength: 6)
-            if case .locked(_, let beatInBar, let perBar, let knowsTheOne) = readout {
+            if case .locked(_, let beatInBar, let perBar, let knowsTheOne, _) = readout {
                 Composer2BeatDots(beatInBar: beatInBar, beatsPerBar: perBar, knowsTheOne: knowsTheOne)
             } else if on {
                 ProgressView().controlSize(.small).tint(LuminousPalette.void)

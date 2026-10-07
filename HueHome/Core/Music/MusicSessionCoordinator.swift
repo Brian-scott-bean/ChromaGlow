@@ -25,6 +25,9 @@ final class MusicSessionCoordinator {
     private(set) var isPlaying = false
     private(set) var tempo: ResolvedTempo?
     private(set) var artworkPalette: PaletteConfig?
+    /// This song on these speakers was learned before: the beat grid came
+    /// straight from the song memory ("Remembered"). Track cadence only.
+    private(set) var beatRemembered = false
 
     /// Position arrives at poll cadence (~1 Hz); observing it would
     /// invalidate the Studio tab once a second forever (the
@@ -44,11 +47,18 @@ final class MusicSessionCoordinator {
     @ObservationIgnored private let clock: BeatClock
     @ObservationIgnored private let resolver: TrackTempoResolver
     @ObservationIgnored private let fetchArtwork: (URL) async -> CGImage?
+    @ObservationIgnored private let songMemory: SongMemory
+    /// The phone's output route fingerprint (the song memory's key).
+    @ObservationIgnored private let route: () -> String
+    @ObservationIgnored private let hostNow: () -> Double
 
     init(
         clock: BeatClock? = nil,
         resolver: TrackTempoResolver? = nil,
-        fetchArtwork: ((URL) async -> CGImage?)? = nil
+        fetchArtwork: ((URL) async -> CGImage?)? = nil,
+        songMemory: SongMemory? = nil,
+        route: (() -> String)? = nil,
+        hostNow: (() -> Double)? = nil
     ) {
         self.clock = clock ?? BeatClock.shared
         self.resolver = resolver ?? TrackTempoResolver(providers: TrackTempoResolver.liveProviders())
@@ -56,6 +66,9 @@ final class MusicSessionCoordinator {
             guard let (data, _) = try? await URLSession.shared.data(from: url) else { return nil }
             return UIImage(data: data)?.cgImage
         }
+        self.songMemory = songMemory ?? SongMemory.shared
+        self.route = route ?? { SongMemory.cachedRoute() }
+        self.hostNow = hostNow ?? { CACurrentMediaTime() }
     }
 
     var hasSession: Bool { activeService != nil }
@@ -65,6 +78,7 @@ final class MusicSessionCoordinator {
 
     func activate(_ newSource: any MusicSource) async throws {
         deactivate()
+        SongMemory.primeRouteCache()
         source = newSource
         activeService = newSource.service
         newSource.onUpdate = { [weak self] track, position in
@@ -107,6 +121,7 @@ final class MusicSessionCoordinator {
         if isPlaying { isPlaying = false }
         if tempo != nil { tempo = nil }
         if artworkPalette != nil { artworkPalette = nil }
+        if beatRemembered { beatRemembered = false }
         lastPosition = nil
         clock.endServiceDrive(trackChanged: true)
     }
@@ -152,12 +167,28 @@ final class MusicSessionCoordinator {
         // tempos may take the hold; on a live estimate the clock stays on
         // audio-follow and keeps listening.
         guard tempo.origin != .liveEstimate else { return }
-        clock.driveFromTrack(bpm: tempo.bpm, position: position, confidence: tempo.confidence)
+        let now = hostNow()
+        // Play Along P5: where this song's beats fall on these speakers, if
+        // it was learned before — then the grid is right from the first drive.
+        let key = nowPlaying.map { SongMemory.key(for: TempoQuery(track: $0), route: route()) }
+        let remembered = key.flatMap { songMemory.recall($0, bpm: tempo.bpm) }
+        // The clock takes a remembered grid only while it has no offset for
+        // this track yet; "Remembered" means the grid came from it.
+        let fromMemory = remembered != nil && clock.serviceBeatOffset == nil
+        clock.driveFromTrack(bpm: tempo.bpm, position: position, confidence: tempo.confidence,
+                             beatOffset: remembered?.offset, barKnown: remembered?.barKnown ?? false, now: now)
+        if fromMemory, !beatRemembered { beatRemembered = true }
+        // ...and learn it, while the microphone confirms where they fall.
+        if let key, let offset = clock.confirmedServiceOffset(now: now) {
+            songMemory.observe(key, bpm: tempo.bpm, barOffset: offset, beatsPerBar: clock.beatsPerBar,
+                               phaseConfidence: clock.phaseConfidence, barConfidence: clock.barConfidence, at: now)
+        }
     }
 
     private func startTempoResolve(for track: NowPlayingTrack?) {
         tempoTask?.cancel()
         if tempo != nil { tempo = nil }   // a stale grid must not drive the new track
+        if beatRemembered { beatRemembered = false }
         // ...and the CLOCK must not keep it either: without this, a track
         // change whose tempo never resolves left the old track's grid
         // driving indefinitely — and the stale hold suppressed the very

@@ -259,6 +259,11 @@ final class BeatClock {
         let perBar = max(1, beatsPerBar)
         let shift = ((Int(nearest) % perBar) + perBar) % perBar
         beatEpoch += Double(shift) * interval
+        if let offset = serviceBeatOffset {
+            // The track's grid moves with the one the user named, so a
+            // re-anchor (seek) keeps it and the song memory learns it.
+            serviceBeatOffset = Self.wrapped(offset + Double(shift) * interval, interval * Double(perBar))
+        }
         barConfidence = 1
         barSetByUser = true
         pendingBarShift = 0
@@ -329,7 +334,7 @@ final class BeatClock {
     private var serviceOffsetAgreement = 0
     /// The service grid's t=0 anchor as of the latest drive.
     private var lastServiceCandidateEpoch: Double?
-    /// Capture time of the latest confident mic phase under a service hold.
+    /// Capture time of the latest confident mic phase (this track).
     private var lastMicPhaseAt: Double = -.infinity
     /// Passes the offset must agree on before the drive trusts it.
     private static let offsetAgreementToTrust = 6
@@ -340,14 +345,29 @@ final class BeatClock {
     /// A service grid's own phase and bar are guesses (beat 1 at t=0).
     private static let serviceGuessPhaseConfidence = 0.3
     private static let serviceGuessBarConfidence = 0.2
+    /// The one, as the song memory remembered it.
+    private static let rememberedBarConfidence = 0.6
+    /// The microphone has agreed with the current offset at least once — an
+    /// offset the song memory handed in is not yet evidence FOR the memory.
+    private var offsetConfirmedByMic = false
 
     private var serviceOffsetTrusted: Bool { serviceOffsetAgreement >= Self.offsetAgreementToTrust }
 
     private func resetServiceOffset() {
         serviceBeatOffset = nil
         serviceOffsetAgreement = 0
+        offsetConfirmedByMic = false
         lastServiceCandidateEpoch = nil
         lastMicPhaseAt = -.infinity
+    }
+
+    /// The track's beat offset (modulo one bar) while the microphone keeps
+    /// confirming it — what the song memory learns. nil until the mic has
+    /// agreed often enough to trust it, and again once the mic goes quiet.
+    func confirmedServiceOffset(now: Double = CACurrentMediaTime()) -> Double? {
+        guard serviceHold, serviceOffsetTrusted, offsetConfirmedByMic,
+              now - lastMicPhaseAt < Self.micPhaseFreshness else { return nil }
+        return serviceBeatOffset
     }
 
     private static func wrapped(_ x: Double, _ m: Double) -> Double {
@@ -370,6 +390,7 @@ final class BeatClock {
     func driveFromTrack(bpm newBPM: Double, position: PlaybackPosition,
                         confidence newConfidence: Double = 1.0,
                         beatOffset knownOffset: Double? = nil,
+                        barKnown: Bool = true,
                         now: Double = CACurrentMediaTime()) {
         guard position.isPlaying, newBPM >= 20, newBPM <= 300 else { return }
         // Refresh the hold BEFORE the pin guard: a pinned clock still knows
@@ -385,20 +406,40 @@ final class BeatClock {
         let candidateEpoch = now - positionSec
         lastServiceCandidateEpoch = candidateEpoch
         if serviceBeatOffset == nil, let knownOffset, knownOffset.isFinite {
+            // The song memory's grid for this track on this route: trusted at
+            // once, and the one with it when the memory knew where bars start
+            // (`barKnown`; otherwise the offset names a beat, not a bar).
             serviceBeatOffset = Self.wrapped(knownOffset, interval * Double(max(1, beatsPerBar)))
             serviceOffsetAgreement = Self.offsetAgreementToTrust
+            offsetConfirmedByMic = false
+            if barKnown, !barSetByUser { barConfidence = max(barConfidence, Self.rememberedBarConfidence) }
         }
         let trusted = serviceOffsetTrusted
         let target = candidateEpoch + (trusted ? (serviceBeatOffset ?? 0) : 0)
 
         if source != .service || bpm == 0 {
+            // The microphone already hears this song's beat and the track's
+            // offset is not known yet: keep the mic's phase, take the
+            // service's tempo. Jumping to the t=0 guess here threw away a lock
+            // the room could see, then crept back 30 ms a pass.
+            if !trusted, source == .audio, bpm > 0, now - lastMicPhaseAt < Self.micPhaseFreshness,
+               abs(bpm / newBPM - 1) < 0.03 {
+                retime(to: newBPM, keepingPhaseAt: now)
+                confidence = newConfidence
+                source = .service
+                publishMirror()
+                return
+            }
             // Entering service drive: adopt tempo + phase outright.
             bpm = newBPM
             confidence = newConfidence
             source = .service
             beatEpoch = target
             phaseConfidence = trusted ? 0.9 : Self.serviceGuessPhaseConfidence
-            if !barSetByUser { barConfidence = trusted ? max(barConfidence, 0.6) : Self.serviceGuessBarConfidence }
+            // A trusted offset keeps whatever the clock knows of the bar (the
+            // memory raised it above when it knew the one); a t=0 guess knows
+            // nothing.
+            if !barSetByUser, !trusted { barConfidence = Self.serviceGuessBarConfidence }
             publishMirror()
             return
         }
@@ -460,6 +501,7 @@ final class BeatClock {
         serviceBeatOffset = Self.wrapped(beatEpoch - candidate, bar)
         if abs(residual) < Self.offsetAgreementTolerance {
             serviceOffsetAgreement += 1
+            offsetConfirmedByMic = true
         } else {
             serviceOffsetAgreement = max(0, serviceOffsetAgreement - 2)
         }
@@ -598,6 +640,7 @@ final class BeatClock {
             beatEpoch = o.lastBeat
             source = .audio
             phaseConfidence = o.phaseConfidence
+            if o.phaseConfidence >= Self.minAudioConfidence { lastMicPhaseAt = o.lastBeat }
             if !barSetByUser { barConfidence = 0 }
             pendingBarShift = 0
             pendingBarRuns = 0
@@ -610,6 +653,7 @@ final class BeatClock {
         if o.phaseConfidence >= Self.minAudioConfidence {
             let error = phaseError(of: o.lastBeat)
             beatEpoch += min(Self.maxPhaseCorrection, max(-Self.maxPhaseCorrection, error))
+            lastMicPhaseAt = o.lastBeat
         }
         phaseConfidence = o.phaseConfidence
         applyBar(o)
