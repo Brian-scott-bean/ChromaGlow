@@ -232,6 +232,19 @@ final class Composer2LabEngineTests: XCTestCase {
         XCTAssertEqual(Composer2LiveOutput(composition: beat).mirroredReactionSource(), .beat)
     }
 
+    /// Play Along P0.2: a beat-locked rhythm with no sound source still needs
+    /// the beat clock — before, it requested nothing and ran free.
+    func testBeatLockedRhythmRequestsTheBeatClock() {
+        var locked = Composer2PresetLibrary.lavaLamp
+        XCTAssertFalse(locked.usesBeatClock)
+        locked.layers[0].rhythm.quantizeBeats = 4
+        XCTAssertTrue(locked.layers.allSatisfy { !$0.audio.isActive }, "no layer listens on its own")
+        XCTAssertTrue(locked.usesBeatClock)
+        XCTAssertEqual(Composer2LiveOutput(composition: locked).mirroredReactionSource(), .beat)
+        locked.layers[0].enabled = false
+        XCTAssertFalse(locked.usesBeatClock, "a disabled layer asks for nothing")
+    }
+
     func testEventCapLimitsFlashes() {
         var spec = Composer2EventSpec(timing: .fixed, interval: 1, probability: 1, burstMin: 1, burstMax: 1,
                                       durationMin: 0.5, durationMax: 0.5, decaySeconds: 0.2, intensityMin: 1, intensityMax: 1)

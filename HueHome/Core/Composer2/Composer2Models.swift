@@ -254,7 +254,13 @@ struct Composer2Composition: Codable, Equatable, Identifiable {
     var hasVisibleOutput: Bool { layers.contains { $0.contributes } }
     var usesAudio: Bool { layers.contains { $0.contributes && $0.audio.isActive } }
     var usesMicrophoneBands: Bool { layers.contains { $0.contributes && $0.audio.usesMicrophoneBands } }
-    var usesBeatClock: Bool { layers.contains { $0.contributes && $0.audio.source == .beat } }
+    /// The shared beat clock drives this composition: a layer punches or steps
+    /// on the beat, or its rhythm is beat-locked. A beat-locked rhythm used to
+    /// count as not needing the clock, so nothing asked for the microphone and
+    /// the lock silently ran on its own timer.
+    var usesBeatClock: Bool {
+        layers.contains { $0.contributes && ($0.audio.source == .beat || $0.rhythm.quantizeBeats > 0) }
+    }
     var hasEvents: Bool { layers.contains { $0.contributes && $0.events != nil } }
 
     /// The first two palette stops of the first visible layer — used to seed
