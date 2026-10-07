@@ -21,9 +21,36 @@ final class Composer2LiveOutput: CompositionFrameSource, @unchecked Sendable {
             if composition != oldValue {
                 plansDirty = true
                 derivedDirty = true
+                paintTargetDirty = true
             }
         }
     }
+
+    // MARK: Song colors (P6)
+
+    /// The playing song's album-art swatches: the look wears them (nil: as
+    /// authored). A change lands on the one — on the next bar line when the
+    /// clock knows where bars are, crossfading over the last eighth of a bar.
+    var songSwatches: ArtworkSwatches? {
+        didSet {
+            if songSwatches != oldValue {
+                paintTargetDirty = true
+                swatchesChanged = true
+            }
+        }
+    }
+    /// The composition as the room wears it right now (painted or not,
+    /// mid-change or not); what the plans were built for.
+    private var worn: Composer2Composition?
+    /// `composition` in the song's colours (nil: no swatches).
+    private var paintTarget: Composer2Composition?
+    private var paintTargetDirty = true
+    private var swatchesChanged = false
+    /// A colour change on its way: from what the room wore, landing at a
+    /// shown-time.
+    private var paintChange: (from: Composer2Composition, landing: Double, preroll: Double)?
+    /// A change with no grid to land on fades over this long.
+    static let paintFade = 1.0
 
     // MARK: Play Along (P3)
 
@@ -113,6 +140,9 @@ final class Composer2LiveOutput: CompositionFrameSource, @unchecked Sendable {
         derivedState.reset()
         derivedDirty = true
         playAlongWeight = 0
+        paintChange = nil
+        worn = nil
+        paintTargetDirty = true
     }
 
     /// The preview's geometry (a UI layout). Ignored once a live loop has
@@ -194,8 +224,10 @@ final class Composer2LiveOutput: CompositionFrameSource, @unchecked Sendable {
             plansDirty = true
         }
         if time.isNaN { time = 0 }
+        // Song colors: the look as the room wears it at this shown-time.
+        let look = wornComposition(at: hostNow, beat: beat)
         if plansDirty {
-            plans = Composer2Engine.plans(for: composition, geometry: geometry)
+            plans = Composer2Engine.plans(for: look, geometry: geometry)
             derivedPlans = []
             plansDirty = false
         }
@@ -205,13 +237,13 @@ final class Composer2LiveOutput: CompositionFrameSource, @unchecked Sendable {
         let mix = director.update(at: hostNow, beat: beat)
         playAlongWeight = mix.weight
         if mix.weight < 1 {
-            Composer2Engine.evaluate(composition, time: time, geometry: geometry, plans: &plans, state: &state,
+            Composer2Engine.evaluate(look, time: time, geometry: geometry, plans: &plans, state: &state,
                                      audio: features, beat: beat, hostNow: hostNow, eventCap: eventCap,
                                      into: &frameBuffer)
         }
         if mix.weight > 0 {
             if derived == nil || derivedDirty || derivedBPM != mix.bpm {
-                derived = Composer2PlayAlong.apply(composition, feel: playAlongFeel, bpm: mix.bpm,
+                derived = Composer2PlayAlong.apply(look, feel: playAlongFeel, bpm: mix.bpm,
                                                    category: Composer2ThemeCatalog.entry(id: composition.id)?.category)
                 derivedBPM = mix.bpm
                 derivedDirty = false
@@ -231,6 +263,48 @@ final class Composer2LiveOutput: CompositionFrameSource, @unchecked Sendable {
         lastRenderTime = time
         lastFrames = frameBuffer
         return frameBuffer
+    }
+
+    /// The composition the engine plays at shown-time `t`: as authored, in
+    /// the song's colours, or crossfading between the two on the way to the
+    /// one. Re-plans only when what the room wears actually changes.
+    private func wornComposition(at t: Double, beat: BeatSnapshot) -> Composer2Composition {
+        if paintChange == nil, !paintTargetDirty, let worn { return worn }
+        if paintTargetDirty {
+            paintTarget = songSwatches.map { Composer2AlbumPalette.apply(composition, swatches: $0) }
+            paintTargetDirty = false
+            if swatchesChanged {
+                swatchesChanged = false
+                // A new song's colours — or the look's own again — land on
+                // the one; with no grid they fade; with no clock at all (a
+                // preview) or nothing on yet they apply at once.
+                if let current = worn, t > 0, t.isFinite {
+                    if let landing = Composer2Quantizer.landing(after: t, beat: beat) {
+                        paintChange = (current, landing.time, Composer2Quantizer.preroll(for: beat))
+                    } else {
+                        paintChange = (current, t + Self.paintFade, Self.paintFade)
+                    }
+                } else {
+                    paintChange = nil
+                }
+            }
+        }
+        let target = paintTarget ?? composition
+        var next = target
+        if let change = paintChange {
+            if !(t < change.landing) {
+                paintChange = nil
+            } else {
+                let weight = Composer2Quantizer.weight(at: t, landing: change.landing, preroll: change.preroll)
+                next = Composer2AlbumPalette.blend(change.from, target, t: weight)
+            }
+        }
+        if next != worn {
+            worn = next
+            plansDirty = true
+            derivedDirty = true
+        }
+        return next
     }
 
     private func installGeometry(count: Int, radial: [Double], angular: [Double],

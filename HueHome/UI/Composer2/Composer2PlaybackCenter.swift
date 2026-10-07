@@ -116,6 +116,10 @@ final class Composer2PlaybackCenter {
         // Room mode sweeps the lights one command at a time — it cannot land a
         // punch on the beat, so it plays along as Glide (cycles locked to bars).
         output.playAlongFeel = roomMode ? .glide : settings.feel
+        // Song colors (P6): while Play Along is on, the playing track's album
+        // art paints the look; a new track's colours land on the one.
+        let swatches = settings.isOn && settings.songColors ? MusicSessionCoordinator.shared.artworkSwatches : nil
+        if output.songSwatches != swatches { output.songSwatches = swatches }
     }
 
     // MARK: Derived state
@@ -570,7 +574,9 @@ final class Composer2PlaybackCenter {
             box?.frameSource = landing.incoming
             landing.outgoing.releaseLiveGeometry()
         }
-        // A stream that failed over to Room mode plays along as Glide.
+        // Song colors follow the track (the music session has no hook into
+        // the live look; twice a second is well inside a bar), and a stream
+        // that failed over to Room mode drops to Glide.
         Self.configurePlayAlong(output, roomMode: current.playMode == .roomMode)
         guard isApplicationActive else { return true }
         let driving = box.map { gateway.isDriving(box: $0) } ?? true

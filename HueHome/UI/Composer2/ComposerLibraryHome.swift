@@ -284,7 +284,19 @@ struct ComposerLibraryHome: View {
         VStack(alignment: .leading, spacing: 8) {
             LuminousEyebrow(text: "Music")
                 .padding(.horizontal, 4)
-            MusicNowPlayingBar(style: .compact, onOpenPicker: { showMusicPicker = true })
+            MusicNowPlayingBar(style: .compact, onUseAlbumColors: songColorsToggle,
+                               onOpenPicker: { showMusicPicker = true })
+        }
+    }
+
+    /// The strip's album art turns song colors on and off — while a look
+    /// plays along and the art has colours a light can show (never Spotify's).
+    private var songColorsToggle: (() -> Void)? {
+        let settings = Composer2PlayAlongSettings.shared
+        guard center.isLive, settings.isOn, MusicSessionCoordinator.shared.artworkSwatches != nil else { return nil }
+        return {
+            HapticManager.shared.selection()
+            settings.songColors.toggle()
         }
     }
 

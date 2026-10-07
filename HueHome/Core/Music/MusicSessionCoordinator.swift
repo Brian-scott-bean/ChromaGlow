@@ -25,6 +25,10 @@ final class MusicSessionCoordinator {
     private(set) var isPlaying = false
     private(set) var tempo: ResolvedTempo?
     private(set) var artworkPalette: PaletteConfig?
+    /// The playing track's album art as light, by role — song colors (Play
+    /// Along P6). Never from Spotify, whose terms forbid deriving from cover
+    /// art; gone with the track (Apple 4.5.2(ii): art only with its playback).
+    private(set) var artworkSwatches: ArtworkSwatches?
     /// This song on these speakers was learned before: the beat grid came
     /// straight from the song memory ("Remembered"). Track cadence only.
     private(set) var beatRemembered = false
@@ -121,6 +125,7 @@ final class MusicSessionCoordinator {
         if isPlaying { isPlaying = false }
         if tempo != nil { tempo = nil }
         if artworkPalette != nil { artworkPalette = nil }
+        if artworkSwatches != nil { artworkSwatches = nil }
         if beatRemembered { beatRemembered = false }
         lastPosition = nil
         clock.endServiceDrive(trackChanged: true)
@@ -212,6 +217,7 @@ final class MusicSessionCoordinator {
     private func startArtworkExtraction(for track: NowPlayingTrack?) {
         artworkTask?.cancel()
         if artworkPalette != nil { artworkPalette = nil }
+        if artworkSwatches != nil { artworkSwatches = nil }
         guard let track else { return }
         let gen = generation
         let currentSource = source
@@ -223,6 +229,9 @@ final class MusicSessionCoordinator {
             }
             guard !Task.isCancelled, self.generation == gen, let image else { return }
             self.artworkPalette = ArtworkPaletteExtractor.extract(from: image)
+            if track.service != .spotify {
+                self.artworkSwatches = ArtworkPaletteExtractor.swatches(from: image)
+            }
         }
     }
 }
