@@ -145,6 +145,13 @@ final class MusicSessionCoordinator {
 
     private func driveClockIfReady() {
         guard let tempo, let position = lastPosition, position.isPlaying else { return }
+        // A live estimate is the microphone's own guess handed back. Driving
+        // the clock with it as a SERVICE tempo froze that guess for the whole
+        // track (the service hold outranks every later mic estimate) and made
+        // `.beat` looks release the mic as "service-driven". Only metadata
+        // tempos may take the hold; on a live estimate the clock stays on
+        // audio-follow and keeps listening.
+        guard tempo.origin != .liveEstimate else { return }
         clock.driveFromTrack(bpm: tempo.bpm, position: position, confidence: tempo.confidence)
     }
 

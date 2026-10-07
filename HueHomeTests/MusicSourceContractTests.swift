@@ -208,6 +208,28 @@ final class MusicSourceContractTests: XCTestCase {
                        "mic demand for .beat looks must be able to return immediately")
     }
 
+    // MARK: - A live estimate never takes the service hold (Play Along P0.1)
+
+    func testLiveEstimateTempoNeverTakesTheServiceHold() async throws {
+        // No providers and no hint: the resolver falls back to the mic's own
+        // guess. Handing that guess back as a SERVICE tempo froze it for the
+        // whole track and released the mic demand of `.beat` looks.
+        let mus = MusicSessionCoordinator(
+            clock: clock,
+            resolver: TrackTempoResolver(providers: [], fileURL: tempURL, defaults: defaults,
+                                         liveEstimate: { (128, 0.6) }))
+        let scripted = ScriptedMusicSource()
+        try await mus.activate(scripted)
+        scripted.emit(
+            NowPlayingTrack(service: .demo, title: "Unknown", artist: "X"),
+            PlaybackPosition(positionMs: 0, capturedAt: 100, isPlaying: true)
+        )
+        await waitUntil("the live estimate still resolves for display") { mus.tempo != nil }
+        XCTAssertEqual(mus.tempo?.origin, .liveEstimate)
+        XCTAssertNotEqual(clock.source, .service, "a mic guess must not drive the clock as the music service")
+        XCTAssertFalse(clock.isServiceDriven(now: 101), "beat looks keep their microphone")
+    }
+
     // MARK: - Activation liveness (audit R9, F4)
 
     func testFailedStartDoesNotKillNewerSession() async throws {
