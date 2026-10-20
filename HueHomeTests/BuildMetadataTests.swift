@@ -6,6 +6,16 @@ import XCTest
 
 final class BuildMetadataTests: XCTestCase {
 
+    /// The invite sheet shares a QR image, and the share sheet offers Save
+    /// Image; without this string iOS terminates the app when it is chosen.
+    func testTheAppDeclaresThePrivacyStringsItsFeaturesNeed() {
+        for key in ["NSPhotoLibraryAddUsageDescription", "NSMicrophoneUsageDescription",
+                    "NSCameraUsageDescription", "NSLocalNetworkUsageDescription"] {
+            let text = Bundle.main.object(forInfoDictionaryKey: key) as? String
+            XCTAssertFalse((text ?? "").trimmingCharacters(in: .whitespaces).isEmpty, "\(key) is missing")
+        }
+    }
+
     func testReadsValidVersionAndBuild() {
         let metadata = BuildMetadata(infoDictionary: [
             "CFBundleShortVersionString": "0.9.0",
