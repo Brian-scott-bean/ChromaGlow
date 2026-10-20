@@ -4,13 +4,18 @@
 
 ---
 
-## Current Status Snapshot (updated 2026-10-07)
+## Current Status Snapshot (updated 2026-10-19)
 
 ### Pointers
 - Canonical agent context: `AGENTS.md`. Claude Code entry point: `CLAUDE.md` points there.
 - Live shared handoff: append-only entries in this `DEVLOG.md`. Git is the shared memory between tools.
 
 ### iOS — where we are RIGHT NOW
+- **BUILD 909 ON `experiment/play-along` — THE AUDIT'S FIRST CHUNK, NOT MERGED (2026-10-19).** Play Along's
+  merge blockers B1/B2/B3/B5/B6 fixed, punches land on the beat, All Day no longer turns rooms on, the invite's
+  Save Image permission, a lazy Composer library, and `Release-SpotifyExperimental` (optimized internal
+  TestFlight). Rollback tag `checkpoint/pre-build-909-first-chunk`. Simulator only — **hardware NOT verified.**
+  Entry at the end of this file.
 - **PLAY ALONG — BUILD 908 ON `experiment/play-along`, NOT MERGED (2026-10-07).** Any look moves with the music
   in the room: a new beat tracker + BeatClock v2, render-ahead by the light path, Play Along (Glide · Groove · Hit),
   On the One, song memory, song colors. Worktree `.claude/worktrees/play-along`; rollback tag
@@ -13934,3 +13939,51 @@ pick Spotify → Start → no crash".
   "Following Apple Music" readout, Sync Check, capture on `AVAudioSinkNode` (`installTap` is deprecated in the iOS
   27 SDK), and the legacy feature extractor still reads 4096 of each 4800-frame buffer (the new onset path reads
   every frame).
+
+## 2026-10-19 — [Claude] Build 909: the audit's first chunk on `experiment/play-along` (not merged)
+
+- Brian, after the 2026-10-19 full app audit: "what fixes would you start in the first large chunk of work" → the
+  plan in chat → "go for it". Same branch and worktree as build 908; rollback tag
+  `checkpoint/pre-build-909-first-chunk` (= `a0b7cb8`). Nothing on `main` changed; nothing pushed.
+- One commit per fix:
+  - `eb1e066` **B6 (safety)** Dim Flashing Lights scales every sound punch by its 0.3 cap (it capped events only)
+  - `e8fe10f` **B1** the Light timing slider: `lead = base − offset` ("earlier" made the lights later); range
+    −300…+150 ms
+  - `bdd3421` **B2** passes with no trusted beat fade the clock's confidences (half-life 1.5 s after 1 s); a
+    stopped mic zeroes a mic-owned grid. Play Along now lets go after silence instead of punching on a ghost grid
+  - `aca34b5` **B3** a new tempo locks afresh; a large phase error snaps on a second agreeing pass (held and
+    reported below usable meanwhile); after a 3 s gap the first confident beat corrects at once
+  - `1bfabc2` **B5** event specs that differ only in colour keep their schedule (the song-colour crossfade cut
+    every event in flight)
+  - `0bbb933` beat lab: a `p@0` row scores the shipping tracker from each song's first beat
+  - `0b1a0d8` beat and onset punches rise instantly; smoothing shapes only the fall (Club Pulse peaked at ~49 %
+    ~200 ms after the beat)
+  - `51c6e79` All Day never sends `on` and skips rooms that are off (it turned them back on every 5 min); setting
+    and tour copy follow
+  - `c91017d` `NSPhotoLibraryAddUsageDescription` (Save Image on the invite share sheet terminated the app)
+  - `4d6d4d4` Composer library: lazy "For you" stack, so off-screen shelves don't run their live stages; card
+    previews 10 fps (was 14)
+  - `f490e4e` `Release-SpotifyExperimental`: the optimized internal-TestFlight archive with the experiment
+    (`-O`, dSYMs, `CHROMAGLOW_INTERNAL_TESTFLIGHT`); the scheme *HueHome Spotify Experimental* archives it.
+    TestFlight 907 was a Debug (-Onone) archive. Steps: `docs/ios/local-spotify-pcm-experiment.md` step 6
+  - `0437d8f` build 909 — **24** `CURRENT_PROJECT_VERSION` entries now (18 + the new config on 6 targets)
+- Dropped from the plan: "ignore low-confidence service BPMs" — already true here: since P0.1 (`c7eff67`) only
+  metadata tempos (hint / cache / provider, all confidence 1.0) drive the clock.
+- Beat lab (synthetic audio only), pre-fix clock → build 909: song change 128→96, first-10-s beats where the grid
+  claimed a lock but was >50 ms off 9 of 28 → 3 of 24, second song locks 7.5 → 6.3 s; 174 half-time 1 of 16 →
+  0 of 14; live drift ±2 % p90 60.6 → 52.6 ms; every other case unchanged (`beatlab/results-2026-10-19.txt`).
+  README §14 records the fixes.
+- Tests (Xcode 27.1, iOS 27.0 simulator `C10C70A7-A702-40A9-8810-A6F13B98C57B`): 16 new tests (B6, B1, five for
+  B2, five for B3, B5, the punch, All Day, the privacy strings); targeted runs all
+  green as each fix landed (651/651 for the last four). Full suite **2559/2559** (= 2543 + 16; result bundle `/Volumes/Dev/DerivedData/play-along-full-909.xcresult`: 0 failed, 0 skipped; 2 workers). Guards: all passed.
+  `Release-SpotifyExperimental` device build (generic iOS, unsigned): succeeded, `-O`, dSYMs,
+  `verify_spotify_experiment_absent.sh --expect-present` OK. Not archived or uploaded.
+- Worktree note: `Experimental/SpotifyReceiver/build/` is git-ignored and now COPIED into this worktree (a symlink
+  is not ignored by the `build/` rule).
+- Not verified on hardware: all of it. On the phone, first: the 15-minute Play Along check from the audit (lock at
+  120 BPM, 240 fps slo-mo light timing with the now-fixed slider, 30 s silence → the look lets go, a gapless song
+  change re-locks, speech stays "Listening…", Dim Flashing Lights softens Hit), plus All Day leaving an off room
+  off, and Save Image on the invite sheet.
+- Still open from the audit (next chunk): B4, B7, B8 (render loop on the main actor), B9, low-latency capture
+  (`AVAudioSinkNode`), a 50 Hz loop off the main thread, Sync Check, per-light reactions, the Sound control in
+  Tune, bridge re-discovery after an IP change, Entertainment stop on background.

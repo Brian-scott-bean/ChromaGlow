@@ -818,3 +818,21 @@ coasts at full weight until it releases); the per-beat haptic; the "Following Ap
 
 **Verified:** on the iOS 27 simulator (counts in the DEVLOG entry). **Not verified on hardware:** all of §8's
 device plan, and §11's open questions.
+
+## 14. Fixes before merge (2026-10-19, build 909)
+
+From the 2026-10-19 audit of build 908 (the B-numbers below). Same branch, rollback tag
+`checkpoint/pre-build-909-first-chunk` (= `a0b7cb8`). One commit each.
+
+| Bug | What was wrong | Fix |
+|---|---|---|
+| B6 | Dim Flashing Lights capped events only; Groove/Hit punches lit the whole room at full strength on every beat | Every sound punch is scaled by the same 0.3 cap (`Composer2Engine`) |
+| B1 | The Light timing slider worked backwards: the lead *added* the offset, so "earlier" made the lights later | `lead = base − offset`; range −300…+150 ms (§5.5) |
+| B2 | Confidences never decayed (silent passes never reached the clock; low passes returned first; nothing called `clear()`): a ghost grid, a stuck BPM readout, the 20 s release never fired, the next session engaged on the old grid | Passes with no trusted beat fade phase/tempo/bar confidence (half-life 1.5 s after a 1 s grace); a stopped mic zeroes a mic-owned grid; the tempo coasts. Pins, taps and service drives never fade |
+| B3 | A song change crept the phase 30 ms per pass (~5 s off the beat) while claiming a lock | A new tempo (>3 %) locks afresh; a large error (>70 ms or ⅙ beat) is held one pass (reported 0.4) and snapped on a second agreeing pass; after 3 s with no drive the first confident beat corrects at once |
+| B5 | The song-colour crossfade re-armed the event schedule every frame, cutting events in flight | Specs that differ only in colour keep the schedule (`hasSameSchedule(as:)`) |
+| lab | Scoring skipped each song's first 10 s, hiding B3 | A `p@0` row scores the shipping tracker from the first beat and counts claimed-but-wrong beats; song change 128→96: 9 of 28 → 3 of 24, second song locks 7.5 → 6.3 s (`beatlab/results-2026-10-19.txt`) |
+
+Still open from the audit: B4 (a service prior floors tempo confidence at 0.72), B7 (an untrusted service offset
+pulls back to t=0 once the mic is 2 s stale), B8 (the render loop is on the main actor), B9 (SongMemory key unsalted,
+file rewritten on main), B10–B12. The lab is still synthetic audio only.
