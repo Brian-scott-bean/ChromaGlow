@@ -459,6 +459,31 @@ final class Composer2LabEngineTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(state.layers[0].events?.firedCount ?? 0, 1)
     }
 
+    /// Club Pulse and Beat Drop punch with the default smoothing (τ 0.15 s).
+    /// It smoothed the rise too: a beat's punch peaked at about half
+    /// strength some 200 ms after the beat. The rise is now instant and the
+    /// smoothing shapes the fall.
+    func testABeatPunchPeaksOnTheBeatAndStillFallsSmoothly() {
+        var layer = Composer2Layer(color: .solid(.d65), motion: Composer2Motion(kind: .static),
+                                   rhythm: Composer2Rhythm(shape: .steady, maxBrightness: 0.2))
+        layer.audio = Composer2AudioModulation(source: .beat, intensity: 1)   // default smoothing 0.3, decay 0.4
+        let c = Composer2Composition(name: "Pulse", createdAt: Date(timeIntervalSince1970: 0), layers: [layer])
+        // Beats every 0.5 s from 999.99: frame 250 (t = 10.0) is 10 ms after one.
+        let beat = BeatSnapshot(bpm: 120, beatEpoch: 999.99, beatsPerBar: 4)
+        var state = Composer2EngineState()
+        var onBeat = 0.0, later = 0.0
+        for i in 0...257 {   // 25 fps; frame 257 is 0.29 s after that beat
+            let t = Double(i) * 0.04
+            let frames = Composer2Engine.evaluate(c, time: t, geometry: geometry(3), state: &state,
+                                                  beat: beat, hostNow: 1000 + t)
+            if i == 250 { onBeat = frames[0].brightness }
+            later = frames[0].brightness
+        }
+        XCTAssertGreaterThan(onBeat, 0.95, "full punch on the beat itself")
+        let rawLater = 0.2 + 0.8 * exp(-0.29 / layer.audio.punchDecayTau)
+        XCTAssertGreaterThan(later, rawLater, "the fall is still smoothed")
+    }
+
     /// Song colours crossfade the event colour every frame. The engine
     /// compared the whole spec, colour included, and re-armed the schedule
     /// each frame: every twinkle and strike in flight was cut at a song change.

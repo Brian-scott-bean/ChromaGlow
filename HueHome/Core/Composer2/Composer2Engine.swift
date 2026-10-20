@@ -241,9 +241,16 @@ enum Composer2Engine {
             let drive: Double
             if mod.isActive {
                 let raw = mod.rawDrive(features: audio, beat: beat, hostNow: hostNow)
-                let tau = mod.smoothingTau
-                let alpha = tau <= 0.001 ? 1.0 : 1.0 - exp(-dt / tau)
-                ls.smoothedDrive += (raw - ls.smoothedDrive) * alpha
+                if (mod.source == .beat || mod.source == .onset) && raw > ls.smoothedDrive {
+                    // A beat or a hit lands at once; smoothing shapes only
+                    // its fall. Smoothing the rise too put a default
+                    // punch's peak at about half strength, ~200 ms late.
+                    ls.smoothedDrive = raw
+                } else {
+                    let tau = mod.smoothingTau
+                    let alpha = tau <= 0.001 ? 1.0 : 1.0 - exp(-dt / tau)
+                    ls.smoothedDrive += (raw - ls.smoothedDrive) * alpha
+                }
                 drive = Composer2Math.clamp01(ls.smoothedDrive)
             } else {
                 ls.smoothedDrive = 0
