@@ -77,8 +77,8 @@ final class Composer2LiveOutput: CompositionFrameSource, @unchecked Sendable {
     private var derivedPlans: [Composer2LayerPlan] = []
     private var derivedBuffer: [Composer2Frame] = []
 
-    /// 0…1 cap on event flashes (Dim Flashing Lights ⇒ 0.3). Applied on the
-    /// wire and on screen alike. Every output starts from the system setting;
+    /// 0…1 cap on event flashes and sound punches (Dim Flashing Lights ⇒
+    /// 0.3). Applied on the wire and on screen alike. Every output starts from the system setting;
     /// the playback center and the screen follow its changes.
     var eventCap: Double = Composer2LiveOutput.accessibilityEventCap()
 

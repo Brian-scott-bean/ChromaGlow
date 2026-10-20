@@ -264,6 +264,30 @@ final class Composer2LabEngineTests: XCTestCase {
         XCTAssertLessThanOrEqual(peak, 0.3 + 1e-9)
     }
 
+    /// Dim Flashing Lights covered events only: a Groove/Hit beat punch
+    /// still lit the whole room at full strength on every beat.
+    func testEventCapAlsoLimitsSoundPunches() {
+        var layer = Composer2Layer(color: .solid(.d65), motion: Composer2Motion(kind: .static),
+                                   rhythm: Composer2Rhythm(shape: .steady, maxBrightness: 0.2))
+        layer.audio = Composer2AudioModulation(source: .beat, smoothing: 0, intensity: 1, punchDecay: 0)
+        let c = Composer2Composition(name: "Punch", createdAt: Date(timeIntervalSince1970: 0), layers: [layer])
+        let beat = BeatSnapshot(bpm: 120, beatEpoch: 1000, beatsPerBar: 4)
+        func peak(cap: Double) -> Double {
+            var state = Composer2EngineState()
+            var top = 0.0
+            for i in 0..<50 {
+                let t = Double(i) * 0.02
+                let frames = Composer2Engine.evaluate(c, time: t, geometry: geometry(3), state: &state,
+                                                      beat: beat, hostNow: 1000 + t, eventCap: cap)
+                top = max(top, frames.map(\.brightness).max() ?? 0)
+            }
+            return top
+        }
+        XCTAssertGreaterThan(peak(cap: 1), 0.95, "a full punch reaches full light")
+        XCTAssertLessThanOrEqual(peak(cap: 0.3), 0.2 + 0.8 * 0.3 + 1e-9, "30 % of the headroom")
+        XCTAssertGreaterThan(peak(cap: 0.3), 0.3, "still a visible pulse")
+    }
+
 
     // MARK: - v2.2 regressions
 

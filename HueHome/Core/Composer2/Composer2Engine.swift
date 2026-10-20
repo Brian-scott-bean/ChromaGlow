@@ -218,6 +218,10 @@ enum Composer2Engine {
         var acc = [Composer2Blend.Accum](repeating: Composer2Blend.Accum(), count: n)
         let masterSpeed = composition.master.sanitizedSpeed
         let cap = Composer2Math.clamp01(eventCap) * composition.master.sanitizedEventStrength
+        // Dim Flashing Lights limits every sudden rise, not only events: a
+        // Groove/Hit punch lights the whole room on each beat. (Event
+        // Strength is the look's own Moments knob and leaves punches alone.)
+        let punchCap = Composer2Math.clamp01(eventCap)
 
         for li in 0..<composition.layers.count {
             let layer = composition.layers[li]
@@ -349,7 +353,7 @@ enum Composer2Engine {
             }
 
             let brightnessScale = mod.brightnessScale(drive: drive)
-            let punch = mod.punch(drive: drive)
+            let punch = mod.punch(drive: drive) * punchCap
             let variation = plan.variation
             let evolving = variation.evolveRate > 0 && variation.amount > 0
             let paletteDrift = Composer2Math.clamp01(layer.color.drift)
