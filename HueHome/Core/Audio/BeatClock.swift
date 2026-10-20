@@ -145,6 +145,23 @@ final class BeatClock {
     /// confidence ≥ minAudioConfidence), and of the last fade step.
     private var lastAudioDriveAt: Double = -.infinity
     private var lastFadeAt: Double = -.infinity
+    /// A phase error past this (or a sixth of a beat, if smaller) is a new
+    /// song or a seek, not drift. It used to creep 30 ms a pass — about 5 s
+    /// of punches off the beat for half a beat of error, while the readout
+    /// claimed a lock.
+    private static let relockThreshold = 0.070
+    /// A second pass whose error agrees within this confirms a large one.
+    private static let relockAgreement = 0.035
+    /// Reported while a large error waits for its confirming pass: below
+    /// usable, so nothing engages on (or claims) a grid that is about to move.
+    private static let relockingPhaseConfidence = 0.4
+    /// A tracker tempo this far from the clock's is another song (drift is
+    /// far smaller, and the tracker needs three passes to change its mind).
+    private static let newTempoRatio = 0.03
+    /// Nothing drove the clock for this long: the next confident pass is
+    /// trusted at once instead of waiting for a second opinion.
+    private static let lockForgetAfter = 3.0
+    private var pendingRelockError: Double?
 
     /// Read by the mic-demand evaluator: a `.beat` reaction needs no
     /// microphone while a music service drives the clock. Stale-aware:
@@ -330,6 +347,7 @@ final class BeatClock {
         phaseConfidence = 0; barConfidence = 0; barSetByUser = false
         pendingBarShift = 0; pendingBarRuns = 0
         lastAudioDriveAt = -.infinity; lastFadeAt = -.infinity
+        pendingRelockError = nil
         resetServiceOffset()
         publishMirror()
     }
@@ -667,11 +685,11 @@ final class BeatClock {
                 guard o.phaseConfidence >= Self.minAudioConfidence,
                       abs(ratio - 1) < 0.03 || abs(ratio - 0.5) < 0.015 else { return }
                 let error = phaseError(of: o.lastBeat)
-                beatEpoch += min(Self.maxPhaseCorrection, max(-Self.maxPhaseCorrection, error))
+                let settled = correctPhase(error)
                 lastMicPhaseAt = o.lastBeat
                 lastAudioDriveAt = o.lastBeat
                 learnServiceOffset(residual: error)
-                phaseConfidence = o.phaseConfidence
+                phaseConfidence = settled ? o.phaseConfidence : min(o.phaseConfidence, Self.relockingPhaseConfidence)
                 if abs(ratio - 1) < 0.03 { applyBar(o) }
                 publishMirror()
                 return
@@ -689,13 +707,19 @@ final class BeatClock {
             return
         }
         confidence = o.tempoConfidence
+        let resumed = o.lastBeat - lastAudioDriveAt > Self.lockForgetAfter
         lastAudioDriveAt = o.lastBeat
         // Same 20…300 window every other drive holds itself to (see ingest).
         let clampedBPM = min(300, max(20, o.bpm))
+        let newTempo = bpm > 0 && abs(clampedBPM / bpm - 1) > Self.newTempoRatio
 
-        if bpm == 0 || source != .audio {
-            // First lock: adopt tempo and phase outright — and the bar, when
-            // the tracker already has a confident opinion about it.
+        if bpm == 0 || source != .audio || newTempo {
+            // First lock — or another song: adopt tempo and phase outright,
+            // and the bar when the tracker already has a confident opinion.
+            // A new tempo used to be retimed onto the old grid and crept
+            // there 30 ms a pass. The last song's one says nothing about
+            // this one's.
+            if newTempo { barSetByUser = false }
             bpm = clampedBPM
             beatEpoch = o.lastBeat
             source = .audio
@@ -704,20 +728,55 @@ final class BeatClock {
             if !barSetByUser { barConfidence = 0 }
             pendingBarShift = 0
             pendingBarRuns = 0
+            pendingRelockError = nil
             applyBar(o, immediately: true)
             publishMirror()
             return
         }
 
         retime(to: clampedBPM, keepingPhaseAt: o.lastBeat)
+        var settled = true
         if o.phaseConfidence >= Self.minAudioConfidence {
-            let error = phaseError(of: o.lastBeat)
-            beatEpoch += min(Self.maxPhaseCorrection, max(-Self.maxPhaseCorrection, error))
+            // After a gap the old grid is only a memory: its first
+            // confident beat needs no second opinion.
+            settled = correctPhase(phaseError(of: o.lastBeat), confirmed: resumed)
             lastMicPhaseAt = o.lastBeat
         }
-        phaseConfidence = o.phaseConfidence
+        phaseConfidence = settled ? o.phaseConfidence : min(o.phaseConfidence, Self.relockingPhaseConfidence)
         applyBar(o)
         publishMirror()
+    }
+
+    /// Move the grid toward an observed beat `error` seconds away. Drift
+    /// creeps at most 30 ms a pass, never a visible jump. A large error is a
+    /// new song or a seek: one pass is held as a possible outlier (the grid
+    /// does not move), and a second that agrees — or `confirmed` — snaps the
+    /// nearest beat onto it. Snapping by less than half a beat keeps every
+    /// beat's number, so the bar stays where it was. Returns false while a
+    /// large error waits for its confirmation.
+    private func correctPhase(_ error: Double, confirmed: Bool = false) -> Bool {
+        guard bpm > 0, error.isFinite else { return true }
+        let interval = 60.0 / bpm
+        let threshold = min(Self.relockThreshold, interval / 6)
+        guard abs(error) > threshold else {
+            pendingRelockError = nil
+            beatEpoch += min(Self.maxPhaseCorrection, max(-Self.maxPhaseCorrection, error))
+            return true
+        }
+        var agreed = confirmed
+        if !agreed, let pending = pendingRelockError {
+            // Compared modulo a beat: near half a beat the wrapped sign flips.
+            var d = error - pending
+            d -= interval * (d / interval).rounded()
+            agreed = abs(d) < Self.relockAgreement
+        }
+        guard agreed else {
+            pendingRelockError = error
+            return false
+        }
+        beatEpoch += error
+        pendingRelockError = nil
+        return true
     }
 
     /// Signed seconds from our nearest grid beat to `beat`, wrapped to

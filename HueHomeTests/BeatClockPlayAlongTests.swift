@@ -223,6 +223,59 @@ final class BeatClockPlayAlongTests: XCTestCase {
         XCTAssertEqual(BeatClock.snapshot(), pinned)
     }
 
+    // MARK: - Relock: a new song, a seek
+
+    func testANewTempoLocksAfreshOnItsFirstPass() {
+        lock()   // 120 BPM, beats on 10 + k/2
+        clock.ingest(observation: observation(bpm: 96, lastBeat: 15.23))
+        XCTAssertEqual(BeatClock.snapshot().bpm, 96)
+        XCTAssertEqual(phaseErrorMs(at: 15.23), 0, accuracy: 1e-6)
+        XCTAssertGreaterThanOrEqual(BeatClock.snapshot().phaseConfidence, 0.5)
+    }
+
+    /// Same tempo, beats 200 ms later (a gapless next track, a seek): the
+    /// grid crept 30 ms a pass, seven passes, while claiming the lock.
+    func testAPhaseJumpSnapsOnTheSecondAgreeingPass() {
+        let t = lock()
+        let before = BeatClock.snapshot()
+        clock.ingest(observation: observation(lastBeat: t + 0.2))
+        XCTAssertEqual(BeatClock.snapshot().beatEpoch, before.beatEpoch, "one pass may be an outlier")
+        XCTAssertLessThan(BeatClock.snapshot().phaseConfidence, Composer2PlayAlongDirector.usablePhaseConfidence,
+                          "and the grid claims no lock meanwhile")
+        clock.ingest(observation: observation(lastBeat: t + 0.7))
+        XCTAssertEqual(phaseErrorMs(at: t + 0.7), 0, accuracy: 1e-6)
+        XCTAssertGreaterThanOrEqual(BeatClock.snapshot().phaseConfidence, 0.5)
+    }
+
+    func testAnOutlierPassNeitherSnapsNorCreeps() {
+        let t = lock()
+        let before = BeatClock.snapshot().beatEpoch
+        clock.ingest(observation: observation(lastBeat: t + 0.2))
+        clock.ingest(observation: observation(lastBeat: t + 0.5))
+        XCTAssertEqual(BeatClock.snapshot().beatEpoch, before, accuracy: 1e-9)
+    }
+
+    func testDriftStillCreepsGently() {
+        let t = lock()
+        let before = BeatClock.snapshot().beatEpoch
+        clock.ingest(observation: observation(lastBeat: t + 0.05))
+        XCTAssertEqual(BeatClock.snapshot().beatEpoch - before, 0.03, accuracy: 1e-9)
+    }
+
+    /// After a gap the grid is only a memory: the next song's first
+    /// confident beat needs no second opinion.
+    func testAfterAGapTheFirstConfidentBeatCorrectsAtOnce() {
+        var t = lock()
+        let silence = t
+        while t < silence + 5 {
+            clock.noteNoBeat(at: t)
+            t += 0.5
+        }
+        clock.ingest(observation: observation(lastBeat: t + 0.2))
+        XCTAssertEqual(phaseErrorMs(at: t + 0.2), 0, accuracy: 1e-6)
+        XCTAssertGreaterThanOrEqual(BeatClock.snapshot().phaseConfidence, 0.5)
+    }
+
     func testAServiceGridIsOnlyAPhaseGuess() {
         clock.driveFromTrack(bpm: 120, position: PlaybackPosition(positionMs: 0, capturedAt: 100, isPlaying: true),
                              now: 100)
