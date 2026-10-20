@@ -137,6 +137,92 @@ final class BeatClockPlayAlongTests: XCTestCase {
         XCTAssertNotNil(clock.serviceBeatOffset)
     }
 
+    // MARK: - Lock health: silence and a stopped mic
+
+    /// Confident beats every half second from `t0` for `seconds`; returns
+    /// the time after the last pass.
+    @discardableResult
+    private func lock(from t0: Double = 10, seconds: Double = 5) -> Double {
+        var t = t0
+        while t < t0 + seconds {
+            clock.ingest(observation: observation(lastBeat: t))
+            t += 0.5
+        }
+        return t
+    }
+
+    /// The music stops and the tracker finds nothing. The confidences used
+    /// to keep the last lock's values forever: the readout kept its BPM and
+    /// Play Along punched on a ghost grid without ever letting go.
+    func testSilenceFadesTheLockAndPlayAlongLetsGo() throws {
+        var t = lock()
+        var director = Composer2PlayAlongDirector()
+        director.requested = true
+        for _ in 0..<40 {
+            _ = director.update(at: t, beat: BeatClock.snapshot())
+            t += 0.05
+        }
+        XCTAssertEqual(director.phase, .engaged)
+
+        let silence = t
+        var lostAt: Double?
+        var idleAt: Double?
+        while t < silence + 30 {
+            clock.noteNoBeat(at: t)
+            let beat = BeatClock.snapshot()
+            if lostAt == nil, beat.phaseConfidence < Composer2PlayAlongDirector.usablePhaseConfidence { lostAt = t }
+            _ = director.update(at: t, beat: beat)
+            if idleAt == nil, director.phase == .idle { idleAt = t }
+            t += 0.5
+        }
+        XCTAssertLessThan(try XCTUnwrap(lostAt) - silence, 3, "the lock reads as lost within seconds")
+        XCTAssertLessThan(try XCTUnwrap(idleAt) - silence, 26, "the look glides back after the 20 s release")
+        XCTAssertGreaterThan(BeatClock.snapshot().bpm, 0, "the tempo coasts")
+    }
+
+    /// Passes below the tempo gate (speech, a breakdown) returned before
+    /// the phase confidence was touched.
+    func testPassesWithoutATrustedBeatFadeThePhaseConfidence() {
+        var t = lock()
+        XCTAssertGreaterThanOrEqual(BeatClock.snapshot().phaseConfidence, 0.9)
+        let start = t
+        while t < start + 4 {
+            clock.ingest(observation: observation(lastBeat: t, confidence: 0.3))
+            t += 0.5
+        }
+        XCTAssertLessThan(BeatClock.snapshot().phaseConfidence, Composer2PlayAlongDirector.usablePhaseConfidence)
+        XCTAssertEqual(clock.source, .audio)
+    }
+
+    func testOneBadPassInAFillFadesNothing() {
+        let t = lock()
+        clock.ingest(observation: observation(lastBeat: t, confidence: 0.3))
+        XCTAssertEqual(BeatClock.snapshot().phaseConfidence, 0.9, accuracy: 1e-9)
+    }
+
+    /// The next session (or Play Along switched on later) engaged at once
+    /// on the last session's grid.
+    func testAStoppedMicLeavesNoGridToEngageOn() {
+        let t = lock()
+        clock.audioStopped()
+        let s = BeatClock.snapshot()
+        XCTAssertEqual(s.phaseConfidence, 0)
+        XCTAssertGreaterThan(s.bpm, 0, "the tempo coasts")
+        var director = Composer2PlayAlongDirector()
+        director.requested = true
+        _ = director.update(at: t, beat: s)
+        XCTAssertEqual(director.phase, .idle, "Play Along waits for a beat it hears")
+    }
+
+    func testAPinnedGridIsTheUsersAndNeverFades() {
+        lock()
+        clock.setBPM(100, now: 16)
+        let pinned = BeatClock.snapshot()
+        clock.noteNoBeat(at: 40)
+        clock.audioStopped()
+        XCTAssertEqual(BeatClock.snapshot(), pinned)
+    }
+
     func testAServiceGridIsOnlyAPhaseGuess() {
         clock.driveFromTrack(bpm: 120, position: PlaybackPosition(positionMs: 0, capturedAt: 100, isPlaying: true),
                              now: 100)

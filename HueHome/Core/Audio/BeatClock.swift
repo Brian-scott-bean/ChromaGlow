@@ -132,6 +132,20 @@ final class BeatClock {
     private static let barRunsToShift = 3
     private static let minBarConfidence = 0.15
 
+    // ── Lock health (the tracker drive) ──
+    /// A pass with no beat it trusts fades the grid's confidences, halving
+    /// every `confidenceHalfLife` seconds after `fadeGrace` (one bad pass in
+    /// a drum fill fades nothing; a solid 0.9 lock reads below the usable
+    /// 0.5 about 2.3 s into silence). They used to stay at the last lock's
+    /// values forever: Play Along kept punching on a ghost grid, the readout
+    /// kept its BPM, and the director's 20 s release never fired.
+    private static let confidenceHalfLife = 1.5
+    private static let fadeGrace = 1.0
+    /// Capture time of the last tracker pass that drove the clock (tempo
+    /// confidence ≥ minAudioConfidence), and of the last fade step.
+    private var lastAudioDriveAt: Double = -.infinity
+    private var lastFadeAt: Double = -.infinity
+
     /// Read by the mic-demand evaluator: a `.beat` reaction needs no
     /// microphone while a music service drives the clock. Stale-aware:
     /// a hold whose drive stopped refreshing (dead source, or a track
@@ -315,7 +329,42 @@ final class BeatClock {
         lastServiceDriveAt = 0
         phaseConfidence = 0; barConfidence = 0; barSetByUser = false
         pendingBarShift = 0; pendingBarRuns = 0
+        lastAudioDriveAt = -.infinity; lastFadeAt = -.infinity
         resetServiceOffset()
+        publishMirror()
+    }
+
+    /// The microphone stopped (no one needs it, a route change, the app
+    /// went quiet). A grid the mic owned is only a memory now: its
+    /// confidences go to zero so the next session — or Play Along switched
+    /// on later — waits for a beat it hears instead of engaging at once on
+    /// a stale one. The tempo coasts. A pin, a tap and a music-service
+    /// drive own their own grids and keep them.
+    func audioStopped() {
+        guard !isPinned, source == .audio else { return }
+        confidence = 0
+        phaseConfidence = 0
+        if !barSetByUser { barConfidence = 0 }
+        lastAudioDriveAt = -.infinity
+        lastFadeAt = -.infinity
+        publishMirror()
+    }
+
+    /// A tracker pass that found no beat at all (silence, speech, a quiet
+    /// passage). The grid coasts at its last tempo; its confidences fade.
+    func noteNoBeat(at now: Double = CACurrentMediaTime()) {
+        guard !isPinned, source == .audio, !isServiceDriven(now: now) else { return }
+        fadeConfidence(to: now)
+    }
+
+    private func fadeConfidence(to now: Double) {
+        let since = max(lastAudioDriveAt + Self.fadeGrace, lastFadeAt)
+        guard since.isFinite, now > since else { return }
+        lastFadeAt = now
+        let k = pow(0.5, (now - since) / Self.confidenceHalfLife)
+        confidence *= k
+        phaseConfidence *= k
+        if !barSetByUser { barConfidence *= k }
         publishMirror()
     }
 
@@ -620,6 +669,7 @@ final class BeatClock {
                 let error = phaseError(of: o.lastBeat)
                 beatEpoch += min(Self.maxPhaseCorrection, max(-Self.maxPhaseCorrection, error))
                 lastMicPhaseAt = o.lastBeat
+                lastAudioDriveAt = o.lastBeat
                 learnServiceOffset(residual: error)
                 phaseConfidence = o.phaseConfidence
                 if abs(ratio - 1) < 0.03 { applyBar(o) }
@@ -627,9 +677,19 @@ final class BeatClock {
                 return
             }
         }
+        guard !isPinned else {
+            confidence = o.tempoConfidence
+            return
+        }
+        guard o.tempoConfidence >= Self.minAudioConfidence else {
+            // No beat it trusts: the grid coasts and its confidences fade
+            // (this pass used to leave the phase confidence untouched).
+            confidence = o.tempoConfidence
+            if source == .audio { fadeConfidence(to: o.lastBeat) }
+            return
+        }
         confidence = o.tempoConfidence
-        guard !isPinned else { return }
-        guard o.tempoConfidence >= Self.minAudioConfidence else { return }
+        lastAudioDriveAt = o.lastBeat
         // Same 20…300 window every other drive holds itself to (see ingest).
         let clampedBPM = min(300, max(20, o.bpm))
 

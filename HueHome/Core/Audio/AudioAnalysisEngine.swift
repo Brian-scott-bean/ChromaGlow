@@ -452,6 +452,8 @@ final class AudioAnalysisEngine {
         // extractor, so nothing here touches one a callback may be using.
         activeExtractor = nil
         activeOnsets = nil
+        // A grid the mic owned is a memory once the mic is off.
+        BeatClock.shared.audioStopped()
     }
 
     // MARK: - Hardware reconfiguration
@@ -517,7 +519,10 @@ final class AudioAnalysisEngine {
     /// metre (×2 / ×½) the microphone alone can only guess.
     private func trackerPass(onsets: OnsetFrameAnalyzer, tracker: BeatTracker) async {
         let frames = onsets.snapshot(seconds: BeatTracker.windowSeconds + 2)
-        guard !frames.isEmpty else { return }
+        guard !frames.isEmpty else {
+            BeatClock.shared.noteNoBeat()
+            return
+        }
         var prior: TempoPrior?
         let music = MusicSessionCoordinator.shared
         if music.isPlaying, let tempo = music.tempo, tempo.origin != .liveEstimate {
@@ -531,6 +536,10 @@ final class AudioAnalysisEngine {
         if let observation {
             Self.publishTempo(bpm: observation.bpm, confidence: observation.tempoConfidence)
             BeatClock.shared.ingest(observation: observation)
+        } else {
+            // Silence or no beat at all: the clock's confidences fade, so
+            // Play Along lets go instead of punching on a ghost grid.
+            BeatClock.shared.noteNoBeat()
         }
     }
 }
