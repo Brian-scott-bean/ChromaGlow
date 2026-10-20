@@ -8,7 +8,11 @@
 // error. Render loops now evaluate musical time at `hostNow + lead`.
 //
 //   lead = light latency (transport) + half the bridge's update period
-//          + the user's per-bridge "Light timing" offset
+//          − the user's per-bridge "Light timing" offset
+//
+// The offset reads the way the slider does: negative = lights earlier, so it
+// renders further ahead. (It used to be added, and "earlier" made the lights
+// later.)
 //
 // The half-period centres the frame quantisation (±20 ms at the bridge's
 // 25 Hz Zigbee rate) instead of always landing late. The latencies are
@@ -32,8 +36,10 @@ enum OutputLatencyModel {
     static let entertainmentBridgePeriod = 0.040
     /// Room-mode writes: mailbox + command gate + HTTP + half a 200 ms fade.
     static let restLatency = 0.250
-    /// The user's "Light timing" range, seconds (negative = lights earlier).
-    static let userOffsetRange: ClosedRange<Double> = -0.150...0.300
+    /// The user's "Light timing" range, seconds (negative = lights earlier,
+    /// a longer lead). Most of the room is on the early side: the 100 ms
+    /// starting lead is a guess, and a slow bridge trails it.
+    static let userOffsetRange: ClosedRange<Double> = -0.300...0.150
 
     /// Seconds to render ahead on `transport` for the bridge `bridgeID`.
     static func lead(transport: Transport, bridgeID: String?) -> Double {
@@ -42,7 +48,7 @@ enum OutputLatencyModel {
         case .entertainment: base = entertainmentLatency + entertainmentBridgePeriod / 2
         case .rest: base = restLatency
         }
-        return max(0, base + userOffset(bridgeID: bridgeID))
+        return max(0, base - userOffset(bridgeID: bridgeID))
     }
 
     // MARK: - The user's per-bridge offset

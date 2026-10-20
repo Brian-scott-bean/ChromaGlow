@@ -47,9 +47,22 @@ final class OutputLatencyModelTests: XCTestCase {
     }
 
     func testTheLeadNeverGoesNegative() {
-        OutputLatencyModel.setUserOffset(-0.15, bridgeID: "early", defaults: defaults)
-        _ = OutputLatencyModel.userOffset(bridgeID: "early", defaults: defaults)
-        XCTAssertEqual(OutputLatencyModel.lead(transport: .entertainment, bridgeID: "early"), 0)
+        OutputLatencyModel.setUserOffset(0.15, bridgeID: "late", defaults: defaults)
+        _ = OutputLatencyModel.userOffset(bridgeID: "late", defaults: defaults)
+        XCTAssertEqual(OutputLatencyModel.lead(transport: .entertainment, bridgeID: "late"), 0)
+    }
+
+    /// The slider labels a negative offset "earlier". Build 908 ADDED the
+    /// offset to the lead, so "earlier" rendered closer to now and the
+    /// lights landed later.
+    func testEarlierRendersFurtherAheadAndLaterLess() {
+        OutputLatencyModel.setUserOffset(-0.06, bridgeID: "early", defaults: defaults)
+        OutputLatencyModel.setUserOffset(0.03, bridgeID: "later", defaults: defaults)
+        let base = OutputLatencyModel.lead(transport: .entertainment, bridgeID: nil)
+        XCTAssertEqual(OutputLatencyModel.lead(transport: .entertainment, bridgeID: "early"), base + 0.06, accuracy: 1e-12)
+        XCTAssertEqual(OutputLatencyModel.lead(transport: .entertainment, bridgeID: "later"), base - 0.03, accuracy: 1e-12)
+        XCTAssertLessThan(OutputLatencyModel.userOffsetRange.lowerBound, -OutputLatencyModel.userOffsetRange.upperBound,
+                          "more room on the early side: the 100 ms starting lead is a guess")
     }
 
     // MARK: - Composer 2 renders ahead

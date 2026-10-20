@@ -170,7 +170,7 @@ Composer2LiveOutput.renderFrames(time, hostNow)
 |---|---|---|
 | `L_in` | Sound in the room → the capture stamp | Subtracted from each `OnsetFrame` stamp. Start from `AVAudioSession.inputLatency`; calibrate on device |
 | `L_route` | A player's position → sound in the room (AirPlay ≈ seconds, Bluetooth ≈ 150–250 ms) | Only for service grids. **Learned** from mic-vs-service offsets per output route; never assumed |
-| `L_out` | Frame emitted → photons. The bridge forwards to bulbs over Zigbee at 25 Hz, and bulb firmware smooths entertainment transitions | Added to render time: `lead = L_out + ½·(bridge period, 40 ms) + userOffset` |
+| `L_out` | Frame emitted → photons. The bridge forwards to bulbs over Zigbee at 25 Hz, and bulb firmware smooths entertainment transitions | Added to render time: `lead = L_out + ½·(bridge period, 40 ms) − userOffset` |
 
 - **Render-ahead.** The DTLS loop emits at `e` and the light shows that frame at `e + L_out`. Rendering musical time
   `m(e + lead)` makes the room show the beat when the room hears it.
@@ -334,7 +334,7 @@ matters more than the tracker behind it, so the front end is upgraded before tun
 
 ### 5.5 `OutputLatencyModel` (new, `Core/Audio/OutputLatencyModel.swift`)
 
-- **`lead(transport:bridgeID:) = L_out(transport) + ½·bridgePeriod + userOffset(bridgeID)`.** `bridgePeriod` is
+- **`lead(transport:bridgeID:) = L_out(transport) + ½·bridgePeriod − userOffset(bridgeID)`.** `bridgePeriod` is
   40 ms for Entertainment's 25 Hz Zigbee output.
 - **Defaults** (calibrate in the device plan):
   - Entertainment `lead` starts at **100 ms**: about 80 ms of light latency plus 20 ms for the bridge's 25 Hz output.
@@ -344,7 +344,8 @@ matters more than the tracker behind it, so the front end is upgraded before tun
     - For comparison, SonicHue's slider defaults to 110 ms and Music Assistant's to 20 ms.
   - REST: not beat-accurate (§5.9).
 - **User offset.** Per bridge, in `UserDefaults` (`playAlong.lightTimingMs.<bridgeID>`). The UI says "Light timing:
-  earlier ↔ later".
+  earlier ↔ later"; negative is earlier (a longer lead), range −300…+150 ms. Build 908 added the offset, so
+  "earlier" made the lights later; build 909 subtracts it.
   - Every serious rival has one: the Hue app's Latency setting, Hue Sync's configurable delay, SonicHue's slider, and
     iLightShow's and Lumina's automatic calibration.
   - Calibration ("Sync Check") is the next campaign; the slider and the storage are this one.
