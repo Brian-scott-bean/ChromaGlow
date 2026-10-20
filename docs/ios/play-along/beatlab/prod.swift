@@ -19,6 +19,8 @@ func runProd(_ r: Rendered) -> [Snap] {
             if k % 5 == 4 {
                 if let o = tracker.update(analyzer.snapshot(seconds: BeatTracker.windowSeconds + 2)) {
                     clock.ingest(observation: o)
+                } else {
+                    clock.noteNoBeat(at: arrival)   // as AudioAnalysisEngine.trackerPass does
                 }
                 snaps.append(Snap(t: arrival + 0.01, s: BeatClock.snapshot(), conf: clock.confidence))
             }

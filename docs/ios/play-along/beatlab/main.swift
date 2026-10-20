@@ -88,6 +88,33 @@ func lockTimes(snaps: [Snap], beats: [(time: Double, bpm: Double, isDownbeat: Bo
     return out
 }
 
+/// Beats in each segment's first `window` seconds — the re-lock period the
+/// warm-up skips — where the grid CLAIMS a usable lock (phase confidence ≥
+/// 0.5, what Play Along engages on and the readout shows) but is more than
+/// 50 ms off. Returns (claimed, wrong) counts.
+func falseLocks(snaps: [Snap], beats: [(time: Double, bpm: Double, isDownbeat: Bool)],
+                segmentStarts: [Double], window: Double = 10) -> (claimed: Int, wrong: Int) {
+    var claimed = 0, wrong = 0, idx = 0
+    for b in beats {
+        let segStart = segmentStarts.last { $0 <= b.time + 1e-9 } ?? 0
+        guard b.time - segStart < window else { continue }
+        while idx + 1 < snaps.count && snaps[idx + 1].t <= b.time { idx += 1 }
+        guard idx < snaps.count, snaps[idx].t <= b.time else { continue }
+        let s = snaps[idx].s
+        guard s.bpm > 0, s.phaseConfidence >= 0.5 else { continue }
+        claimed += 1
+        let r = s.bpm / b.bpm
+        // A half-time grid (the tracker's deliberate choice at 174) is right
+        // when every real beat lands on one of its beats or half-way between.
+        let half = abs(r - 0.5) < 0.01
+        var ph = s.beatPhase(at: b.time)
+        if half { ph = (ph * 2).truncatingRemainder(dividingBy: 1) }
+        let e = (ph < 0.5 ? ph : ph - 1) * s.beatInterval * (half ? 0.5 : 1) * 1000
+        if !(abs(r - 1) < 0.02 || abs(r - 2) < 0.04 || half) || abs(e) > 50 { wrong += 1 }
+    }
+    return (claimed, wrong)
+}
+
 /// Share of snapshots (after warm-up) where the clock claims a confident lock.
 func claimsLock(_ snaps: [Snap], after t0: Double) -> Double {
     let s = snaps.filter { $0.t >= t0 }
@@ -252,6 +279,13 @@ MainActor.assumeIsolated {
                     .map { $0.map { String(format: "%.1fs", $0) } ?? "never" }.joined(separator: "/")
                 print("  " + st.line().replacingOccurrences(of: "| lock —", with: "| lock " + locks))
             }
+            // What ships, scored from each song's first beat: the warm-up
+            // above hides exactly the re-lock period.
+            var all = evaluate("prod", snaps: s5, beats: r.beats, warmup: 0, segmentStarts: segStarts)
+            all.lockTime = nil
+            let fl = falseLocks(snaps: s5, beats: r.beats, segmentStarts: segStarts)
+            print("  " + all.line().replacingOccurrences(of: "prod", with: "p@0 ").replacingOccurrences(of: "| lock —", with: "")
+                  + String(format: "| first 10 s: claims a lock on %d beats, %d of them >50 ms off", fl.claimed, fl.wrong))
         } else {
             print(String(format: "  v1 claims a confident lock %3.0f%% of the time; v2 %3.0f%%; v2++ %3.0f%%; prod %3.0f%% (v2 raw conf mean %.2f max %.2f)",
                          claimsLock(s1, after: 5), claimsLock(s2, after: 5), claimsLock(s4, after: 5), claimsLock(s5, after: 5),
