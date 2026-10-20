@@ -605,7 +605,7 @@ private struct AllDayScenesView: View {
     private var controlsCard: some View {
         LuminousGroup {
             LuminousToggleRow(symbol: "sun.horizon.fill", tint: sun, title: "Enable All Day Scenes",
-                              subtitle: "Applies a slow, natural shift to your rooms, skipping any that are already playing something.",
+                              subtitle: "Applies a slow, natural shift to rooms that are on. It never turns a room on, and skips any that are playing something.",
                               isOn: Binding(
                                 get: { enabled },
                                 set: { newValue in

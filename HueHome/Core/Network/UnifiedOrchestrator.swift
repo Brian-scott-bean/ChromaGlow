@@ -572,6 +572,9 @@ final class UnifiedOrchestrator {
         // ownership table uses, and it is what scopes this room's mailbox slot.
         let targets = allRooms.compactMap { room -> (roomID: String, glID: String, bridgeID: String?)? in
             guard let glID = room.groupedLightID else { return nil }
+            // All Day shades rooms that are ON. It sent `on: true` to every
+            // room every 5 minutes, so a room switched off came back on.
+            guard room.isOn else { return nil }
             guard isAllDayBridgeEligible(room.bridgeID) else { return nil }
             // Active playback wins. Skipping happens per exact bridge+room, so
             // one owned room never suppresses its neighbours.
@@ -606,11 +609,16 @@ final class UnifiedOrchestrator {
                 // that All-Day must not overwrite a room someone just claimed.
                 guard self.isAllDayWriteAllowed(
                     bridgeID: target.bridgeID, roomID: target.roomID) else { return }
+                // …and switched off while it waited: leave it off.
+                guard self.allRooms.contains(where: {
+                    $0.id == target.roomID && $0.bridgeID == target.bridgeID && $0.isOn
+                }) else { return }
                 guard let api = self.hueClient(for: target.bridgeID) else { return }
-                // grouped_light supports on/dimming/ct/color; we do CT + brightness here.
+                // grouped_light supports on/dimming/ct/color; we do CT + brightness
+                // here, and never `on` — the room's power is the user's.
                 try? await api.setGroupedLightEffect(
                     id: target.glID,
-                    on: true,
+                    on: nil,
                     brightness: output.brightnessPercent,
                     xy: nil,
                     mirek: output.mirek,

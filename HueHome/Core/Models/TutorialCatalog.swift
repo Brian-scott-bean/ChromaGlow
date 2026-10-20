@@ -154,7 +154,7 @@ enum TutorialCatalog {
             id: "tour.automations",
             eyebrow: "AUTOMATE",
             title: "Light that runs itself",
-            body: "Schedule wake-ups, wind-downs, and anything in between from More → Automations. Turn on All Day Scenes and your home glides from sunrise to sunset without you touching a thing.",
+            body: "Schedule wake-ups, wind-downs, and anything in between from More → Automations. Turn on All Day Scenes and the rooms you have on shift with the sun, from sunrise to sunset.",
             footnote: nil,
             audience: .everyone,
             illustration: .automations,

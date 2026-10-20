@@ -338,12 +338,20 @@ private final class RoutingSpyClient: BridgeAPIClient, @unchecked Sendable {
         _failingGroupedEffectIDs = ids
     }
 
+    /// The `on` field of each grouped-effect PUT, in order (nil = not sent).
+    private var _groupedEffectOnValues: [Bool?] = []
+    var groupedEffectOnValues: [Bool?] {
+        lock.lock(); defer { lock.unlock() }
+        return _groupedEffectOnValues
+    }
+
     override func setGroupedLightEffect(
         id: String, on: Bool?, brightness: Double?,
         xy: (Double, Double)?, mirek: Int?, duration: Int
     ) async throws {
         lock.lock()
         _groupedEffectIDs.append(id)
+        _groupedEffectOnValues.append(on)
         let failing = _failingGroupedEffectIDs.contains(id)
         lock.unlock()
         if failing { throw HueAPIError.httpError(500) }
@@ -3707,6 +3715,18 @@ final class MultiBridgeRoutingTests: XCTestCase {
     }
 
     // ── Delivery: every eligible room, every tick ────────────────────
+
+    // All Day shades rooms that are on and never powers one: it sent
+    // `on: true` to every room every 5 minutes, so a room switched off came
+    // back on.
+    func testAllDayLeavesRoomsThatAreOffAloneAndNeverSendsOn() async {
+        var off = allDayRoom("room-off", bridge: "bridge-a")
+        off.isOn = false
+        orchestrator.allRooms = [allDayRoom("room-on", bridge: "bridge-a"), off]
+        await runAllDayTick()
+        XCTAssertEqual(bridgeA.groupedEffectIDs, ["gl-room-on"], "the room that is off gets no write")
+        XCTAssertEqual(bridgeA.groupedEffectOnValues, [nil], "and no write carries `on`")
+    }
 
     // P6-1. Two eligible rooms on ONE bridge both dispatch in one tick.
     func testOneTickDispatchesEveryEligibleRoomOnABridge() async {

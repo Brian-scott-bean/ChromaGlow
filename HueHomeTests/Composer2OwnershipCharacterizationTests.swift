@@ -522,10 +522,15 @@ final class Composer2OwnershipCharacterizationTests: XCTestCase {
     /// NOT observed. The claim is about mailbox creation, not the write. The
     /// detached cleanup Task spawned by stopAllDayScenes is not observed either.
     func testCurrentAllDayStopBumpsOneCounterThatRejectsBothBridgesTicks() async {
+        // All Day only shades rooms that are on.
         orchestrator.allRooms = [
             room("room-a", bridge: "bridge-a", grouped: "gl-room-a"),
             room("room-b", bridge: "bridge-b", grouped: "gl-room-b"),
-        ]
+        ].map { room in
+            var on = room
+            on.isOn = true
+            return on
+        }
         let anchor = UnifiedOrchestrator.AllDayAnchor(
             lat: 39.74, lon: -104.99, timeZoneID: "America/Denver", updatedAt: Date())
 
