@@ -333,7 +333,11 @@ struct ComposerLibraryHome: View {
     private var library: some View {
         switch filter {
         case .forYou:
-            VStack(alignment: .leading, spacing: 22) {
+            // Lazy: a shelf below the fold is not built, so its cards' live
+            // stages don't run. In a plain VStack every shelf's first cards
+            // appeared at once — 20–30 engines at 14 fps on the main thread,
+            // competing with the light stream.
+            LazyVStack(alignment: .leading, spacing: 22) {
                 showpieces
                 mineShelf
                 ForEach(Composer2LookCategory.allCases) { category in

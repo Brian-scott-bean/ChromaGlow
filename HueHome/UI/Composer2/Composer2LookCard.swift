@@ -108,7 +108,7 @@ struct Composer2MiniStage: View {
     private var ticking: Bool { visible && isTabActive && !reduceMotion }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 14.0, paused: !ticking)) { timeline in
+        TimelineView(.animation(minimumInterval: 1.0 / 10.0, paused: !ticking)) { timeline in
             Canvas(rendersAsynchronously: false) { ctx, size in
                 let out = output ?? Composer2MiniStage.makeOutput(composition, lights: lights)
                 if out.composition != composition { out.composition = composition }
