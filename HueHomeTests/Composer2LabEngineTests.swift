@@ -459,6 +459,40 @@ final class Composer2LabEngineTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(state.layers[0].events?.firedCount ?? 0, 1)
     }
 
+    /// Song colours crossfade the event colour every frame. The engine
+    /// compared the whole spec, colour included, and re-armed the schedule
+    /// each frame: every twinkle and strike in flight was cut at a song change.
+    func testRecolouringEventsKeepsTheScheduleAndEventsInFlight() throws {
+        var layer = Composer2Layer(motion: Composer2Motion(kind: .static), rhythm: Composer2Rhythm(shape: .steady, maxBrightness: 0))
+        layer.events = Composer2EventSpec(timing: .fixed, interval: 1, probability: 1, burstMin: 1, burstMax: 1,
+                                          durationMin: 0.8, durationMax: 0.8, decaySeconds: 0.4,
+                                          intensityMin: 1, intensityMax: 1, modulates: [.brightness, .color],
+                                          color: Composer2XY(x: 0.64, y: 0.33))
+        var c = single(layer)
+        var state = Composer2EngineState()
+        let g = geometry(3)
+        var t = 0.0
+        repeat {
+            _ = Composer2Engine.evaluate(c, time: t, geometry: g, state: &state)
+            t += 0.04
+        } while state.layers[0].events?.current == nil && t < 5
+        let fired = try XCTUnwrap(state.layers[0].events?.firedCount)
+        XCTAssertGreaterThanOrEqual(fired, 1)
+        for k in 1...8 {   // a crossfade toward blue
+            let w = Double(k) / 8
+            c.layers[0].events?.color = Composer2XY(x: 0.64 + (0.15 - 0.64) * w, y: 0.33 + (0.06 - 0.33) * w)
+            _ = Composer2Engine.evaluate(c, time: t, geometry: g, state: &state)
+            t += 0.04
+        }
+        XCTAssertNotNil(state.layers[0].events?.current, "the event in flight plays on")
+        XCTAssertEqual(state.layers[0].events?.firedCount, fired, "the schedule was not re-armed")
+        while t < 4 {
+            _ = Composer2Engine.evaluate(c, time: t, geometry: g, state: &state)
+            t += 0.04
+        }
+        XCTAssertGreaterThan(state.layers[0].events?.firedCount ?? 0, fired, "and the next one fires on time")
+    }
+
     /// Master speed ×4 must not push a motion already at the flash-budget
     /// floor any faster.
     func testMasterSpeedNeverPushesAFloorMotionPastTheBudget() {

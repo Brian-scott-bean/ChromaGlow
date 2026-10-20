@@ -301,6 +301,18 @@ struct Composer2EventSpec: Codable, Equatable {
     /// True when the event carries its own colour (a flash colour or a set
     /// of colours to pick from).
     var hasEventColor: Bool { color != nil || !colors.isEmpty }
+
+    /// The same schedule: equal in everything but colour. Song colours
+    /// crossfading in change the event colours on every frame of the fade;
+    /// that repaints the events still to come, and must not re-arm the
+    /// schedule (it cut every twinkle and strike in flight at each song
+    /// change). When or where events fire is a different schedule.
+    func hasSameSchedule(as other: Composer2EventSpec) -> Bool {
+        var a = self, b = other
+        a.color = nil; a.colors = []
+        b.color = nil; b.colors = []
+        return a == b
+    }
 }
 
 // MARK: - Active event

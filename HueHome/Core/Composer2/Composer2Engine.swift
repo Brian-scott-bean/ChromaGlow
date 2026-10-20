@@ -315,12 +315,13 @@ enum Composer2Engine {
             if let spec = plan.events {
                 eventSpec = spec
                 let timing = layer.variation.effectiveEventTiming
-                if ls.eventSpec != spec || ls.eventSeed != plan.eventSeed {
-                    // An edited delay or a reseed re-arms the schedule now.
+                if ls.eventSpec.map({ !$0.hasSameSchedule(as: spec) }) ?? true || ls.eventSeed != plan.eventSeed {
+                    // An edited delay or a reseed re-arms the schedule now; a
+                    // colour change only repaints what fires next.
                     ls.events = nil
-                    ls.eventSpec = spec
                     ls.eventSeed = plan.eventSeed
                 }
+                ls.eventSpec = spec
                 if ls.events == nil {
                     ls.events = Composer2EventState.initial(spec: spec, eventSeed: plan.eventSeed,
                                                             startTime: time, timingVariation: timing)
