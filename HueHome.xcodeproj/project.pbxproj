@@ -2795,6 +2795,26 @@
 			};
 			name = Debug;
 		};
+		1851A09919C328EAA2059112 /* Release-SpotifyExperimental */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.huehome.pro.tests;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphonesimulator iphoneos";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) CHROMAGLOW_EXPERIMENTAL_SPOTIFY CHROMAGLOW_INTERNAL_TESTFLIGHT";
+				SWIFT_INCLUDE_PATHS = "$(inherited) $(SRCROOT)/Experimental/SpotifyReceiver/include";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.9;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/HueHome.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/HueHome";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = "Release-SpotifyExperimental";
+		};
 		23C04301B398D3D9D7657757 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -2812,6 +2832,45 @@
 				VALIDATE_PRODUCT = YES;
 			};
 			name = Release;
+		};
+		38D13F683561A1BFC8256909 /* Release-SpotifyExperimental */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CODE_SIGN_ENTITLEMENTS = HueHomeWidgetExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 908;
+				DEVELOPMENT_TEAM = 2H9J347H3T;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = HueHomeWidget/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = ChromaGlow;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "© 2026 Brian Bean";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.huehome.pro.widget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = "Release-SpotifyExperimental";
 		};
 		3996D44BEA5F9CDE44A3D302 /* Debug-SpotifyExperimental */ = {
 			isa = XCBuildConfiguration;
@@ -2893,6 +2952,91 @@
 			};
 			name = "Debug-SpotifyExperimental";
 		};
+		449FDE8777C6AA0600CFFBA8 /* Release-SpotifyExperimental */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.9;
+			};
+			name = "Release-SpotifyExperimental";
+		};
+		5AB0712A5D333A2A91DC9BE1 /* Release-SpotifyExperimental */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 908;
+				DEVELOPMENT_TEAM = 2H9J347H3T;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GENERATE_INFOPLIST_FILE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.huehome.pro.watchappTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/LightShadeWatchApp Watch App.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/LightShadeWatchApp Watch App";
+				VALIDATE_PRODUCT = YES;
+				WATCHOS_DEPLOYMENT_TARGET = 26.4;
+			};
+			name = "Release-SpotifyExperimental";
+		};
 		5C5A4F6D14E51028C4D6C8ED /* Debug-SpotifyExperimental */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -2932,6 +3076,59 @@
 				WATCHOS_DEPLOYMENT_TARGET = 26.4;
 			};
 			name = "Debug-SpotifyExperimental";
+		};
+		6C438A9E47CB70C763249D43 /* Release-SpotifyExperimental */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = C0F1C0DE0000000000000001 /* Base.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_ENTITLEMENTS = HueHome/HueHome.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 908;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = 2H9J347H3T;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_PREVIEWS = YES;
+				INFOPLIST_FILE = HueHome/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/Experimental/SpotifyReceiver/build/$(PLATFORM_NAME)",
+				);
+				MARKETING_VERSION = 1.0.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lchromaglow_spotify",
+					"-liconv",
+					"-framework",
+					Security,
+					"-framework",
+					CoreFoundation,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.huehome.pro;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) CHROMAGLOW_EXPERIMENTAL_SPOTIFY CHROMAGLOW_INTERNAL_TESTFLIGHT";
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_INCLUDE_PATHS = "$(inherited) $(SRCROOT)/Experimental/SpotifyReceiver/include";
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.9;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = "Release-SpotifyExperimental";
 		};
 		6DACD504AD3301687CF45FE8 /* Release */ = {
 			isa = XCBuildConfiguration;
@@ -3186,6 +3383,47 @@
 			};
 			name = Debug;
 		};
+		A52E74D0FA205BDAB55C8685 /* Release-SpotifyExperimental */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CODE_SIGN_ENTITLEMENTS = "LightShadeWatchApp Watch App/LightShadeWatchApp Watch App.entitlements";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 908;
+				DEVELOPMENT_TEAM = 2H9J347H3T;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = ChromaGlow;
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "ChromaGlow uses your local network to control your Philips Hue lights.";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.huehome.pro;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.huehome.pro.watchkitapp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				VALIDATE_PRODUCT = YES;
+				WATCHOS_DEPLOYMENT_TARGET = 26.4;
+			};
+			name = "Release-SpotifyExperimental";
+		};
 		B02C8ECB0763C017D4D426B2 /* Debug-SpotifyExperimental */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -3204,6 +3442,74 @@
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/HueHome.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/HueHome";
 			};
 			name = "Debug-SpotifyExperimental";
+		};
+		B831033E2F2CCB397C1C53BA /* Release-SpotifyExperimental */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CODE_SIGN_ENTITLEMENTS = LightShadeWatch/LightShadeWatch.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 908;
+				DEVELOPMENT_TEAM = 2H9J347H3T;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = LightShadeWatch/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = ChromaGlow;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "© 2026 Brian Bean";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.huehome.pro.watchkitapp.watch;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				VALIDATE_PRODUCT = YES;
+				WATCHOS_DEPLOYMENT_TARGET = 26.4;
+			};
+			name = "Release-SpotifyExperimental";
+		};
+		D699A88FE8FDFBB87466905C /* Release-SpotifyExperimental */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 908;
+				DEVELOPMENT_TEAM = 2H9J347H3T;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GENERATE_INFOPLIST_FILE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.huehome.pro.watchappUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				TEST_TARGET_NAME = "LightShadeWatchApp Watch App";
+				VALIDATE_PRODUCT = YES;
+				WATCHOS_DEPLOYMENT_TARGET = 26.4;
+			};
+			name = "Release-SpotifyExperimental";
 		};
 		DCFA5C8A0888AFE1E0C2BF39 /* Debug-SpotifyExperimental */ = {
 			isa = XCBuildConfiguration;
@@ -3688,6 +3994,7 @@
 				6FF7CCC72043DC213B90E1CE /* Debug */,
 				97D86E6E8FD33F204BC7C515 /* Release */,
 				F6BD2D92246486D3CE705602 /* Debug-SpotifyExperimental */,
+				449FDE8777C6AA0600CFFBA8 /* Release-SpotifyExperimental */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -3698,6 +4005,7 @@
 				6DACD504AD3301687CF45FE8 /* Release */,
 				A11DB52F66195EFD74B81087 /* Debug */,
 				A0C5B1C3F3989C211F44FECC /* Debug-SpotifyExperimental */,
+				6C438A9E47CB70C763249D43 /* Release-SpotifyExperimental */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -3708,6 +4016,7 @@
 				23C04301B398D3D9D7657757 /* Release */,
 				04AA42E47C3895B901BFC504 /* Debug */,
 				B02C8ECB0763C017D4D426B2 /* Debug-SpotifyExperimental */,
+				1851A09919C328EAA2059112 /* Release-SpotifyExperimental */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -3718,6 +4027,7 @@
 				DD4BB4D72F8C6AF300BED513 /* Debug */,
 				DD4BB4D82F8C6AF300BED513 /* Release */,
 				3996D44BEA5F9CDE44A3D302 /* Debug-SpotifyExperimental */,
+				38D13F683561A1BFC8256909 /* Release-SpotifyExperimental */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -3728,6 +4038,7 @@
 				DDC82E942FA0879000324E29 /* Debug */,
 				DDC82E952FA0879000324E29 /* Release */,
 				5C5A4F6D14E51028C4D6C8ED /* Debug-SpotifyExperimental */,
+				B831033E2F2CCB397C1C53BA /* Release-SpotifyExperimental */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -3738,6 +4049,7 @@
 				DDC82F472FA1140C00324E29 /* Debug */,
 				DDC82F482FA1140C00324E29 /* Release */,
 				42AA64126EDD2AF85B9CDA8B /* Debug-SpotifyExperimental */,
+				A52E74D0FA205BDAB55C8685 /* Release-SpotifyExperimental */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -3748,6 +4060,7 @@
 				DDC82F492FA1140C00324E29 /* Debug */,
 				DDC82F4A2FA1140C00324E29 /* Release */,
 				E27C93BC8FC45CDDCF2A117D /* Debug-SpotifyExperimental */,
+				5AB0712A5D333A2A91DC9BE1 /* Release-SpotifyExperimental */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -3758,6 +4071,7 @@
 				DDC82F4B2FA1140C00324E29 /* Debug */,
 				DDC82F4C2FA1140C00324E29 /* Release */,
 				DCFA5C8A0888AFE1E0C2BF39 /* Debug-SpotifyExperimental */,
+				D699A88FE8FDFBB87466905C /* Release-SpotifyExperimental */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

@@ -3,8 +3,9 @@
 # ChromaGlow — LOCAL-ONLY Spotify Connect PCM experiment
 #
 # Adds the experiment's Info.plist needs to the PROCESSED app-bundle
-# Info.plist, and only in the Debug-SpotifyExperimental configuration. Every
-# other configuration (Debug, Release, archives) exits here untouched. Never
+# Info.plist, and only in the Debug- and Release-SpotifyExperimental
+# configurations. Every other configuration (Debug, Release and their
+# archives) exits here untouched. Never
 # modifies HueHome/Info.plist (source) — same discipline as
 # inject_build_metadata.sh.
 #
@@ -15,13 +16,14 @@
 
 set -euo pipefail
 
-if [[ "${CONFIGURATION:-}" != "Debug-SpotifyExperimental" ]]; then
-    exit 0
-fi
+case "${CONFIGURATION:-}" in
+    Debug-SpotifyExperimental|Release-SpotifyExperimental) ;;
+    *) exit 0 ;;
+esac
 
 case " ${SWIFT_ACTIVE_COMPILATION_CONDITIONS:-} " in
     *" CHROMAGLOW_EXPERIMENTAL_SPOTIFY "*) ;;
-    *) echo "error: Debug-SpotifyExperimental is missing CHROMAGLOW_EXPERIMENTAL_SPOTIFY" >&2; exit 1 ;;
+    *) echo "error: ${CONFIGURATION} is missing CHROMAGLOW_EXPERIMENTAL_SPOTIFY" >&2; exit 1 ;;
 esac
 
 plist="${CHROMAGLOW_EXPERIMENT_PLIST_PATH:-${TARGET_BUILD_DIR}/${INFOPLIST_PATH}}"

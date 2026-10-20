@@ -8,11 +8,15 @@
 #  2. Adds the "Debug-SpotifyExperimental" build configuration to the project
 #     and EVERY target (a clone of Debug). Only the app + unit-test targets get
 #     CHROMAGLOW_EXPERIMENTAL_SPOTIFY; only the app links the Rust receiver.
-#     Debug and Release are untouched.
+#     Also adds "Release-SpotifyExperimental" (a clone of Release, the same
+#     experiment settings plus CHROMAGLOW_INTERNAL_TESTFLIGHT): the optimized
+#     archive for INTERNAL TestFlight builds with the experiment. TestFlight
+#     907 was a Debug (-Onone) archive. Debug and Release are untouched.
 #  3. Adds the "Spotify Experiment Plist" run-script phase (a no-op outside
 #     Debug-SpotifyExperimental).
 #  4. Writes the shared "HueHome Spotify Experimental" scheme (Run/Test/Analyze
-#     on Debug-SpotifyExperimental; Profile/Archive stay on Release).
+#     on Debug-SpotifyExperimental; Archive on Release-SpotifyExperimental;
+#     Profile stays on Release).
 
 require 'xcodeproj'
 require 'set'
@@ -20,7 +24,9 @@ require 'set'
 PROJECT_PATH = File.join(File.dirname(__FILE__), 'HueHome.xcodeproj')
 ROOT         = File.dirname(__FILE__)
 CONFIG       = 'Debug-SpotifyExperimental'
+RELEASE_CONFIG = 'Release-SpotifyExperimental'
 FLAG         = 'CHROMAGLOW_EXPERIMENTAL_SPOTIFY'
+INTERNAL_FLAG = 'CHROMAGLOW_INTERNAL_TESTFLIGHT'
 PHASE_NAME   = 'Spotify Experiment Plist'
 SCHEME_NAME  = 'HueHome Spotify Experimental'
 
@@ -83,41 +89,48 @@ TEST_FILES.each { |p, g| added += add_file(project, test_target, p, g, existing)
 
 # ── 2. Build configuration ──────────────────────────────────────────────────
 
-def clone_debug(list, project)
-  return list.build_configurations.find { |c| c.name == CONFIG } if list.build_configurations.any? { |c| c.name == CONFIG }
-  debug = list.build_configurations.find { |c| c.name == 'Debug' }
-  abort("No Debug configuration in #{list}") unless debug
+def clone_config(list, project, from, name)
+  existing = list.build_configurations.find { |c| c.name == name }
+  return existing if existing
+  source = list.build_configurations.find { |c| c.name == from }
+  abort("No #{from} configuration in #{list}") unless source
   config = project.new(Xcodeproj::Project::Object::XCBuildConfiguration)
-  config.name = CONFIG
-  config.build_settings = Marshal.load(Marshal.dump(debug.build_settings))
-  config.base_configuration_reference = debug.base_configuration_reference
+  config.name = name
+  config.build_settings = Marshal.load(Marshal.dump(source.build_settings))
+  config.base_configuration_reference = source.base_configuration_reference
   list.build_configurations << config
-  puts "   ++ #{CONFIG} cloned from Debug"
+  puts "   ++ #{name} cloned from #{from}"
   config
 end
 
-def add_flag(config)
+def add_flag(config, flag)
   conds = config.build_settings['SWIFT_ACTIVE_COMPILATION_CONDITIONS'] || '$(inherited)'
   conds = conds.join(' ') if conds.is_a?(Array)
-  conds = "#{conds} #{FLAG}" unless conds.split(/\s+/).include?(FLAG)
+  conds = "#{conds} #{flag}" unless conds.split(/\s+/).include?(flag)
   config.build_settings['SWIFT_ACTIVE_COMPILATION_CONDITIONS'] = conds
 end
 
-puts '-> Build configuration'
-clone_debug(project.build_configuration_list, project)
-project.targets.each { |t| clone_debug(t.build_configuration_list, project) }
+puts '-> Build configurations'
+{ CONFIG => 'Debug', RELEASE_CONFIG => 'Release' }.each do |name, from|
+  clone_config(project.build_configuration_list, project, from, name)
+  project.targets.each { |t| clone_config(t.build_configuration_list, project, from, name) }
+end
 
 receiver = '$(SRCROOT)/Experimental/SpotifyReceiver'
-app_config = app_target.build_configuration_list.build_configurations.find { |c| c.name == CONFIG }
-add_flag(app_config)
-app_config.build_settings['SWIFT_INCLUDE_PATHS']  = "$(inherited) #{receiver}/include"
-app_config.build_settings['LIBRARY_SEARCH_PATHS'] = "$(inherited) #{receiver}/build/$(PLATFORM_NAME)"
-app_config.build_settings['OTHER_LDFLAGS'] =
-  '$(inherited) -lchromaglow_spotify -liconv -framework Security -framework CoreFoundation'
+[CONFIG, RELEASE_CONFIG].each do |name|
+  app_config = app_target.build_configuration_list.build_configurations.find { |c| c.name == name }
+  add_flag(app_config, FLAG)
+  add_flag(app_config, INTERNAL_FLAG) if name == RELEASE_CONFIG
+  app_config.build_settings['SWIFT_INCLUDE_PATHS']  = "$(inherited) #{receiver}/include"
+  app_config.build_settings['LIBRARY_SEARCH_PATHS'] = "$(inherited) #{receiver}/build/$(PLATFORM_NAME)"
+  app_config.build_settings['OTHER_LDFLAGS'] =
+    '$(inherited) -lchromaglow_spotify -liconv -framework Security -framework CoreFoundation'
 
-test_config = test_target.build_configuration_list.build_configurations.find { |c| c.name == CONFIG }
-add_flag(test_config)
-test_config.build_settings['SWIFT_INCLUDE_PATHS'] = "$(inherited) #{receiver}/include"
+  test_config = test_target.build_configuration_list.build_configurations.find { |c| c.name == name }
+  add_flag(test_config, FLAG)
+  add_flag(test_config, INTERNAL_FLAG) if name == RELEASE_CONFIG
+  test_config.build_settings['SWIFT_INCLUDE_PATHS'] = "$(inherited) #{receiver}/include"
+end
 
 # ── 3. Run-script phase ─────────────────────────────────────────────────────
 
@@ -145,7 +158,8 @@ xml = File.read(source)
 %w[TestAction LaunchAction AnalyzeAction].each do |action|
   xml = xml.sub(/(<#{action}\b[^>]*?buildConfiguration\s*=\s*")Debug(")/m, "\\1#{CONFIG}\\2")
 end
+xml = xml.sub(/(<ArchiveAction\b[^>]*?buildConfiguration\s*=\s*")Release(")/m, "\\1#{RELEASE_CONFIG}\\2")
 File.write(dest, xml)
-puts "   ++ #{File.basename(dest)} (Run/Test/Analyze: #{CONFIG}; Profile/Archive: Release)"
+puts "   ++ #{File.basename(dest)} (Run/Test/Analyze: #{CONFIG}; Archive: #{RELEASE_CONFIG}; Profile: Release)"
 
 puts "Done (#{added} file(s) added)."

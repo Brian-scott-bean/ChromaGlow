@@ -85,7 +85,7 @@
       buildConfiguration = "Debug-SpotifyExperimental">
    </AnalyzeAction>
    <ArchiveAction
-      buildConfiguration = "Release"
+      buildConfiguration = "Release-SpotifyExperimental"
       revealArchiveInOrganizer = "YES">
    </ArchiveAction>
 </Scheme>

@@ -7,11 +7,15 @@
 
 import Foundation
 
-// LOCAL-ONLY experiment guard: the Spotify Connect PCM receiver
-// (CHROMAGLOW_EXPERIMENTAL_SPOTIFY, set only by the Debug-SpotifyExperimental
-// configuration) must never reach a Release / App Store / TestFlight build.
-#if CHROMAGLOW_EXPERIMENTAL_SPOTIFY && !DEBUG
-#error("CHROMAGLOW_EXPERIMENTAL_SPOTIFY is a local Debug-only experiment and must never be enabled in a Release build")
+// Experiment guard: the Spotify Connect PCM receiver
+// (CHROMAGLOW_EXPERIMENTAL_SPOTIFY) must never reach an App Store build. Two
+// configurations set it: Debug-SpotifyExperimental (local runs) and
+// Release-SpotifyExperimental — the optimized archive for INTERNAL TestFlight
+// builds only, which also sets CHROMAGLOW_INTERNAL_TESTFLIGHT. (TestFlight 907
+// was a Debug archive: -Onone, debug-only work on, no dSYMs.) The flag alone
+// in any other optimized build fails here.
+#if CHROMAGLOW_EXPERIMENTAL_SPOTIFY && !DEBUG && !CHROMAGLOW_INTERNAL_TESTFLIGHT
+#error("CHROMAGLOW_EXPERIMENTAL_SPOTIFY may only be enabled in Debug-SpotifyExperimental or the internal-TestFlight Release-SpotifyExperimental build")
 #endif
 
 enum FeatureFlags {
@@ -19,7 +23,7 @@ enum FeatureFlags {
     /// Dev-only until Spotify extended-quota access is realistic: a new app's
     /// Spotify integration works for at most 5 allowlisted accounts, so
     /// Release builds ship with it off.
-    #if DEBUG
+    #if DEBUG || CHROMAGLOW_INTERNAL_TESTFLIGHT
     static let spotifySource = true
     #else
     static let spotifySource = false

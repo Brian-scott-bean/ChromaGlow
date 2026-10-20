@@ -1,6 +1,6 @@
 # Local Spotify PCM Sync — experiment record (LOCAL-ONLY)
 
-> Never part of App Store / TestFlight builds. Not merged, not pushed.
+> Never part of App Store builds; internal TestFlight only (`Release-SpotifyExperimental`, step 6).
 >
 > - **Current: Luminous + Phase 2** — branch `experiment/luminous-spotify-pcm` (worktree
 >   `~/Developer/huehome-luminous-spotify`), based on `experiment/luminous-app-redesign` @ `b5f466d`
@@ -130,6 +130,16 @@ install uses; "iPhone app" is librespot's native iOS identity).
    then `xcrun devicectl device install app --device <id> <…>/Debug-SpotifyExperimental-iphoneos/HueHome.app`.
    Build number on this branch: **902** (never uploaded). The branch has **18**
    `CURRENT_PROJECT_VERSION` entries (12 + the new configuration on 6 targets).
+6. **Internal TestFlight** (Brian's order, 2026-10-01; optimized since build 909): archive the
+   scheme's Archive action, `Release-SpotifyExperimental` — a clone of Release with the experiment
+   settings plus `CHROMAGLOW_INTERNAL_TESTFLIGHT` (the compile guard in `FeatureFlags.swift` rejects
+   the experiment flag in any other optimized build). TestFlight 907 was a `Debug-SpotifyExperimental`
+   archive: `-Onone`, debug-only work running, no dSYMs.
+   `xcodebuild archive -project HueHome.xcodeproj -scheme "HueHome Spotify Experimental" -configuration Release-SpotifyExperimental -archivePath <path>.xcarchive -allowProvisioningUpdates`,
+   export with `testFlightInternalTestingOnly`, and check the product with
+   `Scripts/verify_spotify_experiment_absent.sh <app> --expect-present`. App Store builds stay
+   `HueHome 1` / Release (run the script without the flag). With this configuration the project has
+   **24** `CURRENT_PROJECT_VERSION` entries.
 
 Console-only check (no UI): launch with
 `xcrun devicectl device process launch --console --terminate-existing --device <id> -- com.huehome.pro -ChromaGlowSpotifyAutoStart`
