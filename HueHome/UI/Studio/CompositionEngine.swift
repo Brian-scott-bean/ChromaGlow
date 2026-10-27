@@ -3,7 +3,7 @@
 //
 // Real-time render engine for compositions. Composes four layers
 // (Palette, Motion, Envelope, Reaction) into per-light CIE xy + brightness
-// output at 25fps (entertainment) or 5fps (REST fallback).
+// output at 50fps (entertainment) or 5fps (REST fallback).
 //
 // Thread safety: layer configs are value types read from a reference-type
 // wrapper (CompositionParamBox) each frame — same pattern as StudioParamBox.
@@ -29,6 +29,46 @@ protocol CompositionFrameSource: AnyObject {
                       features: AudioFeatures, beat: BeatSnapshot, hostNow: Double) -> [LightFrame]
 }
 
+/// A frame source the Entertainment loop may render OFF the main actor
+/// (chunk 2). A conformer guards its own state, so the screen's edits on the
+/// main actor and the loop's frames on its own executor never race. The loop
+/// hands it the layout it read from the box at start (plus this frame's
+/// lead) instead of the box itself, whose fields stay main-actor confined.
+protocol ConcurrentCompositionFrameSource: CompositionFrameSource, Sendable {
+    func renderLiveFrames(time: Double, channelIDs: [Int], layout: CompositionLiveLayout,
+                          features: AudioFeatures, beat: BeatSnapshot, hostNow: Double) -> [LightFrame]
+}
+
+/// What a frame source reads from its `CompositionParamBox`, as a value: the
+/// slot geometry the orchestrator published before the loop started, and the
+/// render lead for this frame.
+struct CompositionLiveLayout: Sendable, Equatable {
+    var radial: [Double] = []
+    var angular: [Double] = []
+    var slots: [CompositionRenderSlot] = []
+    var outputLead: Double = 0
+
+    init(radial: [Double] = [], angular: [Double] = [], slots: [CompositionRenderSlot] = [],
+         outputLead: Double = 0) {
+        self.radial = radial
+        self.angular = angular
+        self.slots = slots
+        self.outputLead = outputLead
+    }
+
+    /// Read on the box's own actor (main, by convention).
+    init(params: CompositionParamBox) {
+        self.init(radial: params.radialPositions, angular: params.angularPositions,
+                  slots: params.renderSlots, outputLead: params.outputLead)
+    }
+
+    func leading(by lead: Double) -> CompositionLiveLayout {
+        var copy = self
+        copy.outputLead = lead
+        return copy
+    }
+}
+
 // MARK: - CompositionParamBox
 
 /// Mutable reference container for live composition params.
@@ -52,7 +92,22 @@ final class CompositionParamBox: @unchecked Sendable {
     @ObservationIgnored var forceRESTBurstUntil: TimeInterval = 0
     /// Composer 2 lab seam: when set, `render` asks this object for the frame
     /// instead of running the four-layer math. Runtime plumbing, never observed.
-    @ObservationIgnored var frameSource: (any CompositionFrameSource)? = nil
+    /// Lock-guarded (chunk 2): the playback center swaps it on the main actor
+    /// while the Entertainment loop reads it on its own executor.
+    var frameSource: (any CompositionFrameSource)? {
+        get {
+            frameSourceLock.lock()
+            defer { frameSourceLock.unlock() }
+            return _frameSource
+        }
+        set {
+            frameSourceLock.lock()
+            _frameSource = newValue
+            frameSourceLock.unlock()
+        }
+    }
+    @ObservationIgnored private var _frameSource: (any CompositionFrameSource)?
+    @ObservationIgnored private let frameSourceLock = NSLock()
     /// Composer 2.1: the exact slots the orchestrator drives, in render order
     /// (`renderSlots[k]` describes `channelIDs[k]`). Published at start on both
     /// transports; empty when unknown. Runtime plumbing, never observed.

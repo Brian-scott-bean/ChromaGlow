@@ -10,21 +10,33 @@
 // `Composer2Quantizer`). After the landing it simply plays the incoming
 // look; the playback center's heartbeat then unwraps it.
 //
-// Main-actor confined by convention, like the outputs it wraps. Reads no
-// clocks: the landing is computed from the first frame's `hostNow` (+ the
-// render lead), i.e. the moment that frame is shown.
+// Lock-guarded like the outputs it wraps (chunk 2): the Entertainment loop
+// renders it off the main actor while the playback center reads the landing
+// on the main actor. Reads no clocks: the landing is computed from the first
+// frame's `hostNow` (+ the render lead), i.e. the moment that frame is shown.
 
 import Foundation
 
-final class Composer2LandingSource: CompositionFrameSource, @unchecked Sendable {
+final class Composer2LandingSource: ConcurrentCompositionFrameSource, @unchecked Sendable {
     let outgoing: Composer2LiveOutput
     let incoming: Composer2LiveOutput
 
+    private let lock = NSLock()
     /// Shown-time of the boundary the incoming look lands on.
-    private(set) var landing: Double?
+    var landing: Double? {
+        lock.lock()
+        defer { lock.unlock() }
+        return _landing
+    }
+    private var _landing: Double?
     private var preroll: Double = 0
     /// The incoming look owns the room.
-    private(set) var hasLanded = false
+    var hasLanded: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return _hasLanded
+    }
+    private var _hasLanded = false
 
     init(outgoing: Composer2LiveOutput, incoming: Composer2LiveOutput) {
         self.outgoing = outgoing
@@ -33,30 +45,40 @@ final class Composer2LandingSource: CompositionFrameSource, @unchecked Sendable 
 
     func renderFrames(time: Double, channelIDs: [Int], params: CompositionParamBox,
                       features: AudioFeatures, beat: BeatSnapshot, hostNow: Double) -> [LightFrame] {
+        renderLiveFrames(time: time, channelIDs: channelIDs, layout: CompositionLiveLayout(params: params),
+                         features: features, beat: beat, hostNow: hostNow)
+    }
+
+    func renderLiveFrames(time: Double, channelIDs: [Int], layout: CompositionLiveLayout,
+                          features: AudioFeatures, beat: BeatSnapshot, hostNow: Double) -> [LightFrame] {
+        // Held across both renders: this lock is only ever taken before an
+        // output's own, never inside one, so the order is always the same.
+        lock.lock()
+        defer { lock.unlock() }
         // The incoming look renders every frame — its state warms up and the
         // playback center's heartbeat sees it alive while it waits.
-        let next = incoming.renderFrames(time: time, channelIDs: channelIDs, params: params,
-                                         features: features, beat: beat, hostNow: hostNow)
-        if hasLanded { return next }
+        let next = incoming.renderLiveFrames(time: time, channelIDs: channelIDs, layout: layout,
+                                             features: features, beat: beat, hostNow: hostNow)
+        if _hasLanded { return next }
 
-        let lead = params.outputLead.isFinite ? Composer2Math.clamp(params.outputLead, 0, 1) : 0
+        let lead = layout.outputLead.isFinite ? Composer2Math.clamp(layout.outputLead, 0, 1) : 0
         let shown = hostNow + lead
-        if landing == nil {
+        if _landing == nil {
             if let target = Composer2Quantizer.landing(after: shown, beat: beat) {
-                landing = target.time
+                _landing = target.time
                 preroll = Composer2Quantizer.preroll(for: beat)
             } else {
-                landing = shown
+                _landing = shown
                 preroll = 0
             }
         }
-        let weight = Composer2Quantizer.weight(at: shown, landing: landing ?? shown, preroll: preroll)
+        let weight = Composer2Quantizer.weight(at: shown, landing: _landing ?? shown, preroll: preroll)
         if weight >= 1 {
-            hasLanded = true
+            _hasLanded = true
             return next
         }
-        let previous = outgoing.renderFrames(time: time, channelIDs: channelIDs, params: params,
-                                             features: features, beat: beat, hostNow: hostNow)
+        let previous = outgoing.renderLiveFrames(time: time, channelIDs: channelIDs, layout: layout,
+                                                 features: features, beat: beat, hostNow: hostNow)
         guard weight > 0, previous.count == next.count else { return previous.isEmpty ? next : previous }
         return zip(previous, next).map { a, b in
             LightFrame(channelID: b.channelID,
@@ -69,7 +91,9 @@ final class Composer2LandingSource: CompositionFrameSource, @unchecked Sendable 
     /// Seconds until the landing at shown-time `t` (nil before the first
     /// frame or after the landing) — the screen's "lands on the one" countdown.
     func remaining(at t: Double) -> Double? {
-        guard !hasLanded, let landing else { return nil }
+        lock.lock()
+        defer { lock.unlock() }
+        guard !_hasLanded, let landing = _landing else { return nil }
         return max(0, landing - t)
     }
 }

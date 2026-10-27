@@ -14,6 +14,30 @@
 
 import Foundation
 
+// MARK: - PerformanceDeckMirror
+
+/// Which param box the Perform mixer plays as deck A, readable off the main
+/// actor (chunk 2). The Entertainment loop renders Composer 2 frames on its
+/// own executor, but a box the mixer plays must still render through
+/// `CompositionMixer` on the main actor, where the mix state lives. Weak: the
+/// mirror never keeps a box alive.
+final class PerformanceDeckMirror: @unchecked Sendable {
+    private let lock = NSLock()
+    private weak var deckA: CompositionParamBox?
+
+    func set(_ box: CompositionParamBox?) {
+        lock.lock()
+        deckA = box
+        lock.unlock()
+    }
+
+    func holds(_ box: CompositionParamBox) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return deckA === box
+    }
+}
+
 // MARK: - PerformanceMixBox
 
 /// Live mix state — MainActor-written (Perform UI), render-loop read.

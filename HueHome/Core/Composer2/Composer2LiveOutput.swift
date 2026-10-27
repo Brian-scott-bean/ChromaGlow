@@ -5,26 +5,43 @@
 // loops. It conforms to `CompositionFrameSource`, so a legacy
 // `CompositionParamBox` whose `frameSource` is this object streams Composer 2
 // frames through the orchestrator's untouched transport, safety gate,
-// failover and stop paths. It is main-actor confined by convention — the
-// same contract as `CompositionParamBox` itself — and holds every piece of
-// per-frame mutable state so nothing observable is written at frame rate.
+// failover and stop paths. It holds every piece of per-frame mutable state
+// so nothing observable is written at frame rate.
+//
+// Thread safety (chunk 2): the Entertainment loop renders on its own
+// executor, off the main actor, while the screen edits the look and reads
+// the live frames on the main actor. One recursive lock guards every piece
+// of state; every entry point below takes it, so an edit lands between two
+// frames, never inside one.
 
 import Foundation
 import MediaAccessibility
 
-final class Composer2LiveOutput: CompositionFrameSource, @unchecked Sendable {
+final class Composer2LiveOutput: ConcurrentCompositionFrameSource, @unchecked Sendable {
+
+    private let lock = NSRecursiveLock()
+
+    private func locked<T>(_ body: () -> T) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return body()
+    }
 
     /// The composition being played. Edits land here synchronously; the next
     /// frame picks them up — no session restart, no task per slider tick.
     var composition: Composer2Composition {
-        didSet {
-            if composition != oldValue {
+        get { locked { _composition } }
+        set {
+            locked {
+                guard newValue != _composition else { return }
+                _composition = newValue
                 plansDirty = true
                 derivedDirty = true
                 paintTargetDirty = true
             }
         }
     }
+    private var _composition: Composer2Composition
 
     // MARK: Song colors (P6)
 
@@ -32,13 +49,17 @@ final class Composer2LiveOutput: CompositionFrameSource, @unchecked Sendable {
     /// authored). A change lands on the one — on the next bar line when the
     /// clock knows where bars are, crossfading over the last eighth of a bar.
     var songSwatches: ArtworkSwatches? {
-        didSet {
-            if songSwatches != oldValue {
+        get { locked { _songSwatches } }
+        set {
+            locked {
+                guard newValue != _songSwatches else { return }
+                _songSwatches = newValue
                 paintTargetDirty = true
                 swatchesChanged = true
             }
         }
     }
+    private var _songSwatches: ArtworkSwatches?
     /// The composition as the room wears it right now (painted or not,
     /// mid-change or not); what the plans were built for.
     private var worn: Composer2Composition?
@@ -57,20 +78,38 @@ final class Composer2LiveOutput: CompositionFrameSource, @unchecked Sendable {
     /// The user wants this look to play along with the music. The room
     /// changes only once the clock has a beat — on the one (see
     /// `Composer2PlayAlongDirector`).
-    var playAlongRequested = false {
-        didSet { director.requested = playAlongRequested }
+    var playAlongRequested: Bool {
+        get { locked { _playAlongRequested } }
+        set {
+            locked {
+                _playAlongRequested = newValue
+                _director.requested = newValue
+            }
+        }
     }
+    private var _playAlongRequested = false
 
-    var playAlongFeel: Composer2PlayAlong.Feel = .groove {
-        didSet { if playAlongFeel != oldValue { derivedDirty = true } }
+    var playAlongFeel: Composer2PlayAlong.Feel {
+        get { locked { _playAlongFeel } }
+        set {
+            locked {
+                guard newValue != _playAlongFeel else { return }
+                _playAlongFeel = newValue
+                derivedDirty = true
+            }
+        }
     }
+    private var _playAlongFeel: Composer2PlayAlong.Feel = .groove
 
     /// When the play-along look takes over and lets go.
-    private(set) var director = Composer2PlayAlongDirector()
+    var director: Composer2PlayAlongDirector { locked { _director } }
+    private var _director = Composer2PlayAlongDirector()
     /// The latest frame's blend: 0 = the look as authored, 1 = playing along.
-    private(set) var playAlongWeight: Double = 0
+    var playAlongWeight: Double { locked { _playAlongWeight } }
+    private var _playAlongWeight: Double = 0
     /// The play-along look, re-derived on a tempo change or an edit.
-    private(set) var derived: Composer2Composition?
+    var derived: Composer2Composition? { locked { _derived } }
+    private var _derived: Composer2Composition?
     private var derivedBPM: Double = 0
     private var derivedDirty = true
     private var derivedState = Composer2EngineState()
@@ -80,7 +119,11 @@ final class Composer2LiveOutput: CompositionFrameSource, @unchecked Sendable {
     /// 0…1 cap on event flashes and sound punches (Dim Flashing Lights ⇒
     /// 0.3). Applied on the wire and on screen alike. Every output starts from the system setting;
     /// the playback center and the screen follow its changes.
-    var eventCap: Double = Composer2LiveOutput.accessibilityEventCap()
+    var eventCap: Double {
+        get { locked { _eventCap } }
+        set { locked { _eventCap = newValue } }
+    }
+    private var _eventCap: Double = Composer2LiveOutput.accessibilityEventCap()
 
     /// iOS "Dim Flashing Lights" ⇒ events flash at 30 %, the same cap Studio
     /// applies to its strobes. It used to be defined and never set.
@@ -94,27 +137,39 @@ final class Composer2LiveOutput: CompositionFrameSource, @unchecked Sendable {
     /// every light would otherwise erase them (light-id masks then fell back
     /// to the whole room).
     var layoutLightIDs: [String]? {
-        didSet {
-            guard !(geometryFromBox && !liveSlots.isEmpty) else { return }
-            geometry = geometry.withLightIDs(layoutLightIDs)
-            plansDirty = true
+        get { locked { _layoutLightIDs } }
+        set {
+            locked {
+                _layoutLightIDs = newValue
+                guard !(geometryFromBox && !_liveSlots.isEmpty) else { return }
+                _geometry = _geometry.withLightIDs(newValue)
+                plansDirty = true
+            }
         }
     }
+    private var _layoutLightIDs: [String]?
 
-    private(set) var state = Composer2EngineState()
-    private(set) var geometry = Composer2SlotGeometry.linear(count: 0)
-    private(set) var lastFrames: [Composer2Frame] = []
+    var state: Composer2EngineState { locked { _state } }
+    private var _state = Composer2EngineState()
+    var geometry: Composer2SlotGeometry { locked { _geometry } }
+    private var _geometry = Composer2SlotGeometry.linear(count: 0)
+    var lastFrames: [Composer2Frame] { locked { _lastFrames } }
+    private var _lastFrames: [Composer2Frame] = []
     /// Engine time of the last render (any path).
-    private(set) var lastRenderTime: Double?
+    var lastRenderTime: Double? { locked { _lastRenderTime } }
+    private var _lastRenderTime: Double?
     /// Host time when the LIVE loop last asked for a frame (0 = never).
-    private(set) var lastLiveRenderAt: Double = 0
+    var lastLiveRenderAt: Double { locked { _lastLiveRenderAt } }
+    private var _lastLiveRenderAt: Double = 0
 
     /// The exact slots the live loop is driving (Composer 2.1), empty otherwise.
-    private(set) var liveSlots: [CompositionRenderSlot] = []
+    var liveSlots: [CompositionRenderSlot] { locked { _liveSlots } }
+    private var _liveSlots: [CompositionRenderSlot] = []
 
     /// Keeps the output inside the photosensitivity budget before any gate
     /// sees it (see `Composer2FlashShaper`).
-    private(set) var shaper = Composer2FlashShaper()
+    var shaper: Composer2FlashShaper { locked { _shaper } }
+    private var _shaper = Composer2FlashShaper()
 
     private var plans: [Composer2LayerPlan] = []
     private var plansDirty = true
@@ -127,42 +182,48 @@ final class Composer2LiveOutput: CompositionFrameSource, @unchecked Sendable {
     static let backwardsResetTolerance: Double = 0.5
 
     init(composition: Composer2Composition) {
-        self.composition = composition
+        _composition = composition
     }
 
     func reset() {
-        state.reset()
-        shaper.reset()
-        plansDirty = true
-        lastRenderTime = nil
-        lastLiveRenderAt = 0
-        director.reset()
-        derivedState.reset()
-        derivedDirty = true
-        playAlongWeight = 0
-        paintChange = nil
-        worn = nil
-        paintTargetDirty = true
+        locked {
+            _state.reset()
+            _shaper.reset()
+            plansDirty = true
+            _lastRenderTime = nil
+            _lastLiveRenderAt = 0
+            _director.reset()
+            derivedState.reset()
+            derivedDirty = true
+            _playAlongWeight = 0
+            paintChange = nil
+            worn = nil
+            paintTargetDirty = true
+        }
     }
 
     /// The preview's geometry (a UI layout). Ignored once a live loop has
     /// installed the orchestrator's own slot geometry.
     func setPreviewGeometry(_ g: Composer2SlotGeometry) {
-        guard !geometryFromBox else { return }
-        if g != geometry {
-            geometry = g.withLightIDs(layoutLightIDs ?? g.lightIDs)
-            plansDirty = true
+        locked {
+            guard !geometryFromBox else { return }
+            if g != _geometry {
+                _geometry = g.withLightIDs(_layoutLightIDs ?? g.lightIDs)
+                plansDirty = true
+            }
         }
     }
 
     /// Forget the live geometry (after a stop) so previews may lay out again.
     func releaseLiveGeometry() {
-        geometryFromBox = false
-        cachedRadial = []
-        cachedAngular = []
-        liveSlots = []
-        lastLiveRenderAt = 0
-        liveHistory = []
+        locked {
+            geometryFromBox = false
+            cachedRadial = []
+            cachedAngular = []
+            _liveSlots = []
+            _lastLiveRenderAt = 0
+            liveHistory = []
+        }
     }
 
     // MARK: Live frames for the screen
@@ -184,29 +245,39 @@ final class Composer2LiveOutput: CompositionFrameSource, @unchecked Sendable {
     /// The live frames the room is showing at `hostNow` (the newest whose
     /// moment has come; the oldest kept if none has yet).
     func liveFrames(at hostNow: Double) -> [Composer2Frame] {
-        if let due = liveHistory.last(where: { $0.at <= hostNow }) { return due.frames }
-        return liveHistory.first?.frames ?? lastFrames
+        locked {
+            if let due = liveHistory.last(where: { $0.at <= hostNow }) { return due.frames }
+            return liveHistory.first?.frames ?? _lastFrames
+        }
     }
 
     // MARK: CompositionFrameSource
 
     func renderFrames(time: Double, channelIDs: [Int], params: CompositionParamBox,
                       features: AudioFeatures, beat: BeatSnapshot, hostNow: Double) -> [LightFrame] {
-        lastLiveRenderAt = hostNow
-        installGeometry(count: channelIDs.count, radial: params.radialPositions,
-                        angular: params.angularPositions, slots: params.renderSlots)
-        // Play Along P2: render the moment the room will SHOW this frame, so a
-        // beat lands when it is heard rather than one bridge delay late.
-        let lead = params.outputLead.isFinite ? Composer2Math.clamp(params.outputLead, 0, 1) : 0
-        let frames = evaluate(time: time + lead, features: features, beat: beat, hostNow: hostNow + lead)
-        noteLiveFrames(frames, shownAt: hostNow + lead)
-        guard frames.count == channelIDs.count else { return [] }
-        var out: [LightFrame] = []
-        out.reserveCapacity(frames.count)
-        for (i, f) in frames.enumerated() {
-            out.append(LightFrame(channelID: channelIDs[i], x: f.x, y: f.y, brightness: f.brightness))
+        renderLiveFrames(time: time, channelIDs: channelIDs, layout: CompositionLiveLayout(params: params),
+                         features: features, beat: beat, hostNow: hostNow)
+    }
+
+    func renderLiveFrames(time: Double, channelIDs: [Int], layout: CompositionLiveLayout,
+                          features: AudioFeatures, beat: BeatSnapshot, hostNow: Double) -> [LightFrame] {
+        locked {
+            _lastLiveRenderAt = hostNow
+            installGeometry(count: channelIDs.count, radial: layout.radial,
+                            angular: layout.angular, slots: layout.slots)
+            // Play Along P2: render the moment the room will SHOW this frame, so a
+            // beat lands when it is heard rather than one bridge delay late.
+            let lead = layout.outputLead.isFinite ? Composer2Math.clamp(layout.outputLead, 0, 1) : 0
+            let frames = evaluateLocked(time: time + lead, features: features, beat: beat, hostNow: hostNow + lead)
+            noteLiveFrames(frames, shownAt: hostNow + lead)
+            guard frames.count == channelIDs.count else { return [] }
+            var out: [LightFrame] = []
+            out.reserveCapacity(frames.count)
+            for (i, f) in frames.enumerated() {
+                out.append(LightFrame(channelID: channelIDs[i], x: f.x, y: f.y, brightness: f.brightness))
+            }
+            return out
         }
-        return out
     }
 
     // MARK: Evaluation
@@ -216,42 +287,47 @@ final class Composer2LiveOutput: CompositionFrameSource, @unchecked Sendable {
     @discardableResult
     func evaluate(time rawTime: Double, features: AudioFeatures = .silent, beat: BeatSnapshot = .none,
                   hostNow: Double = 0) -> [Composer2Frame] {
-        var time = rawTime.isFinite ? rawTime : (lastRenderTime ?? 0)
-        if let last = lastRenderTime, time < last - Composer2LiveOutput.backwardsResetTolerance {
-            state.reset()
+        locked { evaluateLocked(time: rawTime, features: features, beat: beat, hostNow: hostNow) }
+    }
+
+    private func evaluateLocked(time rawTime: Double, features: AudioFeatures, beat: BeatSnapshot,
+                                hostNow: Double) -> [Composer2Frame] {
+        var time = rawTime.isFinite ? rawTime : (_lastRenderTime ?? 0)
+        if let last = _lastRenderTime, time < last - Composer2LiveOutput.backwardsResetTolerance {
+            _state.reset()
             derivedState.reset()
-            shaper.reset()
+            _shaper.reset()
             plansDirty = true
         }
         if time.isNaN { time = 0 }
         // Song colors: the look as the room wears it at this shown-time.
         let look = wornComposition(at: hostNow, beat: beat)
         if plansDirty {
-            plans = Composer2Engine.plans(for: look, geometry: geometry)
+            plans = Composer2Engine.plans(for: look, geometry: _geometry)
             derivedPlans = []
             plansDirty = false
         }
 
         // Play Along: the plain look, the play-along look, or a crossfade
         // landing on the one. `hostNow` is the moment this frame is SHOWN.
-        let mix = director.update(at: hostNow, beat: beat)
-        playAlongWeight = mix.weight
+        let mix = _director.update(at: hostNow, beat: beat)
+        _playAlongWeight = mix.weight
         if mix.weight < 1 {
-            Composer2Engine.evaluate(look, time: time, geometry: geometry, plans: &plans, state: &state,
-                                     audio: features, beat: beat, hostNow: hostNow, eventCap: eventCap,
+            Composer2Engine.evaluate(look, time: time, geometry: _geometry, plans: &plans, state: &_state,
+                                     audio: features, beat: beat, hostNow: hostNow, eventCap: _eventCap,
                                      into: &frameBuffer)
         }
         if mix.weight > 0 {
-            if derived == nil || derivedDirty || derivedBPM != mix.bpm {
-                derived = Composer2PlayAlong.apply(look, feel: playAlongFeel, bpm: mix.bpm,
-                                                   category: Composer2ThemeCatalog.entry(id: composition.id)?.category)
+            if _derived == nil || derivedDirty || derivedBPM != mix.bpm {
+                _derived = Composer2PlayAlong.apply(look, feel: _playAlongFeel, bpm: mix.bpm,
+                                                    category: Composer2ThemeCatalog.entry(id: _composition.id)?.category)
                 derivedBPM = mix.bpm
                 derivedDirty = false
             }
-            if let derived {
-                Composer2Engine.evaluate(derived, time: time, geometry: geometry, plans: &derivedPlans,
+            if let derived = _derived {
+                Composer2Engine.evaluate(derived, time: time, geometry: _geometry, plans: &derivedPlans,
                                          state: &derivedState, audio: features, beat: beat, hostNow: hostNow,
-                                         eventCap: eventCap, into: &derivedBuffer)
+                                         eventCap: _eventCap, into: &derivedBuffer)
                 if mix.weight >= 1 || frameBuffer.count != derivedBuffer.count {
                     swap(&frameBuffer, &derivedBuffer)
                 } else {
@@ -259,9 +335,9 @@ final class Composer2LiveOutput: CompositionFrameSource, @unchecked Sendable {
                 }
             }
         }
-        frameBuffer = shaper.shape(frameBuffer, at: time)
-        lastRenderTime = time
-        lastFrames = frameBuffer
+        frameBuffer = _shaper.shape(frameBuffer, at: time)
+        _lastRenderTime = time
+        _lastFrames = frameBuffer
         return frameBuffer
     }
 
@@ -271,7 +347,7 @@ final class Composer2LiveOutput: CompositionFrameSource, @unchecked Sendable {
     private func wornComposition(at t: Double, beat: BeatSnapshot) -> Composer2Composition {
         if paintChange == nil, !paintTargetDirty, let worn { return worn }
         if paintTargetDirty {
-            paintTarget = songSwatches.map { Composer2AlbumPalette.apply(composition, swatches: $0) }
+            paintTarget = _songSwatches.map { Composer2AlbumPalette.apply(_composition, swatches: $0) }
             paintTargetDirty = false
             if swatchesChanged {
                 swatchesChanged = false
@@ -289,7 +365,7 @@ final class Composer2LiveOutput: CompositionFrameSource, @unchecked Sendable {
                 }
             }
         }
-        let target = paintTarget ?? composition
+        let target = paintTarget ?? _composition
         var next = target
         if let change = paintChange {
             if !(t < change.landing) {
@@ -312,21 +388,21 @@ final class Composer2LiveOutput: CompositionFrameSource, @unchecked Sendable {
         // Composer 2.1: exact slots win. The orchestrator's own order carries
         // light identity, segments and real positions; nothing is reconstructed.
         if slots.count == count, count > 0 {
-            if geometryFromBox, liveSlots == slots, geometry.count == count { return }
-            liveSlots = slots
+            if geometryFromBox, _liveSlots == slots, _geometry.count == count { return }
+            _liveSlots = slots
             let ids = slots.map { $0.lightID ?? "slot-\($0.index)" }
             if slots.allSatisfy({ $0.position != nil }) {
                 // The SAME floor-plan mapping the on-screen layout uses — the
                 // raw bridge z here was the mirror image of the preview's.
                 let positions = slots.map { (x: $0.position?.x ?? 0, y: $0.position?.y ?? 0, z: $0.position?.z ?? 0) }
                 let usesHeight = Composer2FloorPlan.depthUsesHeight(positions)
-                geometry = Composer2SlotGeometry(
+                _geometry = Composer2SlotGeometry(
                     points: positions.map { Composer2FloorPlan.point(x: $0.x, y: $0.y, z: $0.z, depthUsesHeight: usesHeight) },
                     lightIDs: ids)
             } else if radial.count == count, angular.count == count {
-                geometry = Composer2SlotGeometry(radial: radial, angular: angular, lightIDs: ids)
+                _geometry = Composer2SlotGeometry(radial: radial, angular: angular, lightIDs: ids)
             } else {
-                geometry = .linear(count: count, lightIDs: ids)
+                _geometry = .linear(count: count, lightIDs: ids)
             }
             cachedRadial = radial
             cachedAngular = angular
@@ -334,18 +410,18 @@ final class Composer2LiveOutput: CompositionFrameSource, @unchecked Sendable {
             plansDirty = true
             return
         }
-        liveSlots = []
+        _liveSlots = []
         let usable = radial.count == count && angular.count == count && count > 0
         if usable {
-            if geometryFromBox, cachedRadial == radial, cachedAngular == angular, geometry.count == count { return }
+            if geometryFromBox, cachedRadial == radial, cachedAngular == angular, _geometry.count == count { return }
             cachedRadial = radial
             cachedAngular = angular
-            geometry = Composer2SlotGeometry(radial: radial, angular: angular, lightIDs: layoutLightIDs)
+            _geometry = Composer2SlotGeometry(radial: radial, angular: angular, lightIDs: _layoutLightIDs)
         } else {
-            if geometryFromBox, geometry.count == count, !geometry.hasSpatialData { return }
+            if geometryFromBox, _geometry.count == count, !_geometry.hasSpatialData { return }
             cachedRadial = []
             cachedAngular = []
-            geometry = .linear(count: count, lightIDs: layoutLightIDs)
+            _geometry = .linear(count: count, lightIDs: _layoutLightIDs)
         }
         geometryFromBox = true
         plansDirty = true
@@ -356,14 +432,16 @@ final class Composer2LiveOutput: CompositionFrameSource, @unchecked Sendable {
     /// The legacy reaction source that makes the orchestrator hold the
     /// microphone exactly when this composition needs it.
     func mirroredReactionSource() -> ReactionConfig.Source {
-        // Play Along always listens: the room's beat is the only true phase
-        // (a music service's grid is a guess until the song's offset is
-        // learned), and its loudness drives the swell — so the microphone is
-        // held even while a music service drives the tempo.
-        if playAlongRequested { return .micAmplitude }
-        if composition.usesMicrophoneBands { return .micAmplitude }
-        if composition.usesBeatClock { return .beat }
-        return .none
+        locked {
+            // Play Along always listens: the room's beat is the only true phase
+            // (a music service's grid is a guess until the song's offset is
+            // learned), and its loudness drives the swell — so the microphone is
+            // held even while a music service drives the tempo.
+            if _playAlongRequested { return .micAmplitude }
+            if _composition.usesMicrophoneBands { return .micAmplitude }
+            if _composition.usesBeatClock { return .beat }
+            return .none
+        }
     }
 }
 

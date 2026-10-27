@@ -133,7 +133,10 @@ final class Composer2LabGuardTests: XCTestCase {
     func testHooksInExistingFilesAreExactlyAsDesigned() throws {
         let engine = try source(repoRoot.appendingPathComponent("HueHome/UI/Studio/CompositionEngine.swift"))
         XCTAssertTrue(engine.contains("protocol CompositionFrameSource: AnyObject"))
-        XCTAssertTrue(engine.contains("@ObservationIgnored var frameSource: (any CompositionFrameSource)? = nil"))
+        // Chunk 2: the seam is lock-guarded (the Entertainment loop reads it off
+        // the main actor) and its storage is still never observed.
+        XCTAssertTrue(engine.contains("    var frameSource: (any CompositionFrameSource)? {"))
+        XCTAssertTrue(engine.contains("@ObservationIgnored private var _frameSource: (any CompositionFrameSource)?"))
         XCTAssertEqual(engine.components(separatedBy: "params.frameSource").count - 1, 1, "render consults the source exactly once")
 
         let audio = try source(repoRoot.appendingPathComponent("HueHome/Core/Audio/AudioAnalysisEngine.swift"))

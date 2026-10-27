@@ -3791,7 +3791,12 @@ final class UnifiedOrchestrator {
     /// up. Keyed to its composition by deckA IDENTITY — the render loop
     /// whose paramBox === deckA blends through CompositionMixer; every
     /// other room renders normally. One property, both transports.
-    var activePerformanceMix: PerformanceMixBox? = nil
+    var activePerformanceMix: PerformanceMixBox? = nil {
+        didSet { performanceDeck.set(activePerformanceMix?.deckA) }
+    }
+    /// `activePerformanceMix?.deckA`, readable by the Entertainment loop off
+    /// the main actor (chunk 2).
+    nonisolated let performanceDeck = PerformanceDeckMirror()
 
     private enum CompositionSchedulerProfile {
         case balanced
@@ -6182,8 +6187,9 @@ final class UnifiedOrchestrator {
 
     private func anyCompositionNeedsMic() -> Bool {
         // R7 demand split: `.beat` needs no mic while a music service drives
-        // the clock. Per-frame refresh means a drive starting/ending flips
-        // demand within a frame — no extra plumbing.
+        // the clock. The render loops refresh demand continuously (the REST
+        // scheduler every tick, the Entertainment loop four times a second),
+        // so a drive starting/ending flips demand promptly — no extra plumbing.
         let serviceDriven = BeatClock.shared.isServiceDriven
         if compositionRuntimes.values.contains(where: {
             $0.paramBox.reaction.needsMicNow(serviceDriven: serviceDriven)
@@ -6202,8 +6208,8 @@ final class UnifiedOrchestrator {
     }
 
     /// Last mic-demand value pushed to the audio engine. The composition render loops
-    /// call refreshCompositionMicDemand every frame (up to 25Hz), but demand almost
-    /// never changes frame-to-frame — skip the actor hop + Set mutation when unchanged.
+    /// call refreshCompositionMicDemand continuously, but demand almost never changes
+    /// between calls — skip the actor hop + Set mutation when unchanged.
     @ObservationIgnored private var lastComposerMicDemand: Bool?
 
     private func refreshCompositionMicDemand() async {
@@ -6295,7 +6301,7 @@ final class UnifiedOrchestrator {
     /// Start a composition render loop for the given room.
     /// Transport priority:
     ///   1. Bridge-stored (v1 rules chain) — if preset is eligible, upload to bridge. Close app, lights keep going.
-    ///   2. Entertainment API (DTLS 25fps) — if entertainment area exists.
+    ///   2. Entertainment API (DTLS 50fps) — if entertainment area exists.
     ///   3. Per-light REST (~10 PUTs/sec) — fallback with per-light color variation.
     @discardableResult
     func startCompositionMode(
@@ -6852,8 +6858,20 @@ final class UnifiedOrchestrator {
         flashLedger.commit(reservation, delivered: delivered, at: CACurrentMediaTime())
     }
 
-    /// Composition render loop via Entertainment API — per-light colors at 25fps.
-    private func runCompositionEntertainment(
+    /// Composition render loop via Entertainment API — per-light colors at
+    /// 50 fps, off the main actor (chunk 2).
+    ///
+    /// It used to run on the main actor at 25 fps, so every frame waited for
+    /// the UI: a busy screen (a scroll, a sheet, the Composer's own previews)
+    /// delayed frames, and a beat landed late or in a burst. Now the loop
+    /// runs on its own executor. A Composer 2 look renders right here (its
+    /// output is lock-guarded); legacy compositions and the Perform mixer,
+    /// whose state is main-actor confined, still render on the main actor —
+    /// one hop per frame, as before. 50 fps is the Entertainment grid every
+    /// flash loop and the onset ledger are stated on
+    /// (`FlashSafety.entertainmentFrameDuration`), and the bridge forwards at
+    /// 25 Hz: twice the rate halves how stale a frame can be when it does.
+    @concurrent nonisolated private func runCompositionEntertainment(
         entClient: HueEntertainmentClient,
         bridgeID: String,
         channelIDs: [UInt8],
@@ -6861,18 +6879,32 @@ final class UnifiedOrchestrator {
         gamut: HueColorUtils.Gamut
     ) async {
         // Note: paramBox cleanup is handled by stopCompositionMode (keyed by bridgeID).
-        // 25 fps on a fixed grid (Play Along P0.3): every frame sleeps until its
-        // own slot, not a fixed 40 ms after its own render, gate and send — the
-        // old sleep-after-work drifted the loop below 25 fps by a different
+        // A fixed grid (Play Along P0.3): every frame sleeps until its own
+        // slot, not a fixed interval after its own render, gate and send — the
+        // old sleep-after-work drifted the loop below its rate by a different
         // amount every frame. See FrameDeadlinePacer.
-        var pacer = FrameDeadlinePacer(interval: .milliseconds(40), start: .now)
+        var pacer = FrameDeadlinePacer(
+            interval: .nanoseconds(Int64(BeatMath.FlashSafety.entertainmentFrameNanoseconds)), start: .now)
         let startTime = CFAbsoluteTimeGetCurrent()
         // THE bridge's ledger, shared with every uniform flash loop on the same
         // wire — see `emitGatedCompositionFrame`. Resolved once: `flashOnsetLedger`
         // vends a reference type, and re-resolving per frame would be the same
         // object anyway, but taking it here makes the sharing explicit at the
         // top of the loop that depends on it.
-        let flashLedger = flashOnsetLedger(forBridge: bridgeID)
+        let flashLedger = await flashOnsetLedger(forBridge: bridgeID)
+        // The slot geometry startStreamingEngine published before starting
+        // this loop, read once on the main actor where the box lives.
+        let layout = await compositionLiveLayout(of: paramBox)
+        // Main-actor housekeeping, off the frame path: the microphone demand
+        // follows the look (a Sound control turned on mid-show) within a
+        // quarter second instead of costing every frame a hop to the main actor.
+        let housekeeping = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                await self?.refreshCompositionMicDemand()
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+        }
+        defer { housekeeping.cancel() }
         // The per-channel frame currently on the wire, for `.hold` to repeat.
         // Only a DELIVERED frame updates it: a frame the transport dropped is
         // not what the bridge is showing, and holding it would repeat something
@@ -6889,34 +6921,30 @@ final class UnifiedOrchestrator {
             // (M-10) is exhausted, stop rendering into a dead socket — the
             // owning task's tail then fails this room over to REST.
             if await entClient.isTerminallyFailed { break }
-            await refreshCompositionMicDemand()
             let elapsed = CFAbsoluteTimeGetCurrent() - startTime
             // Play Along P2: how far ahead this frame must be rendered to show
-            // when the room hears it (refreshed per frame so a Light timing
-            // change applies at once).
-            paramBox.outputLead = OutputLatencyModel.lead(transport: .entertainment, bridgeID: bridgeID)
+            // when the room hears it (read per frame so a Light timing change
+            // applies at once).
+            let lead = OutputLatencyModel.lead(transport: .entertainment, bridgeID: bridgeID)
 
-            // Render all channels in one frame — through the Perform mixer
-            // when this composition is the live deck A (Round 3 C).
-            let frames: [LightFrame]
-            if let mix = activePerformanceMix, mix.deckA === paramBox {
-                frames = CompositionMixer.renderMixed(
+            // Render all channels in one frame: a Composer 2 look here, off the
+            // main actor; anything else (and a box the Perform mixer plays as
+            // deck A, Round 3 C) on the main actor where its state lives.
+            var frames: [LightFrame] = []
+            if let live = paramBox.frameSource as? any ConcurrentCompositionFrameSource,
+               !performanceDeck.holds(paramBox) {
+                frames = live.renderLiveFrames(
                     time: elapsed,
                     channelIDs: renderChannelIDs,
-                    mix: mix,
+                    layout: layout.leading(by: lead),
                     features: AudioAnalysisEngine.latestFeatures(),
                     beat: BeatClock.snapshot(),
                     hostNow: CACurrentMediaTime()
                 )
-            } else {
-                frames = CompositionEngine.render(
-                    time: elapsed,
-                    channelIDs: renderChannelIDs,
-                    params: paramBox,
-                    features: AudioAnalysisEngine.latestFeatures(),
-                    beat: BeatClock.snapshot(),
-                    hostNow: CACurrentMediaTime()
-                )
+            }
+            if frames.count != renderChannelIDs.count {
+                frames = await renderCompositionFrameOnMain(
+                    time: elapsed, channelIDs: renderChannelIDs, paramBox: paramBox, outputLead: lead)
             }
 
             // ── DTLS BOUNDARY (packet 5) ──
@@ -6954,6 +6982,42 @@ final class UnifiedOrchestrator {
 
             try? await Task.sleep(until: pacer.deadline(after: .now), clock: .continuous)
         }
+    }
+
+    /// The box's live layout, read on the main actor (chunk 2).
+    private func compositionLiveLayout(of paramBox: CompositionParamBox) -> CompositionLiveLayout {
+        CompositionLiveLayout(params: paramBox)
+    }
+
+    /// One frame rendered on the main actor: the four-layer renderer, a frame
+    /// source that is not lock-guarded, or the Perform mixer when this box is
+    /// its live deck A (Round 3 C). What the loop did for every frame before
+    /// chunk 2.
+    private func renderCompositionFrameOnMain(
+        time: Double,
+        channelIDs: [Int],
+        paramBox: CompositionParamBox,
+        outputLead: Double
+    ) -> [LightFrame] {
+        paramBox.outputLead = outputLead
+        if let mix = activePerformanceMix, mix.deckA === paramBox {
+            return CompositionMixer.renderMixed(
+                time: time,
+                channelIDs: channelIDs,
+                mix: mix,
+                features: AudioAnalysisEngine.latestFeatures(),
+                beat: BeatClock.snapshot(),
+                hostNow: CACurrentMediaTime()
+            )
+        }
+        return CompositionEngine.render(
+            time: time,
+            channelIDs: channelIDs,
+            params: paramBox,
+            features: AudioAnalysisEngine.latestFeatures(),
+            beat: BeatClock.snapshot(),
+            hostNow: CACurrentMediaTime()
+        )
     }
 
     /// Mid-session DTLS→REST failover: called from the entertainment frame
@@ -9304,7 +9368,7 @@ final class UnifiedOrchestrator {
     /// the DTLS stream never pauses and the held frame cannot itself be a rise.
     /// Returns the outcome and the channels that reached the wire, or `nil` if
     /// the task was cancelled before the reservation was taken.
-    private func emitGatedCompositionFrame(
+    nonisolated private func emitGatedCompositionFrame(
         entClient: HueEntertainmentClient,
         ledger: BeatMath.FlashSafety.OnsetLedger,
         channels: [(id: UInt8, x: Double, y: Double, brightness: Double)],
