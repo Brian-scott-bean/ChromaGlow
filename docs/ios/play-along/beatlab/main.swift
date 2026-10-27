@@ -241,6 +241,7 @@ let cases: [Case] = [
 let args = CommandLine.arguments
 let verbose = args.contains("-v")
 if args.contains("-service") { serviceReport(); exit(0) }
+if args.contains("-onset") { onsetLatencyReport(); exit(0) }
 if args.contains("-cpu") {
     let r = Synth.render([Segment(bpm: 124, leadIn: 0.3, bars: 60)], seed: 3)
     let secs = Double(r.samples.count) / r.fs
@@ -270,7 +271,7 @@ MainActor.assumeIsolated {
         print("── \(c.name)  (\(String(format: "%.0f", Double(r.samples.count) / r.fs)) s)")
         let s1 = runV1(r), s2 = runV2(r, bar: false, log: verbose), s3 = runV2(r, bar: true)
         let s4 = runV2(r, bar: true, opts: V2Options(minSeconds: 3, silenceReset: true, pll: true))
-        let s5 = runProd(r)
+        let s5 = runProd(r), s6 = runProd(r, hop: 4800)
         if c.rhythmic {
             for (name, snaps) in [("v1", s1), ("v2", s2), ("v2+b", s3), ("v2++", s4), ("prod", s5)] {
                 var st = evaluate(name, snaps: snaps, beats: r.beats, warmup: 10, segmentStarts: segStarts)
@@ -286,6 +287,12 @@ MainActor.assumeIsolated {
             let fl = falseLocks(snaps: s5, beats: r.beats, segmentStarts: segStarts)
             print("  " + all.line().replacingOccurrences(of: "prod", with: "p@0 ").replacingOccurrences(of: "| lock —", with: "")
                   + String(format: "| first 10 s: claims a lock on %d beats, %d of them >50 ms off", fl.claimed, fl.wrong))
+            // The same tracker fed the old tap's ~100 ms buffers (before chunk 2).
+            var tap = evaluate("prod", snaps: s6, beats: r.beats, warmup: 0, segmentStarts: segStarts)
+            tap.lockTime = nil
+            let ftap = falseLocks(snaps: s6, beats: r.beats, segmentStarts: segStarts)
+            print("  " + tap.line().replacingOccurrences(of: "prod", with: "tap0").replacingOccurrences(of: "| lock —", with: "")
+                  + String(format: "| first 10 s: claims a lock on %d beats, %d of them >50 ms off", ftap.claimed, ftap.wrong))
         } else {
             print(String(format: "  v1 claims a confident lock %3.0f%% of the time; v2 %3.0f%%; v2++ %3.0f%%; prod %3.0f%% (v2 raw conf mean %.2f max %.2f)",
                          claimsLock(s1, after: 5), claimsLock(s2, after: 5), claimsLock(s4, after: 5), claimsLock(s5, after: 5),

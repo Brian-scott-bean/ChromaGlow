@@ -7,6 +7,7 @@
 #   docs/ios/play-along/beatlab/run.sh -service   # music-service drive vs mic phase
 #   docs/ios/play-along/beatlab/run.sh -bar       # downbeat cue debug
 #   docs/ios/play-along/beatlab/run.sh -cpu       # CPU per second of audio
+#   docs/ios/play-along/beatlab/run.sh -onset     # how late a sound punch starts (tap vs hops)
 set -euo pipefail
 HERE=${0:a:h}
 REPO=${HERE:h:h:h:h}
