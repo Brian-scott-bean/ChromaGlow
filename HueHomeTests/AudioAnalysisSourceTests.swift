@@ -243,6 +243,53 @@ final class AudioAnalysisSourceTests: XCTestCase {
         await engine.setDemand(.composerReaction, active: false)
     }
 
+    /// The low-latency mic path (deliver(hop:…)): the same features as the
+    /// extractor, the arrival time on the features, the hop's capture
+    /// midpoint on the tempo ring, and the raw hop fanned out once.
+    func testMicHopPathMatchesTheExtractorAndStampsCapture() async throws {
+        let engine = makeEngine()
+        await engine.setDemand(.composerReaction, active: true)
+        let sink = try XCTUnwrap(sources.first?.sink)
+
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1))
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1024))
+        buffer.frameLength = 1024
+        let samples = syntheticMono(sampleRate: 48_000)
+        buffer.floatChannelData![0].update(from: samples, count: 1024)
+
+        final class TapCounter: @unchecked Sendable {
+            private let lock = NSLock()
+            private var value = 0
+            func bump() { lock.lock(); value += 1; lock.unlock() }
+            var count: Int { lock.lock(); defer { lock.unlock() }; return value }
+        }
+        let tapped = TapCounter()
+        AudioAnalysisEngine.addBufferTap(id: "hop-parity-test") { _, _ in tapped.bump() }
+        defer { AudioAnalysisEngine.removeBufferTap(id: "hop-parity-test") }
+
+        let arrival = CACurrentMediaTime()
+        let captureStart = arrival - 0.025
+        samples.withUnsafeBufferPointer {
+            sink.deliver(hop: $0.baseAddress!, frameCount: 1024, sampleRate: 48_000,
+                         captureStart: captureStart, arrival: arrival, buffer: buffer)
+        }
+        let published = AudioAnalysisEngine.latestFeatures()
+
+        let reference = AudioFeatureExtractor()
+        let expected = try XCTUnwrap(samples.withUnsafeBufferPointer {
+            reference.process(data: $0.baseAddress!, frameCount: 1024, sampleRate: 48_000, hostTime: arrival)
+        })
+        XCTAssertEqual(published.timestamp, arrival, "features carry the arrival time")
+        XCTAssertEqual(published.level, expected.level)
+        XCTAssertEqual(published.bass, expected.bass)
+        XCTAssertEqual(published.rawOverall, expected.rawOverall)
+        XCTAssertEqual(published.onsetStrength, expected.onsetStrength)
+        XCTAssertEqual(sink.extractor.onsetEnvelopeSnapshot().endTime, captureStart + 512.0 / 48_000,
+                       accuracy: 1e-9, "the tempo ring is stamped at the hop's capture midpoint")
+        XCTAssertEqual(tapped.count, 1, "the hop still fans out to taps")
+        await engine.setDemand(.composerReaction, active: false)
+    }
+
     // MARK: - Presentation time
 
     func testFutureHopsAreRevealedOnlyAtTheirPresentationTime() async throws {

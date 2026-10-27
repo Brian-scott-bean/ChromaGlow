@@ -61,8 +61,9 @@ final class AudioFeatureExtractor: @unchecked Sendable {
     private static let agcRefFloor: Float = 0.02
     /// Onset debounce — two onsets can't be closer than this (seconds).
     private static let onsetRefractory: Double = 0.06
-    /// Ring capacity: 256 hops — ≈ 6 s of 1024-frame buffers at 44.1 kHz,
-    /// ≈ 25 s of the ~100 ms buffers a device actually delivers.
+    /// Ring capacity: 256 hops — ≈ 5.5–6 s of the 1024-frame hops the mic
+    /// and the Spotify source deliver (44.1/48 kHz); ≈ 25 s of the ~100 ms
+    /// buffers the old mic tap delivered.
     private static let ringCapacity = 256
     /// Adaptive-threshold window: ~1 s of hops.
     private static let thresholdWindow = 43
@@ -135,11 +136,12 @@ final class AudioFeatureExtractor: @unchecked Sendable {
         }
         let halfN    = frame.halfN
         let hzPerBin = frame.hzPerBin
-        // One analysis hop == one tap BUFFER, so a hop lasts the buffer's
-        // length — not the FFT's. `analyze()` rounds DOWN to a power of two,
-        // and iOS delivers ~100 ms buffers whatever `installTap` asked for
-        // (4800 frames at 48 kHz → a 4096-point FFT), so the FFT length
-        // overstated the hop rate by 4800 / 4096 ≈ 17 %.
+        // One analysis hop == one delivered BUFFER, so a hop lasts the
+        // buffer's length — not the FFT's. `analyze()` rounds DOWN to a power
+        // of two, and the old mic tap delivered ~100 ms buffers whatever
+        // `installTap` asked for (4800 frames at 48 kHz → a 4096-point FFT),
+        // so the FFT length overstated the hop rate by 4800 / 4096 ≈ 17 %.
+        // The mic now delivers 1024-frame hops (MicrophoneHopRelay).
         let hopSeconds = Double(frameCount) / Double(sampleRate)
         let dt = Float(lastHopTime > 0 ? max(0.001, hostTime - lastHopTime) : hopSeconds)
         lastHopTime = hostTime

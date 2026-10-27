@@ -58,6 +58,7 @@ APP_FILES = {
   'HueHome/Core/Audio/OnsetFrameAnalyzer.swift'        => AUDIO,
   'HueHome/Core/Audio/BeatTracker.swift'               => AUDIO,
   'HueHome/Core/Audio/OutputLatencyModel.swift'        => AUDIO,
+  'HueHome/Core/Audio/MicrophoneHopRelay.swift'        => AUDIO,
   'HueHome/Core/Music/SongMemory.swift'                => MUSIC,
   'HueHome/Core/Composer2/Composer2PlayAlong.swift'    => CORE_C2,
   'HueHome/Core/Composer2/Composer2PlayAlongDirector.swift' => CORE_C2,
@@ -78,6 +79,7 @@ TEST_FILES = {
   'HueHomeTests/Composer2LabPlayAlongTests.swift'      => TESTS,
   'HueHomeTests/Composer2LabQuantizerTests.swift'      => TESTS,
   'HueHomeTests/Composer2LabAlbumPaletteTests.swift'   => TESTS,
+  'HueHomeTests/MicrophoneHopRelayTests.swift'         => TESTS,
 }
 
 existing = existing_paths(project)

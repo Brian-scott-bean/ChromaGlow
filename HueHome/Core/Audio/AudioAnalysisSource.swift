@@ -73,7 +73,9 @@ struct AudioPCMSink: Sendable {
     /// True while this sink's activation is the live one.
     var isCurrent: Bool { AudioAnalysisEngine.isCurrentActivation(generation) }
 
-    /// The microphone tap's path: analyze channel 0 as it arrives ("now"),
+    /// The original microphone tap's path (kept for tests and parity
+    /// checks; the mic now delivers through `deliver(hop:…)`): analyze
+    /// channel 0 as it arrives ("now"),
     /// then fan the untouched buffer out to raw-buffer taps. `when` is the
     /// tap's buffer time: the tempo ring is stamped with when the audio was
     /// CAPTURED (the buffer's midpoint), not when the callback ran — a whole
@@ -106,6 +108,32 @@ struct AudioPCMSink: Sendable {
             }
         }
         AudioAnalysisEngine.fanOut(buffer, sampleRate: sampleRate)
+    }
+
+    /// The microphone's path since chunk 2: one fixed hop from
+    /// `MicrophoneHopRelay`. `captureStart` is when the hop's first sample
+    /// was captured; `arrival` is when it counts as having reached analysis
+    /// (now, for the newest hop of a batch). Same stamping as the tap path:
+    /// the features carry the arrival time, the tempo ring the hop's capture
+    /// midpoint, and the onset frames the capture time of every sample.
+    func deliver(hop data: UnsafePointer<Float>, frameCount: Int, sampleRate: Float,
+                 captureStart: Double, arrival: Double, buffer: AVAudioPCMBuffer?) {
+        guard isCurrent else { return }
+        let captureTime = AudioFeatureExtractor.captureMidpoint(
+            bufferStart: captureStart, frameCount: frameCount, sampleRate: Double(sampleRate))
+        if let features = extractor.process(
+            data: data,
+            frameCount: frameCount,
+            sampleRate: sampleRate,
+            hostTime: arrival,
+            captureTime: captureTime
+        ) {
+            AudioAnalysisEngine.publish(features, generation: generation)
+        }
+        onsets?.process(data, frameCount: frameCount, sampleRate: Double(sampleRate), bufferStart: captureStart)
+        if let buffer {
+            AudioAnalysisEngine.fanOut(buffer, sampleRate: sampleRate)
+        }
     }
 
     /// One mono analysis hop from a non-microphone source.
