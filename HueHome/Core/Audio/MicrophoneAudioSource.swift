@@ -147,9 +147,11 @@ final class MicrophoneAudioSource: AudioAnalysisSource {
         }
     }
 
-    /// The old ~100 ms tap, for side-by-side checks on a device:
-    /// `defaults write com.huehome.pro audio.legacyMicTap -bool YES`. Read when
-    /// capture starts. Also the fallback when the sink cannot start.
+    /// The old ~100 ms tap, for side-by-side checks on a device: the launch
+    /// argument `-audio.legacyMicTap YES` (Xcode → Edit Scheme → Run →
+    /// Arguments), or `defaults write com.huehome.pro audio.legacyMicTap -bool
+    /// YES` in the simulator. Read when capture starts. Also the fallback
+    /// when the sink cannot start.
     static let legacyTapDefaultsKey = "audio.legacyMicTap"
 
     private static func isUsable(_ format: AVAudioFormat) -> Bool {

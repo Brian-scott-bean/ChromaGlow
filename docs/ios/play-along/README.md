@@ -836,3 +836,27 @@ From the 2026-10-19 audit of build 908 (the B-numbers below). Same branch, rollb
 Still open from the audit: B4 (a service prior floors tempo confidence at 0.72), B7 (an untrusted service offset
 pulls back to t=0 once the mic is 2 s stale), B8 (the render loop is on the main actor), B9 (SongMemory key unsalted,
 file rewritten on main), B10–B12. The lab is still synthetic audio only.
+
+## 15. Chunk 2: a faster ear and a steadier hand (2026-10-27, build 910)
+
+The audit's second chunk, items 1 and 2. Same branch, rollback tag `checkpoint/pre-build-910-chunk2` (= `3b8a015`).
+
+| | Before | After |
+|---|---|---|
+| Mic capture | `installTap`, which iOS serves in ~100 ms buffers whatever it asks for; the published level/onset features changed ~10 times a second | The session asks for ~5 ms I/O cycles; an `AVAudioSinkNode` copies channel 0 into `MicrophoneHopRelay` on the real-time thread, and the relay's own thread delivers 1024-frame hops (~21 ms at 48 kHz) stamped at capture. Falls back to the tap if the sink cannot start; the launch argument `-audio.legacyMicTap YES` (Xcode → Edit Scheme → Run → Arguments) forces the tap |
+| How late a sound punch starts (lab, `run.sh -onset`) | median ~80 ms, p90 ~120 ms; at 120 BPM the buffers alias with the beat (every kick 134 ms late, 15 of 96 missed) | median ~16 ms, p90 ~26 ms, every kick caught |
+| Beat grid (lab) | — | Unchanged within 0.4 ms: the tracker already used 10 ms frames stamped at capture (§13). Chunk 2 helps what reacts to *sound*, not the grid |
+| Composition Entertainment loop | On the main actor at 25 fps: a busy screen delayed frames (B8) | `@concurrent` at 50 fps (the 20 ms grid the flash ledger is stated on). Composer 2 looks render on the loop's executor — `Composer2LiveOutput` / `Composer2LandingSource` are lock-guarded and render from a `CompositionLiveLayout` value; legacy compositions and a Perform deck A still render on the main actor. Frames keep flowing while the main actor is blocked (test: 400 ms block) |
+| Render ahead | Already done in P2 (`OutputLatencyModel`) | Unchanged |
+
+Tested on the iOS 27 simulator; the loop, concurrency and relay tests are clean under the Thread Sanitizer. **Not
+verified:** live capture (the simulator has no mic input — the old tap fails there the same way), the I/O buffer
+iOS actually grants with other audio playing, and the frame timing on a real bridge.
+
+Device check for build 910 (adds to §8):
+1. Play music from the phone, Play Along on, a beat look (Club Pulse). Punches should hit with the kick, not after
+   it. Then add the launch argument `-audio.legacyMicTap YES` in Xcode (Edit Scheme → Run → Arguments), run
+   again and compare: the punches should trail the kick.
+2. Scroll the Composer library and open sheets while a look streams: the room should not stutter.
+3. Console: no "Low-latency capture failed … falling back to the tap" line.
+4. AirPods / Bluetooth speaker route change mid-show: capture comes back (the rebuild path is unchanged).

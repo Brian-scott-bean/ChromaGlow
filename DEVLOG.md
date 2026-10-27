@@ -4,13 +4,19 @@
 
 ---
 
-## Current Status Snapshot (updated 2026-10-19)
+## Current Status Snapshot (updated 2026-10-27)
 
 ### Pointers
 - Canonical agent context: `AGENTS.md`. Claude Code entry point: `CLAUDE.md` points there.
 - Live shared handoff: append-only entries in this `DEVLOG.md`. Git is the shared memory between tools.
 
 ### iOS — where we are RIGHT NOW
+- **BUILD 910 ON `experiment/play-along` — CHUNK 2: LOW-LATENCY MIC + OFF-MAIN 50 FPS LOOP, NOT MERGED
+  (2026-10-27).** The mic is analysed in ~21 ms hops (AVAudioSinkNode + MicrophoneHopRelay) instead of ~100 ms tap
+  buffers — a sound punch starts ~16 ms after the hit instead of ~80 ms (lab). The composition Entertainment loop
+  runs off the main actor at 50 fps (Composer 2 looks render on its own executor; legacy and Perform stay on main).
+  Rollback tag `checkpoint/pre-build-910-chunk2`. Simulator only — **hardware NOT verified** (the simulator has no
+  mic input). Entry at the end of this file.
 - **BUILD 909 ON `experiment/play-along` — THE AUDIT'S FIRST CHUNK, NOT MERGED (2026-10-19).** Play Along's
   merge blockers B1/B2/B3/B5/B6 fixed, punches land on the beat, All Day no longer turns rooms on, the invite's
   Save Image permission, a lazy Composer library, and `Release-SpotifyExperimental` (optimized internal
@@ -13987,3 +13993,51 @@ pick Spotify → Start → no crash".
 - Still open from the audit (next chunk): B4, B7, B8 (render loop on the main actor), B9, low-latency capture
   (`AVAudioSinkNode`), a 50 Hz loop off the main thread, Sync Check, per-light reactions, the Sound control in
   Tune, bridge re-discovery after an IP change, Entertainment stop on background.
+
+## 2026-10-27 — [Claude] Build 910: chunk 2 — low-latency mic + off-main 50 fps loop on `experiment/play-along` (not merged)
+
+- Brian: "what's next on the agenda to build?" → "go ahead with chunk 2, start with 1 and 2" (1 = faster listening,
+  2 = steadier output). Same branch and worktree as builds 908/909; rollback tag `checkpoint/pre-build-910-chunk2`
+  (= `3b8a015`). Nothing on `main` changed; nothing pushed.
+- One commit per change:
+  - `cdcd36e` **Low-latency capture.** The session asks for ~5 ms I/O cycles; an `AVAudioSinkNode` replaces
+    `installTap` (which iOS serves in ~100 ms buffers whatever it asks for). The sink's real-time callback only
+    copies channel 0 into the new `MicrophoneHopRelay` (lock-guarded ring, no allocation); the relay's own thread
+    delivers 1024-frame hops (~21 ms at 48 kHz) through the new `AudioPCMSink.deliver(hop:…)`, stamped at capture
+    (features at arrival, tempo ring at the hop midpoint, onset frames per sample — the tap path's stamping). A
+    burst keeps its spacing; overflow loses the oldest audio. The extractor now analyses every frame (it used 4096
+    of 4800) and its 1 s / ~6 s windows are back at the hop rate they assume. Falls back to the tap if the sink
+    cannot start; launch argument `-audio.legacyMicTap YES` forces the tap for A/B on a device.
+  - `8dedfb8` **Off-main 50 fps Entertainment loop (audit B8).** `runCompositionEntertainment` is `@concurrent
+    nonisolated`; it reads the ledger and the box's slot layout once on the main actor, then paces, renders, gates
+    and sends on its own executor at 20 ms (`FlashSafety.entertainmentFrameDuration`, the grid the onset ledger is
+    stated on). `Composer2LiveOutput` and `Composer2LandingSource` guard all state with a lock and conform to the
+    new `ConcurrentCompositionFrameSource` (renders from a `CompositionLiveLayout` value); `CompositionParamBox.
+    frameSource` is lock-guarded. Legacy compositions, unlocked sources and a Perform deck A (via the new
+    `PerformanceDeckMirror`) still render on the main actor. Mic demand: a main-actor task 4×/s instead of per
+    frame. `emitGatedCompositionFrame` is `nonisolated`; reserve → send → commit unchanged; guards green.
+    Render-ahead was already in (P2, `OutputLatencyModel`).
+  - `322e9f2` Beat lab: the tracker is fed the mic's new hops (`prod`/`p@0`; `tap0` keeps 4800-frame buffers) and
+    `run.sh -onset` measures how late a sound punch starts.
+  - `c64a898` build 910 (24 entries).
+- Lab (synthetic audio only, `beatlab/results-2026-10-27.txt`): punch start after the kick, median ~80 ms → ~16 ms,
+  p90 ~120 ms → ~26 ms; at 120 BPM the old buffers alias with the beat (every kick 134 ms late, 15 of 96 missed) and
+  the hops catch all 96. The beat grid is unchanged within 0.4 ms — the tracker already used 10 ms capture-stamped
+  frames — so chunk 2 helps what reacts to sound, not the grid.
+- Tests (Xcode 27.1, iOS 27.0 simulator `C10C70A7-A702-40A9-8810-A6F13B98C57B`): 12 new — `MicrophoneHopRelayTests`
+  (6), the hop sink path (1), `Composer2LiveOutputConcurrencyTests` (2), `CompositionEntertainmentLoopTests` (3:
+  Composer 2 frames off the main actor on a ~20 ms grid; frames keep flowing through a 400 ms main-actor block;
+  legacy sources and the Perform deck stay on main). `Composer2LabGuardTests` pin updated for the lock-guarded
+  `frameSource`. Loop, concurrency and relay tests clean under the **Thread Sanitizer**. Related suites 956
+  (1 pin failure, fixed). Full suite **2571/2571** (= 2559 + 12; `/Volumes/Dev/DerivedData/play-along-full-910.xcresult`).
+  Guards green. Device builds (generic iOS, unsigned): `Release` OK and `verify_spotify_experiment_absent.sh` clean;
+  `Release-SpotifyExperimental` OK and `--expect-present` OK. Not archived, not installed.
+- Simulator gotchas found: the simulator has no mic input (0 Hz input format — the old tap fails there the same
+  way), so live capture is unverified; and the test host's launch can hold the main actor for seconds (XCTest
+  symbolicating an AVAudioSession "hang risk"), so the loop tests measure from the first frame.
+- Not verified on hardware: all of it. Device check (README §15): punches with the kick on a beat look, then the same
+  with `-audio.legacyMicTap YES` for contrast; scroll the Composer library and open sheets while a look streams (no
+  stutter); no "falling back to the tap" console line; an AirPods route change mid-show.
+- Still open (chunk 2 items 3–5 and the rest): Sync Check, hits that move across the room, a Sound control in Tune;
+  Play Along B4, B7, B9–B12; bridge re-discovery after an IP change, Entertainment stop on background, privacy
+  manifest 1C8F.1, CI Release build.
