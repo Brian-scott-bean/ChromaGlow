@@ -860,3 +860,46 @@ Device check for build 910 (adds to §8):
 2. Scroll the Composer library and open sheets while a look streams: the room should not stutter.
 3. Console: no "Low-latency capture failed … falling back to the tap" line.
 4. AirPods / Bluetooth speaker route change mid-show: capture comes back (the rebuild path is unchanged).
+
+## 16. Sync Check: the camera times the lights (2026-10-30, build 911)
+
+Chunk 2, item 3. Same branch, rollback tag `checkpoint/pre-build-911-sync-check` (= `e4df8b2`). This automates
+the slo-mo measurement in §8.1.
+
+**What the user does:** long-press Play Along → Sync Check (under Light timing) → point the camera at one of the
+room's lights → Start. The look steps aside, the room settles bright for 1.5 s, then blinks 14 times about once a
+second (~18 s in all), and the look comes back. The screen says "Your lights respond in N ms"; Play Along renders
+N ms ahead on that bridge from then on, and the Light timing slider resets to "On time" (a trim on top).
+
+| Piece | What it does |
+|---|---|
+| Plan (`Core/Audio/SyncCheck.swift`) | 14 blinks of 0.35 s, starts jittered 0.9–1.3 s apart (seeded), so the blink frames meet the bridge's radio at different phases. Every rise is ≥ 0.9 s from the last: far under the flash limit, and the onset ledger (0.34 s) never holds one. Dim Flashing Lights → 0.06→0.45 instead of 0.06→1.0. Warm white |
+| Pattern | A `ConcurrentCompositionFrameSource` the playback center installs on the live box. It wraps the playing look and keeps rendering it unseen (the heartbeat watches `lastLiveRenderAt`), renders blinks for the moment they are SENT (no lead — the point is to measure it), and stamps each blink's first frame. After the plan it shows the look again |
+| Camera (`SyncCheckCamera.swift`) | Back wide camera at its fastest 4:2:0 format, capped at 240 fps, smallest such size; stabilization and video HDR off; exposure biased −1.5 EV, then exposure and white balance locked 0.15 s before the settle ends. Each frame → a 16×9 grid of mean luma (every 5th pixel), stamped with its presentation time converted to the host clock + half the exposure. Nothing is recorded |
+| Analyzer | (1) The (cell, delay) whose predicted on-times split the cell's samples into the most different means, per unit of its spread — a 10 ms-bin search with running totals (~0.1 s even in Debug). (2) Per blink, its own dark level (just before) and lit level (second half of the on time); a blink counts when lit − dark ≥ max(6, 5 × noise). (3) The half-way crossing, interpolated between the two frames around it; a crossing across a dropped-frame gap (> 35 ms) is skipped. Result = the mean of the middle half of the delays: the 20 ms stream frames meet the 40 ms radio at only two phases, so delays can split into two groups 20 ms apart, and beats ride on both. Refuses: nothing blinked (or < ¼ of blinks timed), too few blinks (< 60 %), or an interquartile spread > 60 ms |
+| Lead (`OutputLatencyModel`) | `lead(.entertainment) = measured ?? 100 ms − user offset`. Measured is per bridge, persisted (`playAlong.measuredLightLatencyMs.<bridge>`, with a date), cached for the render loop, clamped 20–600 ms. Room mode is not measured (not beat-accurate) |
+| Session (`Composer2PlaybackCenter`) | `canSyncCheck` (live, streaming, this bridge), `beginSyncCheck`, `endSyncCheck`. A look switch or stop during the check wins; unbinding always puts the look (not the blinks) back on a runtime that stays bound |
+
+The camera permission text now mentions Sync Check. What it measures: the time from the app SENDING a frame to
+the light reaching half way (as the camera sees it, i.e. in gamma-encoded brightness — close to when the eye calls
+it "on"). That is the whole output path a rendered beat pays. The input side is already compensated: onset frames
+are stamped at capture minus the session's `inputLatency` (§13).
+
+Tested on the simulator only (it has no camera): the plan, the pattern, the analyzer against synthetic footage at
+240/120/60 fps with distractors (a clipped window, a TV, a lamp on its own rhythm), dropped frames, a slow bridge,
+a gentle blink, and a bridge model with Wi-Fi and pacer jitter where every blink is timed within 3 ms of the truth;
+the lead storage; the center hand-off; and a blink on the live stream loop (stub transport). **Not verified:**
+anything with a real camera or bridge — the frame rate the phone grants, whether exposure locking behaves, the
+presentation-time convention (start vs middle of exposure: ≤ 2 ms either way at 240 fps), and the real delay.
+
+Device check for build 911 (adds to §15):
+1. Start a look in a room that streams (Play Along on or off). Long-press Play Along → Sync Check → allow the
+   camera → aim at a bulb or a lit shade → Start. Expect the room to go bright, then 14 slow blinks, then the look
+   back. Result screen: a number, most likely 60–150 ms.
+2. Run it twice more, aimed at a different light: the numbers should agree within ~15 ms.
+3. Cross-check one result with the §8.1 slo-mo method if you can (240 fps video of the bulb and a click).
+4. Play music with Play Along on: punches should now land with the kick. If they still lead or trail, the Light
+   timing slider trims on top of the measurement — note which way and how far.
+5. Try to break it: aim at a dark wall (expect "Couldn't see the lights blink"), move the phone around during the
+   check, switch the look mid-check (expect "The look changed or stopped"), and lock the phone mid-check (the look
+   should come back).

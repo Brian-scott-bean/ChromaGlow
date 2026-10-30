@@ -4,13 +4,18 @@
 
 ---
 
-## Current Status Snapshot (updated 2026-10-27)
+## Current Status Snapshot (updated 2026-10-30)
 
 ### Pointers
 - Canonical agent context: `AGENTS.md`. Claude Code entry point: `CLAUDE.md` points there.
 - Live shared handoff: append-only entries in this `DEVLOG.md`. Git is the shared memory between tools.
 
 ### iOS — where we are RIGHT NOW
+- **BUILD 911 ON `experiment/play-along` — SYNC CHECK, NOT MERGED (2026-10-30).** Long-press Play Along → Sync
+  Check: the camera watches a light while the room blinks slowly for ~18 s and times each blink from send to half
+  brightness; the result becomes that bridge's render lead (replacing the 100 ms guess) and the Light timing
+  slider becomes a trim on top. Rollback tag `checkpoint/pre-build-911-sync-check`. Simulator only (it has no
+  camera) — **hardware NOT verified.** Entry at the end of this file; device check in README §16.
 - **BUILD 910 ON `experiment/play-along` — CHUNK 2: LOW-LATENCY MIC + OFF-MAIN 50 FPS LOOP, NOT MERGED
   (2026-10-27).** The mic is analysed in ~21 ms hops (AVAudioSinkNode + MicrophoneHopRelay) instead of ~100 ms tap
   buffers — a sound punch starts ~16 ms after the hit instead of ~80 ms (lab). The composition Entertainment loop
@@ -14040,4 +14045,43 @@ pick Spotify → Start → no crash".
   stutter); no "falling back to the tap" console line; an AirPods route change mid-show.
 - Still open (chunk 2 items 3–5 and the rest): Sync Check, hits that move across the room, a Sound control in Tune;
   Play Along B4, B7, B9–B12; bridge re-discovery after an IP change, Entertainment stop on background, privacy
+  manifest 1C8F.1, CI Release build.
+
+## 2026-10-30 — [Claude] Build 911: Sync Check on `experiment/play-along` (not merged)
+
+- Brian: "what would be next on the list to create to ensure the lights dance and react worlds beyond any other
+  app" → "can you build it all out or just start with sync check?" Started with Sync Check (chunk 2 item 3): it
+  needs the camera and a bridge to verify, and everything after it depends on its timing. Same branch and worktree;
+  rollback tag `checkpoint/pre-build-911-sync-check` (= `e4df8b2`). Nothing on `main` changed; nothing pushed.
+- Commits:
+  - `d1ba7d2` **Sync Check.** `Core/Audio/SyncCheck.swift`: the plan (14 blinks of 0.35 s, jittered 0.9–1.3 s
+    apart, a 1.5 s bright settle; 0.06→0.45 under Dim Flashing Lights), the pattern (a
+    `ConcurrentCompositionFrameSource` on the live box that wraps and keeps rendering the look, renders blinks for
+    their send time, stamps each blink's first frame), the analyzer (10 ms-bin search with running totals for the
+    cell and rough delay; per-blink dark/lit levels; interpolated half-way crossings; the mean of the middle half,
+    because 20 ms frames meet the 40 ms radio at two phases; refuses unseen / too few / disagreeing blinks), the
+    luma grid. `SyncCheckCamera.swift`: back camera at its fastest rate (≤ 240 fps), exposure biased −1.5 EV then
+    locked, frames → 16×9 luma cells stamped on the host clock + half the exposure. `OutputLatencyModel`: a
+    per-bridge measured latency (persisted, cached, 20–600 ms) replaces the Entertainment starting lead; a
+    measurement resets the user's offset. `Composer2PlaybackCenter`: `canSyncCheck` / `beginSyncCheck` /
+    `endSyncCheck` lend the live streaming box; a look switch or stop wins. A Sync Check row in the Play Along
+    sheet; `Composer2SyncCheckView` (intro, camera preview, progress, result, failure copy, Settings link); the
+    camera permission text mentions Sync Check.
+  - `8d6610b` build 911 (24 entries).
+  - `9df7fed` "Try again" restarts the camera when the camera is what failed.
+- Found while testing: a first analyzer took ~10 s per check in Debug (now ~0.1 s); and a median would have
+  picked one of the two radio phases (up to 20 ms off) — the bridge-model test caught it.
+- Tests (iOS 27.0 simulator `C10C70A7-A702-40A9-8810-A6F13B98C57B`): 19 new — plan (2), pattern (1), analyzer (8:
+  240/120/60 fps, a slow bridge and a gentle blink, nothing blinking, a light out of view, disagreeing delays,
+  dropped frames, unsent blinks, and a bridge model with Wi-Fi and pacer jitter where every blink is timed within
+  3 ms of the truth), luma grid (1), lead storage (2), the center hand-off (4), a blink on the live stream loop (1).
+  Full suite **2590/2590** (= 2571 + 19; `/Volumes/Dev/DerivedData/play-along-full-911.xcresult`), run with
+  `-parallel-testing-enabled NO` because parallel clones now crash here. Guards green. Device builds (generic iOS,
+  unsigned): `Release` OK and `verify_spotify_experiment_absent.sh` clean; `Release-SpotifyExperimental` OK and
+  `--expect-present` OK; CFBundleVersion 911. Not archived, not installed.
+- Not verified on hardware: all of it — the frame rate the phone grants, exposure locking, the presentation-time
+  convention (≤ 2 ms either way at 240 fps), and the real delay. Device check: README §16.
+- Still open: chunk 2 items 4–5 (hits that move across the room, a Sound control in Tune); then "the room is the
+  band" (per-instrument), "it knows what's coming" (builds, drops, remembered song maps), and real-song recordings
+  for the beat lab; Play Along B4, B7, B9–B12; bridge re-discovery, Entertainment stop on background, privacy
   manifest 1C8F.1, CI Release build.
