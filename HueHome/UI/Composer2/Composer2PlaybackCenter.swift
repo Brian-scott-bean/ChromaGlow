@@ -116,6 +116,9 @@ final class Composer2PlaybackCenter {
         // Room mode sweeps the lights one command at a time — it cannot land a
         // punch on the beat, so it plays along as Glide (cycles locked to bars).
         output.playAlongFeel = roomMode ? .glide : settings.feel
+        // Hits: where the punches land. Room mode reaches each light only
+        // about once a second, so a punch there stays whole-room.
+        output.playAlongHits = roomMode ? .together : settings.hits
         // Song colors (P6): while Play Along is on, the playing track's album
         // art paints the look; a new track's colours land on the one.
         let swatches = settings.isOn && settings.songColors ? MusicSessionCoordinator.shared.artworkSwatches : nil

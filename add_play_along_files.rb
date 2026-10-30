@@ -67,6 +67,7 @@ APP_FILES = {
   'HueHome/Core/Composer2/Composer2Quantizer.swift'    => CORE_C2,
   'HueHome/Core/Composer2/Composer2LandingSource.swift' => CORE_C2,
   'HueHome/Core/Composer2/Composer2AlbumPalette.swift' => CORE_C2,
+  'HueHome/Core/Composer2/Composer2Hits.swift'         => CORE_C2,
   'HueHome/UI/Composer2/Composer2PlayAlongControls.swift' => UI_C2,
   'HueHome/UI/Composer2/Composer2SyncCheckView.swift'  => UI_C2,
 }
@@ -85,6 +86,7 @@ TEST_FILES = {
   'HueHomeTests/MicrophoneHopRelayTests.swift'         => TESTS,
   'HueHomeTests/CompositionEntertainmentLoopTests.swift' => TESTS,
   'HueHomeTests/SyncCheckTests.swift'                  => TESTS,
+  'HueHomeTests/Composer2LabHitsTests.swift'           => TESTS,
 }
 
 existing = existing_paths(project)

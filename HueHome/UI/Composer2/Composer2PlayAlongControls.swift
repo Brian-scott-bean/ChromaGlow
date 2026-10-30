@@ -2,8 +2,8 @@
 // ChromaGlow — Composer 2 (Play Along P3/P4)
 //
 // The one button that makes any look play along with the music, the sheet
-// behind its long-press (Feel, On the One, Song colors, Light timing, Sync
-// Check, Tap the one) and the beat readout that shows what the room is hearing. The
+// behind its long-press (Feel, Hits, On the One, Song colors, Light timing,
+// Sync Check, Tap the one) and the beat readout that shows what the room is hearing. The
 // settings are app-wide: Play Along stays on for the next look and the next
 // session until it is turned off.
 
@@ -20,6 +20,7 @@ final class Composer2PlayAlongSettings {
 
     static let enabledKey = "playAlong.enabled"
     static let feelKey = "playAlong.feel"
+    static let hitsKey = "playAlong.hits"
     static let onTheOneKey = "playAlong.onTheOne"
     static let songColorsKey = "playAlong.songColors"
     static let consentKey = "playAlong.consentShown"
@@ -32,6 +33,11 @@ final class Composer2PlayAlongSettings {
     }
     var feel: Composer2PlayAlong.Feel {
         didSet { defaults.set(feel.rawValue, forKey: Self.feelKey); onChange?() }
+    }
+    /// Where the punches land: rolling across the room (the default), light
+    /// to light, or the whole room at once.
+    var hits: Composer2AudioModulation.Travel {
+        didSet { defaults.set(hits.rawValue, forKey: Self.hitsKey); onChange?() }
     }
     /// Look changes land on the next bar line while the music plays.
     var onTheOne: Bool {
@@ -51,6 +57,7 @@ final class Composer2PlayAlongSettings {
         self.defaults = defaults
         isOn = defaults.bool(forKey: Self.enabledKey)
         feel = defaults.string(forKey: Self.feelKey).flatMap(Composer2PlayAlong.Feel.init(rawValue:)) ?? .groove
+        hits = defaults.string(forKey: Self.hitsKey).flatMap(Composer2AudioModulation.Travel.init(rawValue:)) ?? .roll
         onTheOne = defaults.object(forKey: Self.onTheOneKey) as? Bool ?? true
         songColors = defaults.object(forKey: Self.songColorsKey) as? Bool ?? true
     }
@@ -230,6 +237,19 @@ struct Composer2PlayAlongSheet: View {
                                       title: { $0.title },
                                       accessibilityLabel: "Feel")
                     Text(settings.feel.subtitle)
+                        .font(.footnote)
+                        .foregroundStyle(LuminousPalette.inkSecondary)
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    LuminousEyebrow(text: "Hits")
+                    LuminousSegmented(options: Composer2AudioModulation.Travel.allCases,
+                                      selection: Binding(get: { settings.hits }, set: { settings.hits = $0 }),
+                                      title: { $0.title },
+                                      accessibilityLabel: "Hits")
+                    Text(settings.feel == .glide
+                         ? "Glide adds no hits of its own. Choose Groove or Hit to see them move."
+                         : settings.hits.subtitle)
                         .font(.footnote)
                         .foregroundStyle(LuminousPalette.inkSecondary)
                 }

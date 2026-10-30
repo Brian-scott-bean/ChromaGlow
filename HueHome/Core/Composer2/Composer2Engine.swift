@@ -9,7 +9,8 @@
 // Per-layer pipeline, per light:
 //   mask → motion (event kick applied) → palette → rhythm × weight × audio
 //   × variation → event screen / colour mix → composite → master intensity
-//   → gamut-C chromaticity.
+//   → gamut-C chromaticity. A punch is one value for the room, unless it
+//   moves (`Composer2Hits`): then each light has its own.
 
 import Foundation
 
@@ -47,6 +48,11 @@ struct Composer2LayerState: Equatable {
     /// instead of waiting out an opportunity drawn from the old values.
     var eventSpec: Composer2EventSpec? = nil
     var eventSeed: UInt64 = 0
+    /// Moving hits on a heard-hit source: the recent waves, oldest first
+    /// (they may still be fading), and how many there have been (where the
+    /// next one goes).
+    var hitWaves: [Composer2Hits.Hit] = []
+    var hitWaveCount: Int = 0
 }
 
 struct Composer2EngineState: Equatable {
@@ -105,6 +111,9 @@ struct Composer2LayerPlan: Equatable {
     /// ORDER a march steps through.
     let axisRanks: [Int]
     let masterEventRate: Double
+    /// Where this layer's punches land, when they move through the room
+    /// (nil: the whole room at once).
+    let hits: Composer2Hits.Plan?
 
     static func build(layer: Composer2Layer, composition: Composer2Composition,
                       geometry: Composer2SlotGeometry) -> Composer2LayerPlan {
@@ -142,7 +151,8 @@ struct Composer2LayerPlan: Equatable {
             masterVariation: composition.master.variation,
             variation: variation,
             axisRanks: ranks,
-            masterEventRate: composition.master.sanitizedEventRate
+            masterEventRate: composition.master.sanitizedEventRate,
+            hits: layer.audio.travels && n > 1 ? Composer2Hits.Plan(geometry: geometry) : nil
         )
     }
 
@@ -360,6 +370,44 @@ enum Composer2Engine {
                 ls.eventSpec = nil
             }
 
+            // ── Moving hits (Play Along): each light's own punch ──
+            // The punch travels — rolling across the room, bursting from the
+            // middle, or stepping light to light — instead of lighting every
+            // light at once. Lights sit a little lower between hits so the
+            // moving one reads; Dim Flashing Lights scales both.
+            var hitLevels: [Double] = []
+            var duck = 0.0
+            if let hitPlan = plan.hits, hitPlan.count == n {
+                duck = Composer2Hits.duckShare * Composer2Math.clamp01(mod.intensity) * punchCap
+                let travel = mod.travel ?? .together
+                // The punch's own fade, smoothing included (the uniform path
+                // smooths the fall; a travelling hit has no shared drive to
+                // smooth, so the two times add).
+                let fade = mod.punchDecayTau + mod.smoothingTau
+                var hits: [Composer2Hits.Hit] = []
+                var firstIsReference = true
+                if mod.source == .beat, hostNow > 0 {
+                    hits = Composer2Hits.beatHits(travel, beat: beat, at: hostNow, groups: hitPlan.groups, fade: fade)
+                } else if mod.source == .onset, hostNow > 0, audio.lastOnsetAt > 0 {
+                    // A heard hit starts a wave once the last one is far
+                    // enough behind it (the same spacing as on the grid).
+                    if audio.lastOnsetAt > (ls.hitWaves.last?.time ?? 0),
+                       let wave = Composer2Hits.heardWave(travel, at: audio.lastOnsetAt, after: ls.hitWaves.last,
+                                                          number: ls.hitWaveCount &+ 1, groups: hitPlan.groups,
+                                                          beatInterval: beat.beatInterval) {
+                        ls.hitWaves.append(wave)
+                        if ls.hitWaves.count > Composer2Hits.onsetMemory { ls.hitWaves.removeFirst() }
+                        ls.hitWaveCount &+= 1
+                    }
+                    hits = ls.hitWaves
+                    firstIsReference = ls.hitWaves.count >= Composer2Hits.onsetMemory
+                }
+                if !hits.isEmpty {
+                    Composer2Hits.levels(plan: hitPlan, hits: hits, firstIsReference: firstIsReference, at: hostNow,
+                                         decay: fade, into: &hitLevels)
+                }
+            }
+
             let brightnessScale = mod.brightnessScale(drive: drive)
             let punch = mod.punch(drive: drive) * punchCap
             let variation = plan.variation
@@ -455,7 +503,9 @@ enum Composer2Engine {
 
                 var bri = rhythmValue
                 bri *= sample.weight * brightnessScale * (1 - jitter.brightness)
-                if punch > 0 { bri += (1 - bri) * punch }
+                if duck > 0 { bri *= 1 - duck }
+                let lightPunch = hitLevels.count == n ? mod.punch(drive: hitLevels[i]) * punchCap : punch
+                if lightPunch > 0 { bri += (1 - bri) * lightPunch }
 
                 if e > 0 {
                     if modulatesBrightness { bri += (1 - bri) * e }

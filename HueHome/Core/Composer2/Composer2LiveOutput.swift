@@ -101,6 +101,20 @@ final class Composer2LiveOutput: ConcurrentCompositionFrameSource, @unchecked Se
     }
     private var _playAlongFeel: Composer2PlayAlong.Feel = .groove
 
+    /// Where the play-along punches land: rolling across the room, stepping
+    /// light to light, or the whole room at once.
+    var playAlongHits: Composer2AudioModulation.Travel {
+        get { locked { _playAlongHits } }
+        set {
+            locked {
+                guard newValue != _playAlongHits else { return }
+                _playAlongHits = newValue
+                derivedDirty = true
+            }
+        }
+    }
+    private var _playAlongHits: Composer2AudioModulation.Travel = .together
+
     /// When the play-along look takes over and lets go.
     var director: Composer2PlayAlongDirector { locked { _director } }
     private var _director = Composer2PlayAlongDirector()
@@ -320,7 +334,8 @@ final class Composer2LiveOutput: ConcurrentCompositionFrameSource, @unchecked Se
         if mix.weight > 0 {
             if _derived == nil || derivedDirty || derivedBPM != mix.bpm {
                 _derived = Composer2PlayAlong.apply(look, feel: _playAlongFeel, bpm: mix.bpm,
-                                                    category: Composer2ThemeCatalog.entry(id: _composition.id)?.category)
+                                                    category: Composer2ThemeCatalog.entry(id: _composition.id)?.category,
+                                                    hits: _playAlongHits)
                 derivedBPM = mix.bpm
                 derivedDirty = false
             }

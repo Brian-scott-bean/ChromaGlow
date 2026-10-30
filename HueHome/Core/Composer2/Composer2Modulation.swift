@@ -60,6 +60,31 @@ struct Composer2AudioModulation: Codable, Equatable {
         case dimWhenQuiet = "dim_when_quiet"
     }
 
+    /// Where a beat or hit lands in the room (see `Composer2Hits`): all at
+    /// once, rolling across the room, or stepping light to light.
+    enum Travel: String, Codable, CaseIterable, Identifiable {
+        case roll
+        case chase
+        case together
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .roll: return "Roll"
+            case .chase: return "Chase"
+            case .together: return "Together"
+            }
+        }
+
+        var subtitle: String {
+            switch self {
+            case .roll: return "Each beat rolls across the room and back — the one bursts out from the middle"
+            case .chase: return "Each beat lands on the next light, back and forth"
+            case .together: return "The whole room hits at once"
+            }
+        }
+    }
+
     var source: Source = .off
     var brightnessMode: BrightnessMode = .punch
     var sensitivity: Double = 0.7
@@ -74,11 +99,15 @@ struct Composer2AudioModulation: Codable, Equatable {
     /// 0…1 punch decay for beat/onset sources (τ 0.08…0.6 s).
     var punchDecay: Double = 0.4
     var triggerEventsOnOnset: Bool = false
+    /// How a beat or hit punch moves through the room. nil = not chosen: the
+    /// whole room at once, and Play Along may choose for it.
+    var travel: Travel? = nil
 
     init(source: Source = .off, brightnessMode: BrightnessMode = .punch, sensitivity: Double = 0.7,
          threshold: Double = 0.1, smoothing: Double = 0.3,
          intensity: Double = 0.7, targets: Set<Target> = [.brightness], quantizeBeats: Double = 1,
-         paletteStep: Double = 0.25, punchDecay: Double = 0.4, triggerEventsOnOnset: Bool = false) {
+         paletteStep: Double = 0.25, punchDecay: Double = 0.4, triggerEventsOnOnset: Bool = false,
+         travel: Travel? = nil) {
         self.source = source
         self.brightnessMode = brightnessMode
         self.sensitivity = sensitivity
@@ -90,10 +119,12 @@ struct Composer2AudioModulation: Codable, Equatable {
         self.paletteStep = paletteStep
         self.punchDecay = punchDecay
         self.triggerEventsOnOnset = triggerEventsOnOnset
+        self.travel = travel
     }
 
     enum CodingKeys: String, CodingKey {
         case source, brightnessMode, sensitivity, threshold, smoothing, intensity, targets, quantizeBeats, paletteStep, punchDecay, triggerEventsOnOnset
+        case travel
     }
 
     init(from decoder: Decoder) throws {
@@ -114,6 +145,7 @@ struct Composer2AudioModulation: Codable, Equatable {
         paletteStep = (try? c.decode(Double.self, forKey: .paletteStep)) ?? d.paletteStep
         punchDecay = (try? c.decode(Double.self, forKey: .punchDecay)) ?? d.punchDecay
         triggerEventsOnOnset = (try? c.decode(Bool.self, forKey: .triggerEventsOnOnset)) ?? d.triggerEventsOnOnset
+        travel = try? c.decode(Travel.self, forKey: .travel)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -129,9 +161,20 @@ struct Composer2AudioModulation: Codable, Equatable {
         try c.encode(paletteStep, forKey: .paletteStep)
         try c.encode(punchDecay, forKey: .punchDecay)
         try c.encode(triggerEventsOnOnset, forKey: .triggerEventsOnOnset)
+        // Only when chosen, so a look saved before moving hits existed
+        // encodes byte for byte as it did.
+        try c.encodeIfPresent(travel, forKey: .travel)
     }
 
     var isActive: Bool { source != .off }
+
+    /// True when this modulation's punches move through the room: a beat or
+    /// hit source that adds light, with a travel other than "together".
+    var travels: Bool {
+        guard let travel, travel != .together, isActive, source == .beat || source == .onset,
+              brightnessMode == .punch, targets.contains(.brightness) else { return false }
+        return true
+    }
 
     /// True when this source reads the microphone's analysis bands.
     var usesMicrophoneBands: Bool {

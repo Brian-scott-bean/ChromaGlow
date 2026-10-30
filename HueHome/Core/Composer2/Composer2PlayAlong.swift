@@ -20,6 +20,10 @@
 //    the look's own average rate — on the beat instead of after it.
 //  • A layer that already listens (Beat Drop, Club Pulse) keeps its sound
 //    settings; only its cycles lock.
+//  • Hits (Roll · Chase · Together): every punch — Groove's and Hit's, and
+//    a listening look's own — lands where the user chose: rolling across the
+//    room, stepping light to light, or the whole room at once. A punch whose
+//    look already chose how it moves keeps that.
 //  • Calm looks are never re-timed — "six breaths a minute" stays six — they
 //    only breathe a little with the music's loudness. Slow looks clamp to
 //    Glide.
@@ -64,7 +68,8 @@ enum Composer2PlayAlong {
     /// The derived look. `bpm` is the tempo when Play Along engaged (or the
     /// song changed); `category` lets Calm looks keep their own pace.
     static func apply(_ look: Composer2Composition, feel requested: Feel, bpm: Double,
-                      category: Composer2LookCategory? = nil) -> Composer2Composition {
+                      category: Composer2LookCategory? = nil,
+                      hits: Composer2AudioModulation.Travel = .together) -> Composer2Composition {
         guard bpm.isFinite, bpm >= 20, bpm <= 300 else { return look }
         let calm = category == .calm
         let feel = calm || isSlow(look) ? .glide : requested
@@ -94,6 +99,11 @@ enum Composer2PlayAlong {
             if feel == .hit, !calm, var events = layer.events {
                 syncEvents(&events, beat: beat)
                 layer.events = events
+            }
+            if hits != .together, layer.audio.travel == nil {
+                layer.audio.travel = hits
+                // Only punches that can move carry it (a swell stays as is).
+                if !layer.audio.travels { layer.audio.travel = nil }
             }
             out.layers[i] = layer
         }
