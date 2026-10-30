@@ -80,6 +80,12 @@ final class Composer2SyncCheck {
         run = Task { [weak self] in await self?.drive(pattern) }
     }
 
+    /// After a failure: start the camera again if that is what failed,
+    /// otherwise run the check again.
+    func retry() async {
+        if cameraRunning { begin() } else { await prepare() }
+    }
+
     /// Stops a check in progress; the look comes straight back.
     func cancel() {
         run?.cancel()
@@ -346,7 +352,7 @@ struct Composer2SyncCheckView: View {
         case .failed:
             LuminousPrimaryButton(title: "Try again", symbol: "arrow.clockwise") {
                 HapticManager.shared.medium()
-                check.begin()
+                Task { await check.retry() }
             }
         case .measured:
             LuminousPrimaryButton(title: "Done", symbol: "checkmark") { dismiss() }
