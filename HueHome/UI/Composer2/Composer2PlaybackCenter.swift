@@ -427,6 +427,42 @@ final class Composer2PlaybackCenter {
         box?.triggerRESTBurst()
     }
 
+    // MARK: Sync Check
+
+    /// The pattern borrowing the live box, while a Sync Check runs.
+    @ObservationIgnored private var syncCheck: SyncCheckPattern?
+
+    /// A Sync Check can borrow this session: it is live on the light stream
+    /// of `bridgeID` and its box plays a look the stream renders off the
+    /// main actor. Room mode is not beat-accurate, so it has nothing to measure.
+    func canSyncCheck(bridgeID: String?) -> Bool {
+        guard let session, session.bridgeID == bridgeID, session.playMode == .streaming,
+              status == .live, let box else { return false }
+        return box.frameSource is any ConcurrentCompositionFrameSource
+    }
+
+    /// The pattern plays on the live box with the look wrapped underneath
+    /// it: the look keeps rendering unseen (the heartbeat still sees it
+    /// alive) and comes back exactly where it was. False when the session
+    /// cannot be borrowed.
+    func beginSyncCheck(_ pattern: SyncCheckPattern) -> Bool {
+        guard syncCheck == nil, let session, canSyncCheck(bridgeID: session.bridgeID), let box,
+              let look = box.frameSource as? any ConcurrentCompositionFrameSource else { return false }
+        pattern.wrap(look)
+        box.frameSource = pattern
+        syncCheck = pattern
+        return true
+    }
+
+    /// Hands the look back. A look that replaced the pattern meanwhile (a
+    /// switch, a stop) keeps the box: only the pattern itself is undone.
+    func endSyncCheck() {
+        guard let pattern = syncCheck else { return }
+        syncCheck = nil
+        if let box, box.frameSource === pattern { box.frameSource = pattern.wrapped }
+        pattern.wrap(nil)
+    }
+
     // MARK: Stop
 
     func stop(gateway: Composer2LiveGateway) async {
@@ -528,6 +564,8 @@ final class Composer2PlaybackCenter {
     /// the orchestrator may still be driving it (a silent-but-claimed room),
     /// so a live loop never falls back to the legacy math mid-show.
     private func unbind(releaseSource: Bool) {
+        // A runtime left bound keeps playing the look, not a Sync Check's blinks.
+        endSyncCheck()
         if releaseSource {
             box?.frameSource = nil
             output?.releaseLiveGeometry()

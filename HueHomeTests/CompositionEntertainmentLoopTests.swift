@@ -263,6 +263,30 @@ final class CompositionEntertainmentLoopTests: XCTestCase {
                              "the room kept getting frames while the main actor was blocked (\(during.count))")
     }
 
+    /// Sync Check (chunk 2, item 3) borrows this loop: its blinks go out on
+    /// the stream's own frames, each stamped with when it was sent, while
+    /// the look underneath keeps rendering off the main actor.
+    func testASyncCheckBlinksOnTheLiveLoopWhileTheLookKeepsRendering() async throws {
+        let look = ConcurrentTestSource()
+        let pattern = SyncCheckPattern(plan: SyncCheckPlan(seed: 2, dimFlashing: false, blinkCount: 2))
+        pattern.wrap(look)
+        try await startStreaming(box(pattern))
+        _ = try await firstRender(look.recorder)
+        let started = try XCTUnwrap(pattern.startedAt)
+
+        let deadline = Date().addingTimeInterval(6)
+        while pattern.sentAt[0] == nil, Date() < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let sent = try XCTUnwrap(pattern.sentAt[0], "the first blink never went out")
+        let late = sent - (started + pattern.plan.onsets[0])
+        XCTAssertGreaterThanOrEqual(late, 0)
+        XCTAssertLessThan(late, 0.05, "on the first frame at or after the blink (\(late))")
+        let renders = look.recorder.renders
+        XCTAssertGreaterThan(renders.count, 60, "the look kept rendering at the stream's rate (\(renders.count))")
+        XCTAssertTrue(renders.allSatisfy { !$0.onMain })
+    }
+
     func testLegacySourcesAndThePerformDeckStillRenderOnTheMainActor() async throws {
         let legacy = MainConfinedTestSource()
         try await startStreaming(box(legacy))

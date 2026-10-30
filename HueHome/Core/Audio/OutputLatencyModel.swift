@@ -17,8 +17,12 @@
 // The half-period centres the frame quantisation (±20 ms at the bridge's
 // 25 Hz Zigbee rate) instead of always landing late. The latencies are
 // starting points: Signify publishes none, the community measures ~80 ms
-// video-to-light for Entertainment; docs/ios/play-along/README.md §8.1
-// (slo-mo of a bulb against a click) replaces them with a measured number.
+// video-to-light for Entertainment. Sync Check (chunk 2) measures the real
+// one per bridge with the camera — send to half brightness, averaged over
+// the radio's update phases, so it already includes the half-period — and
+// that measurement replaces the whole Entertainment starting lead:
+//
+//   lead = measured latency − the user's "Light timing" offset
 // REST is not beat-accurate (100 ms per command, 200 ms transitions) — its
 // lead only centres Play Along's bar-length fades.
 
@@ -45,7 +49,8 @@ enum OutputLatencyModel {
     static func lead(transport: Transport, bridgeID: String?) -> Double {
         let base: Double
         switch transport {
-        case .entertainment: base = entertainmentLatency + entertainmentBridgePeriod / 2
+        case .entertainment:
+            base = measuredLatency(bridgeID: bridgeID) ?? entertainmentLatency + entertainmentBridgePeriod / 2
         case .rest: base = restLatency
         }
         return max(0, base - userOffset(bridgeID: bridgeID))
@@ -85,11 +90,66 @@ enum OutputLatencyModel {
         lock.unlock()
     }
 
-    /// Forget cached offsets (tests; a defaults reset).
+    /// Forget cached offsets and measurements (tests; a defaults reset).
     static func resetCache() {
         lock.lock()
         cache = [:]
+        measuredCache = [:]
         lock.unlock()
+    }
+
+    // MARK: - Sync Check's measurement
+
+    /// What Sync Check accepts as a measured Entertainment latency.
+    static let measuredRange: ClosedRange<Double> = 0.02...0.6
+
+    static func measuredKey(bridgeID: String) -> String { "playAlong.measuredLightLatencyMs.\(bridgeID)" }
+    static func measuredDateKey(bridgeID: String) -> String { "playAlong.measuredLightLatencyAt.\(bridgeID)" }
+
+    /// nil = never measured (stored as NaN in the cache, so "not measured"
+    /// is cached too and a render loop never reads defaults per frame).
+    nonisolated(unsafe) private static var measuredCache: [String: Double] = [:]
+
+    /// Seconds from sending a frame to the bridge's lights showing it, as
+    /// Sync Check measured on `bridgeID`; nil until it has.
+    static func measuredLatency(bridgeID: String?, defaults: UserDefaults = .standard) -> Double? {
+        guard let bridgeID, !bridgeID.isEmpty else { return nil }
+        lock.lock()
+        if let cached = measuredCache[bridgeID] {
+            lock.unlock()
+            return cached.isNaN ? nil : cached
+        }
+        lock.unlock()
+        let ms = defaults.object(forKey: measuredKey(bridgeID: bridgeID)) as? Double
+        let seconds = ms.map { $0 / 1000 }.flatMap { measuredRange.contains($0) ? $0 : nil }
+        lock.lock()
+        measuredCache[bridgeID] = seconds ?? .nan
+        lock.unlock()
+        return seconds
+    }
+
+    /// When `bridgeID` was last measured.
+    static func measuredDate(bridgeID: String?, defaults: UserDefaults = .standard) -> Date? {
+        guard let bridgeID, !bridgeID.isEmpty else { return nil }
+        return defaults.object(forKey: measuredDateKey(bridgeID: bridgeID)) as? Date
+    }
+
+    /// Store a Sync Check result (nil forgets it). The measurement is the new
+    /// "on time", so the user's offset starts again from zero.
+    static func setMeasuredLatency(_ seconds: Double?, bridgeID: String, at date: Date = Date(),
+                                   defaults: UserDefaults = .standard) {
+        let value = seconds.flatMap { $0.isFinite ? min(measuredRange.upperBound, max(measuredRange.lowerBound, $0)) : nil }
+        if let value {
+            defaults.set(value * 1000, forKey: measuredKey(bridgeID: bridgeID))
+            defaults.set(date, forKey: measuredDateKey(bridgeID: bridgeID))
+        } else {
+            defaults.removeObject(forKey: measuredKey(bridgeID: bridgeID))
+            defaults.removeObject(forKey: measuredDateKey(bridgeID: bridgeID))
+        }
+        lock.lock()
+        measuredCache[bridgeID] = value ?? .nan
+        lock.unlock()
+        setUserOffset(0, bridgeID: bridgeID, defaults: defaults)
     }
 
     private static func clamped(_ seconds: Double) -> Double {

@@ -2,8 +2,8 @@
 // ChromaGlow — Composer 2 (Play Along P3/P4)
 //
 // The one button that makes any look play along with the music, the sheet
-// behind its long-press (Feel, On the One, Song colors, Light timing, Tap
-// the one) and the beat readout that shows what the room is hearing. The
+// behind its long-press (Feel, On the One, Song colors, Light timing, Sync
+// Check, Tap the one) and the beat readout that shows what the room is hearing. The
 // settings are app-wide: Play Along stays on for the next look and the next
 // session until it is turned off.
 
@@ -199,6 +199,8 @@ struct Composer2PlayAlongSheet: View {
     var bridgeID: String?
 
     @State private var lightTimingMs: Double = 0
+    @State private var measuredMs: Int?
+    @State private var showSyncCheck = false
     @State private var tapped = false
     @Environment(\.dismiss) private var dismiss
 
@@ -285,11 +287,42 @@ struct Composer2PlayAlongSheet: View {
                                                    OutputLatencyModel.setUserOffset(lightTimingMs / 1000, bridgeID: bridgeID)
                                                }
                                            })
-                        Text("If the lights trail the music, slide toward earlier.")
+                        Text(measuredMs.map { "Sync Check timed your lights at \($0) ms. If they still trail the music, slide toward earlier." }
+                             ?? "If the lights trail the music, slide toward earlier.")
                             .font(.footnote)
                             .foregroundStyle(LuminousPalette.inkSecondary)
+
+                        Button {
+                            HapticManager.shared.selection()
+                            showSyncCheck = true
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: "camera.metering.center.weighted")
+                                    .font(.system(size: 18, weight: .bold))
+                                    .foregroundStyle(LuminousPalette.cyan)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Sync Check").font(.headline).foregroundStyle(LuminousPalette.ink)
+                                    Text(measuredMs == nil ? "Time your lights exactly with the camera"
+                                                           : "Measure again with the camera")
+                                        .font(.footnote).foregroundStyle(LuminousPalette.inkSecondary)
+                                }
+                                Spacer(minLength: 0)
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 13, weight: .bold))
+                                    .foregroundStyle(LuminousPalette.inkSecondary)
+                            }
+                            .padding(.horizontal, 16)
+                            .frame(minHeight: 60)
+                            .luminousGlass(radius: 18, accent: LuminousPalette.cyan, selected: false)
+                        }
+                        .buttonStyle(LuminousPressStyle(scale: 0.97))
+                        .padding(.top, 6)
+                        .accessibilityHint("Uses the camera to measure how long your lights take to respond.")
                     }
-                    .onAppear { lightTimingMs = OutputLatencyModel.userOffset(bridgeID: bridgeID) * 1000 }
+                    .onAppear { refreshTiming(bridgeID) }
+                    .fullScreenCover(isPresented: $showSyncCheck, onDismiss: { refreshTiming(bridgeID) }) {
+                        Composer2SyncCheckView(bridgeID: bridgeID)
+                    }
                 }
 
                 Label("Play Along listens to the room to find the beat. Nothing is recorded or leaves your phone.",
@@ -300,6 +333,11 @@ struct Composer2PlayAlongSheet: View {
             .padding(20)
         }
         .background(LuminousPalette.night.ignoresSafeArea())
+    }
+
+    private func refreshTiming(_ bridgeID: String) {
+        lightTimingMs = OutputLatencyModel.userOffset(bridgeID: bridgeID) * 1000
+        measuredMs = OutputLatencyModel.measuredLatency(bridgeID: bridgeID).map { Int(($0 * 1000).rounded()) }
     }
 }
 
