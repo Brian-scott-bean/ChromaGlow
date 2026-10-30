@@ -903,3 +903,66 @@ Device check for build 911 (adds to §15):
 5. Try to break it: aim at a dark wall (expect "Couldn't see the lights blink"), move the phone around during the
    check, switch the look mid-check (expect "The look changed or stopped"), and lock the phone mid-check (the look
    should come back).
+
+## 17. Hits that move across the room (2026-10-30, build 912)
+
+Chunk 2, item 4. Same branch, rollback tag `checkpoint/pre-build-912-moving-hits` (= `b58a09a`).
+
+**What the user does:** long-press Play Along → **Hits**: Roll (the default) · Chase · Together. Groove's and Hit's
+punches land where chosen, and so do the punches of looks that already listen (Beat Drop, Club Pulse). Glide adds
+no hits of its own; Calm looks only breathe; Room mode stays whole-room (it reaches each light about once a second).
+
+| Piece | What it does |
+|---|---|
+| Roll (`Core/Composer2/Composer2Hits.swift`) | Each beat launches a spot at one end of the room's long axis (the bridge's own positions; one point per gradient segment; light order without positions). It glides to the far side in half a beat (0.12–0.4 s), keeping 60 % of its light, then fades with the punch (≤ 0.6 s). The same way for a bar, back the next. When the clock knows the one (bar confidence ≥ 0.5), the one bursts out from the light nearest the middle; a ring of lights equally far out is hit at once. The first light lands **on** the beat |
+| Chase | Each beat lands on the next of up to 6 steps along the axis (pairs in a room of 7–12), bouncing at the ends |
+| Heard hits | A listening look's own hits (Beat Drop) start a wave when the last one is ≥ 0.40 s behind (a chase: 0.17 s); a roll turns round only once the last wave has left every light a flash budget behind |
+| The dip | Between hits the punched layer sits 0.35 × the punch's strength lower, so the moving hit reads against the look. Steady, never a flash; Dim Flashing Lights scales it with the punch |
+| Model | `Composer2AudioModulation.travel` — optional; absent = the whole room, and encoded only when set, so saved looks encode exactly as before. `Composer2PlayAlong.apply(…, hits:)` sets it on punches that have none; `Composer2LiveOutput.playAlongHits`; the setting `playAlong.hits` |
+
+**Safety, by construction (the shaper and the wire gate stay the authority):**
+- *No light is hit twice within 0.34 s* (the period the wire gate enforces for the whole room). Whenever two hits in a
+  row differ (a turn, a burst), the first reaches every light by `gap − 0.34 s`; a roll that keeps going may take up
+  to twice that. Songs above ~150 BPM roll on every other beat; a chase never hits a light twice running, so it keeps
+  every beat up to ~350 BPM. A per-light check in the renderer is the safety net (it never fires on a steady grid).
+- *A beat raises the room's light once.* A moving spot carries the light of the lights it started on and no more; a
+  stop with more lights than the first shares it. The first version lit each light to full as a wave reached it; in
+  a 3-light room that was three onsets inside 0.3 s, and the test below caught it (Poltergeist at 6 lights: the
+  shaper slowed ~22 % of frames, vs 0 % whole-room).
+
+**Measured** (`Composer2LabHitsTests`, every built-in look through `Composer2LiveOutput` — engine + flash shaper — on
+the 20 ms grid, then an independent copy of the wire gate; full report `moving-hits-gate-report-2026-10-30.txt`). Share
+of frames the shaper had to slow, mean over the 49 looks:
+
+| Feel, tempo, lights | Roll | Chase | Together |
+|---|---|---|---|
+| Groove 120 BPM, 4 | 1.07 % | 0.97 % | 1.23 % |
+| Groove 128 BPM, 6 | 0.35 % | 0.36 % | 0.40 % |
+| Hit 96 BPM, 3 | 1.94 % | 1.93 % | 1.46 % |
+| Hit 120 BPM, 4 | 0.79 % | 0.73 % | 0.56 % |
+| Hit 128 BPM, 6 | 0.41 % | 0.42 % | 0.56 % |
+| Hit 186 BPM, 8 | 0.44 % | 0.39 % | 3.63 % |
+
+- The wire gate held **0** frames in all 588 moving cases (a hold is a stutter).
+- In a big room on a fast song, moving hits need the shaper about 8× less than whole-room hits: the beat fits under
+  the limit instead of being slowed.
+- **Measured, not hidden:** in rooms of 3–4 lights at Hit, looks with their own one-light sparkles need the shaper
+  more with moving hits (Golden Ornaments 13.8 % vs 0 %, Campfire 15.8 % vs 3.0 %, Christmas Chase 11.3 % vs 0 %).
+  A whole-room punch fading masks a sparkle's rise; a moving one doesn't, so the shaper softens those sparkles a
+  little. No look exceeds 20 %, and nothing is held. 36 of 588 cases are worse by more than a point, 86 better.
+
+Tested on the simulator only. **Not verified:** anything on a bridge. The roll's speeds (half a beat across, a 60 %
+spot) and the dip (0.35) are chosen on paper and need eyes in a real room; the bridge's 25 Hz radio means a light
+gets one or two updates as the spot passes, so a fast roll may read as a ripple rather than a glide.
+
+Device check for build 912 (adds to §16):
+1. Run Sync Check first (§16): a moving hit only lands on the kick if the lead is right.
+2. A beat look in Groove (Club Pulse, Neon Nights), Hits = Roll, music playing: on each kick a spot should leave one
+   end of the room and glide across; the next bar it comes back. Tap the one (or let it learn the bar): the one
+   should burst out from the middle.
+3. At the turn, the end light should not flash twice.
+4. A gradient strip in the area: the spot should run along its segments.
+5. Hits = Chase: one light per beat, stepping across and back. Then Together for a minute — which reads more as
+   dancing? Note which looks lose their punch with the dip.
+6. Dim Flashing Lights on (Settings → Accessibility → Motion): hits and dip should both be much gentler.
+7. A fast song (DnB, ~170 BPM): Roll should land on every other beat, Chase on every beat.

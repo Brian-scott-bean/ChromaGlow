@@ -11,6 +11,12 @@
 - Live shared handoff: append-only entries in this `DEVLOG.md`. Git is the shared memory between tools.
 
 ### iOS — where we are RIGHT NOW
+- **BUILD 912 ON `experiment/play-along` — HITS THAT MOVE ACROSS THE ROOM, NOT MERGED (2026-10-30).** Long-press
+  Play Along → Hits: Roll (default — each beat launches a spot that glides across the room, one way a bar and back
+  the next; the one bursts from the middle) · Chase (light to light) · Together (the old whole-room punch). No
+  light is hit twice within the 0.34 s flash budget and a beat raises the room's light once; every built-in look
+  through the real output path: 0 held frames. Rollback tag `checkpoint/pre-build-912-moving-hits`. Simulator only
+  — **hardware NOT verified** (run Sync Check first). Entry at the end of this file; device check in README §17.
 - **BUILD 911 ON `experiment/play-along` — SYNC CHECK, NOT MERGED (2026-10-30).** Long-press Play Along → Sync
   Check: the camera watches a light while the room blinks slowly for ~18 s and times each blink from send to half
   brightness; the result becomes that bridge's render lead (replacing the 100 ms guess) and the Light timing
@@ -14085,3 +14091,42 @@ pick Spotify → Start → no crash".
   band" (per-instrument), "it knows what's coming" (builds, drops, remembered song maps), and real-song recordings
   for the beat lab; Play Along B4, B7, B9–B12; bridge re-discovery, Entertainment stop on background, privacy
   manifest 1C8F.1, CI Release build.
+
+## 2026-10-30 — [Claude] Build 912: hits that move across the room on `experiment/play-along` (not merged)
+
+- Brian: "build the next one" (after Sync Check, build 911 — not yet phone-checked). Built chunk 2 item 4, hits that
+  move across the room. Same branch and worktree; rollback tag `checkpoint/pre-build-912-moving-hits` (= `b58a09a`).
+  Nothing on `main` changed; nothing pushed.
+- Commits:
+  - `5b62eea` **Moving hits.** `Core/Composer2/Composer2Hits.swift` (new, pure): Roll — each beat launches a spot
+    that glides along the room's long axis in half a beat (0.12–0.4 s), one way for a bar and back the next, and the
+    one bursts from the middle once the bar is known; Chase — each beat on the next of up to 6 steps, ping-pong;
+    heard hits (Beat Drop) start waves ≥ 0.40 s apart (chase 0.17 s). Safety by construction: no light is hit twice
+    within 0.34 s (the beat before a turn sweeps within `gap − 0.34`; > ~150 BPM rolls every other beat; a chase
+    keeps every beat), and a spot never adds light as it moves (one rise per beat). `Composer2Engine`: per-light
+    punch levels for a travelling punch, a steady dip between hits (0.35 × strength, × Dim Flashing Lights).
+    `Composer2AudioModulation.travel` (optional, encoded only when set). `Composer2PlayAlong.apply(…, hits:)`,
+    `Composer2LiveOutput.playAlongHits`, setting `playAlong.hits` (default Roll), a Hits row in the Play Along
+    sheet (Roll · Chase · Together); Room mode stays whole-room.
+  - `dc0d5f3` build 912 (24 entries).
+- Found while testing: the first version lit each light to full as a wave reached it — in a 3–6 light room that is
+  several onsets inside 0.3 s, and the new budget test showed the shaper slowing up to ~22 % of frames (Poltergeist)
+  where whole-room hits needed none. Redesigned as an energy-preserving spot. The first roll also reversed every
+  beat; the end light would have been hit twice 0.25 s apart, so it now turns per bar with a shortened sweep before
+  the turn. A measurement bug in the test itself (the independent gate started mid-run) had inflated "holds"; fixed.
+- Measured (simulator, every built-in look through the real output path + an independent wire gate, 588 moving
+  cases, report `docs/ios/play-along/moving-hits-gate-report-2026-10-30.txt`): 0 held frames; shaper share
+  vs whole-room — Groove 4 lights 1.07/0.97 % vs 1.23 %; Hit 8 lights at 186 BPM 0.44/0.39 % vs 3.63 %; Hit 3 lights
+  at 96 BPM 1.94/1.93 % vs 1.46 %. Small rooms with their own one-light sparkles (Golden Ornaments, Campfire,
+  Christmas Chase) need the shaper more with moving hits (up to 15.8 % vs 3.0 %); README §17.
+- Tests (iOS 27.0 simulator `C10C70A7-A702-40A9-8810-A6F13B98C57B`): 16 new in `Composer2LabHitsTests`. Related
+  Composer suites 89/89. Full suite **2606/2606** (= 2590 + 16; `/Volumes/Dev/DerivedData/play-along-full-912.xcresult`),
+  serial (the first attempt timed out preparing the test runner before any test ran — infrastructure; it passed
+  after a simulator reboot). Guards green. Device builds (generic iOS, unsigned): `Release` OK and
+  `verify_spotify_experiment_absent.sh` clean; `Release-SpotifyExperimental` OK and `--expect-present` OK;
+  CFBundleVersion 912. Not archived, not installed.
+- Not verified on hardware: all of it — how a roll reads through the bridge's 25 Hz radio, the roll speed and the
+  dip, gradient segments in the spot's path. Device check: README §17 (run Sync Check first, §16).
+- Still open: a Sound control in Tune (chunk 2 item 5); then "the room is the band", "it knows what's coming", and
+  real-song recordings for the beat lab; Play Along B4, B7, B9–B12; bridge re-discovery, Entertainment stop on
+  background, privacy manifest 1C8F.1, CI Release build.
