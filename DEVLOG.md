@@ -11,6 +11,11 @@
 - Live shared handoff: append-only entries in this `DEVLOG.md`. Git is the shared memory between tools.
 
 ### iOS — where we are RIGHT NOW
+- **RESEARCH 2026-11-01 (docs only, `experiment/play-along`): what the "beyond any app" list would take.** Sound in
+  Tune (1 build), real songs for the beat lab (1–2), the room is the band (~5), it knows what's coming (~6): about a
+  dozen builds. Write-up `docs/ios/play-along/beyond-any-app-research-2026-11-01.md` (README §18). Decisions owed by
+  Brian: a Debug-only room recorder, first-listen in-memory buffering + privacy wording, iOS 27-only parts, AIST/RWC,
+  Sound per look or app-wide. The ChatGPT plan and the 10-06 deep dive are now saved under `docs/ios/play-along/sources/`.
 - **BUILD 912 ON `experiment/play-along` — HITS THAT MOVE ACROSS THE ROOM, NOT MERGED (2026-10-30).** Long-press
   Play Along → Hits: Roll (default — each beat launches a spot that glides across the room, one way a bar and back
   the next; the one bursts from the middle) · Chase (light to light) · Together (the old whole-room punch). No
@@ -14130,3 +14135,30 @@ pick Spotify → Start → no crash".
 - Still open: a Sound control in Tune (chunk 2 item 5); then "the room is the band", "it knows what's coming", and
   real-song recordings for the beat lab; Play Along B4, B7, B9–B12; bridge re-discovery, Entertainment stop on
   background, privacy manifest 1C8F.1, CI Release build.
+
+## 2026-11-01 — [Claude] Research: what the "beyond any app" list would take (docs only, `experiment/play-along`)
+
+- Brian: "What would it take in order for us to build #1? … deep-dive research … just focus on that one." Item 1 =
+  the open music list: a Sound control in Tune, real songs for the beat lab, "the room is the band", "it knows what's
+  coming". Then: "we can update docs with the found information."
+- Six research agents: three code reviews of this branch @ `374afe8` (key claims re-checked by hand), three web
+  (Apple frameworks, published music-analysis research and rivals, real-song datasets and licences). Music
+  Understanding, ShazamKit and SoundAnalysis were measured on an M4 Pro Mac with two songs already on the Dev drive;
+  nothing copied or kept. No iPhone numbers.
+- Findings that change plans:
+  - Music Understanding: a whole song in ~2–4 s on the Mac (the 2026-10-06 "~10 s" was slow exFAT reads); instrument
+    activity at 20 Hz from 1–4 s windows (bass weak below 4 s); structure only on a whole song, unlabelled, no
+    confidence; DRM audio (Apple Music) throws.
+  - ShazamKit `matchOffset` within ±7 ms on clean audio; `predictedCurrentMatchOffset` is wall-clock extrapolation.
+  - SoundAnalysis is useless for instrument activity in a mix; there is no Apple stem API; Demucs/madmom/Essentia/
+    ADTOF weights can't ship in a paid app.
+  - No published method finds sections live; SonicHue already claims phrase-boundary drops. The lead is per-instrument
+    light mapping and remembered song maps.
+  - Code: ChromaGlow's area builder writes z = 0 for every light (`EntertainmentConfigBuilderView.swift:385`);
+    reactive per-drum hits would land ≥ the 0.1 s render lead late (needs a groove map); SongMemory B9 confirmed.
+  - Apple Media Services Terms ban "measurement, analysis" of iTunes content: no iTunes purchases in the lab.
+- Docs: `docs/ios/play-along/beyond-any-app-research-2026-11-01.md` (new), README §18 (new) and a §10 source link,
+  `docs/ios/play-along/sources/` (the ChatGPT plan and the 10-06 deep dive, recovered verbatim from session history
+  before it expired). No code changed; not pushed.
+- Recommended order: phone-check 911/912 → Sound in Tune → the lab → the room is the band → it knows what's coming.
+

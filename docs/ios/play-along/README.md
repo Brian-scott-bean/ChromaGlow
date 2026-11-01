@@ -632,6 +632,8 @@ Per-light REST cannot be beat-accurate: 100 ms per command, 200 ms transitions, 
 
 ## 10. From the external draft plan (shared 2026-10-06): kept, changed, dropped
 
+The plan itself, recovered verbatim on 2026-11-01: [`sources/chatgpt-play-along-plan-2026-10-06.md`](sources/chatgpt-play-along-plan-2026-10-06.md).
+
 | Plan item | Verdict | Why |
 |---|---|---|
 | Play Along, On the One, album colors, auto-start, offset groundwork | **Kept** | Same goals; designed against the real code |
@@ -966,3 +968,22 @@ Device check for build 912 (adds to §16):
    dancing? Note which looks lose their punch with the dip.
 6. Dim Flashing Lights on (Settings → Accessibility → Motion): hits and dip should both be much gentler.
 7. A fast song (DnB, ~170 BPM): Roll should land on every other beat, Chase on every beat.
+
+## 18. Beyond any app: research for the next four pieces (2026-11-01)
+
+Research only; nothing built. Full write-up: [`beyond-any-app-research-2026-11-01.md`](beyond-any-app-research-2026-11-01.md).
+Source records recovered the same day: the external plan behind §10
+([`sources/chatgpt-play-along-plan-2026-10-06.md`](sources/chatgpt-play-along-plan-2026-10-06.md)) and the 2026-10-06
+product deep dive ([`sources/deep-dive-2026-10-06.md`](sources/deep-dive-2026-10-06.md)).
+
+| Piece | Size | Hard part |
+|---|---|---|
+| A Sound control in Tune: one saved amount that scales `mod.intensity` at the single `layer.audio` read in `Composer2Engine` | 1 build | None; per look or app-wide is Brian's call |
+| Real songs for the lab: corpus loader, mir_eval-style scores, licence-clean set on `/Volumes/Dev`, optional Debug-only room recorder | 1–2 builds | Licences; the recorder contradicts "never recorded" and needs Brian's OK |
+| The room is the band: kick/snare/hat lanes, a groove map predicted on the grid, light roles (low/middle/high), a band transform, one shared flash budget | ~5 builds | Hits detected "now" land ≥ the 0.1 s render lead late; our area builder writes z = 0 |
+| It knows what's coming: song position and phrases, build/drop states, a Conductor policy, remembered song maps (Music Understanding, iOS 27), a timeline | ~6 builds | Nobody finds sections live; real look-ahead starts on the second play |
+
+Measured on an M4 Pro Mac (not iPhone): Music Understanding reads a 2–3 minute song in ~2–4 s, gives instrument
+activity at 20 Hz (4 s windows: drums 0.96, vocals 0.98, bass 0.62 agreement with whole-song), and returns structure
+only for a whole song; ShazamKit's `matchOffset` was within ±7 ms on clean audio. Recommended order: phone-check
+911/912 → Sound in Tune → the lab → the room is the band → it knows what's coming.
