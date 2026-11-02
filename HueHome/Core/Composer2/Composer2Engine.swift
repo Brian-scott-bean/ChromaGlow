@@ -232,6 +232,10 @@ enum Composer2Engine {
         // Groove/Hit punch lights the whole room on each beat. (Event
         // Strength is the look's own Moments knob and leaves punches alone.)
         let punchCap = Composer2Math.clamp01(eventCap)
+        // Tune's Sound dial: how much every layer reacts. It scales before the
+        // caps above, so Dim Flashing Lights and the flash shaper still bound
+        // a look turned up to Dances.
+        let soundAmount = composition.master.sanitizedSoundAmount
 
         for li in 0..<composition.layers.count {
             let layer = composition.layers[li]
@@ -247,7 +251,7 @@ enum Composer2Engine {
             }
 
             // ── Audio drive (one value per frame, uniform across lights) ──
-            let mod = layer.audio
+            let mod = layer.audio.scaled(by: soundAmount)
             let drive: Double
             if mod.isActive {
                 let raw = mod.rawDrive(features: audio, beat: beat, hostNow: hostNow)
@@ -377,7 +381,7 @@ enum Composer2Engine {
             // moving one reads; Dim Flashing Lights scales both.
             var hitLevels: [Double] = []
             var duck = 0.0
-            if let hitPlan = plan.hits, hitPlan.count == n {
+            if let hitPlan = plan.hits, hitPlan.count == n, mod.travels {
                 duck = Composer2Hits.duckShare * Composer2Math.clamp01(mod.intensity) * punchCap
                 let travel = mod.travel ?? .together
                 // The punch's own fade, smoothing included (the uniform path

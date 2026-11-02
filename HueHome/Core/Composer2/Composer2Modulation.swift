@@ -168,6 +168,22 @@ struct Composer2AudioModulation: Codable, Equatable {
 
     var isActive: Bool { source != .off }
 
+    /// This reaction as a look's Sound dial plays it (`amount` 0…2, 1 = as
+    /// authored). Every use of a reaction's strength — punches, the moving-
+    /// hits dip, speed, palette offset, event chance — reads `intensity`, so
+    /// scaling it scales them all (each use clamps it to 1). 0 is no reaction
+    /// at all: no palette steps, no events forced on hits.
+    func scaled(by amount: Double) -> Composer2AudioModulation {
+        guard amount != 1, isActive else { return self }
+        var copy = self
+        if !(amount > 0) {
+            copy.source = .off
+        } else {
+            copy.intensity = Composer2Math.clamp01(intensity) * amount
+        }
+        return copy
+    }
+
     /// True when this modulation's punches move through the room: a beat or
     /// hit source that adds light, with a travel other than "together".
     var travels: Bool {

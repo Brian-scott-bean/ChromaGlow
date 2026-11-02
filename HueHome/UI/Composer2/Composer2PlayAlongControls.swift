@@ -53,6 +53,12 @@ final class Composer2PlayAlongSettings {
         set { defaults.set(newValue, forKey: Self.consentKey) }
     }
 
+    /// Turning Play Along on for the first time explains listening before
+    /// the system's microphone prompt.
+    var needsConsentBeforeListening: Bool {
+        !consentShown && AVAudioApplication.shared.recordPermission == .undetermined
+    }
+
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         isOn = defaults.bool(forKey: Self.enabledKey)
@@ -138,8 +144,7 @@ struct Composer2PlayAlongButton: View {
 
     private func toggle() {
         HapticManager.shared.selection()
-        if !settings.isOn, !settings.consentShown,
-           AVAudioApplication.shared.recordPermission == .undetermined {
+        if !settings.isOn, settings.needsConsentBeforeListening {
             showConsent = true
             return
         }

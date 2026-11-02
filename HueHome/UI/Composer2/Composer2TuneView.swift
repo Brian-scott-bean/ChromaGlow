@@ -2,7 +2,8 @@
 // ChromaGlow — Composer 2 lab (experimental), v2.2.
 //
 // The Tune tab: the few dials that change a look the most, in words anyone
-// understands. Brightness, speed and energy for every look; frequency and
+// understands. Brightness, speed, energy and sound for every look (a look
+// that can't react to sound offers Play Along in Sound's place); frequency and
 // strength when a look has moments (lightning, fireworks, sparkles); how far
 // away the storm is and whether it passes, when a look has lightning; and
 // its colours, one tap from the full palette editor. Everything writes into
@@ -12,6 +13,9 @@ import SwiftUI
 
 struct Composer2TuneView: View {
     let document: Composer2Document
+
+    @State private var showConsent = false
+    private var playAlong: Composer2PlayAlongSettings { Composer2PlayAlongSettings.shared }
 
     private var composition: Composer2Composition { document.composition }
     private var colors: [Color] { Composer2Theme.swatches(of: composition, max: 4) }
@@ -29,6 +33,14 @@ struct Composer2TuneView: View {
             colours
             takes
         }
+        .sheet(isPresented: $showConsent) {
+            Composer2PlayAlongConsent {
+                playAlong.consentShown = true
+                showConsent = false
+                playAlong.isOn = true
+            }
+            .presentationDetents([.medium])
+        }
     }
 
     // MARK: Feel
@@ -41,6 +53,34 @@ struct Composer2TuneView: View {
                                 format: { Composer2QuickMapping.speedLabel(slider: $0) }, onEditingChanged: burst)
             Composer2GlowSlider(title: "Energy", symbol: "sparkles", value: energyBinding, colors: colors,
                                 format: { Composer2QuickMapping.energyWord($0) }, onEditingChanged: burst)
+            sound
+        }
+    }
+
+    // MARK: Sound
+
+    /// How much the look reacts to the music: its own sound and Play Along's
+    /// alike. A look with nothing to scale offers Play Along instead.
+    @ViewBuilder
+    private var sound: some View {
+        if composition.hasSound || playAlong.isOn {
+            Composer2GlowSlider(title: "Sound", symbol: "waveform", value: soundBinding,
+                                range: 0...Composer2MasterControls.maxSoundAmount, colors: colors,
+                                format: { Composer2QuickMapping.soundWord($0) }, onEditingChanged: burst)
+        } else {
+            Toggle(isOn: playAlongBinding) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Play Along")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Composer2Theme.ink)
+                    Text("This look doesn't react to sound. Play Along moves it with the music in the room.")
+                        .font(.caption)
+                        .foregroundStyle(Composer2Theme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .tint(Composer2Theme.cyan)
+            .frame(minHeight: 44)
         }
     }
 
@@ -237,6 +277,27 @@ struct Composer2TuneView: View {
         )
     }
 
+    private var soundBinding: Binding<Double> {
+        Binding(
+            get: { document.composition.master.sanitizedSoundAmount },
+            set: { value in document.edit { $0.master.soundAmount = Composer2QuickMapping.soundAmount(fromSlider: value) } }
+        )
+    }
+
+    private var playAlongBinding: Binding<Bool> {
+        Binding(
+            get: { playAlong.isOn },
+            set: { on in
+                HapticManager.shared.selection()
+                if on, playAlong.needsConsentBeforeListening {
+                    showConsent = true
+                } else {
+                    playAlong.isOn = on
+                }
+            }
+        )
+    }
+
     private var rateBinding: Binding<Double> {
         Binding(
             get: { Composer2QuickMapping.slider(fromSpeed: document.composition.master.eventRate) },
@@ -376,6 +437,25 @@ enum Composer2QuickMapping {
         let e = Composer2Math.clamp01(energy)
         composition.master.energy = e
         composition.master.variation = e * 2
+    }
+
+    /// The Sound dial, 0…2 (1 = as authored). It snaps to Still and to as
+    /// authored so a drag lands on both exactly, and a look dragged back to
+    /// as authored saves no Sound at all.
+    static func soundAmount(fromSlider value: Double) -> Double {
+        let v = Composer2Math.clamp(value.isFinite ? value : 1, 0, Composer2MasterControls.maxSoundAmount)
+        if v < 0.04 { return 0 }
+        if abs(v - 1) < 0.06 { return 1 }
+        return v
+    }
+
+    static func soundWord(_ amount: Double) -> String {
+        switch Composer2Math.clamp(amount.isFinite ? amount : 1, 0, Composer2MasterControls.maxSoundAmount) {
+        case ..<0.04: return "Still"
+        case ..<0.85: return "Lightly"
+        case ..<1.2: return "As authored"
+        default: return "Dances"
+        }
     }
 
     /// The word shown for an energy value.
