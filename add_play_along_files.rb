@@ -62,6 +62,7 @@ APP_FILES = {
   'HueHome/Core/Audio/GrooveMap.swift'                 => AUDIO,
   'HueHome/Core/Audio/ActivityLanes.swift'             => AUDIO,
   'HueHome/Core/Audio/SongStructure.swift'             => AUDIO,
+  'HueHome/Core/Audio/SongEnergy.swift'                => AUDIO,
   'HueHome/Core/Audio/OutputLatencyModel.swift'        => AUDIO,
   'HueHome/Core/Audio/MicrophoneHopRelay.swift'        => AUDIO,
   'HueHome/Core/Audio/SyncCheck.swift'                 => AUDIO,
@@ -103,6 +104,7 @@ TEST_FILES = {
   'HueHomeTests/GrooveMapTests.swift'                  => TESTS,
   'HueHomeTests/ActivityLanesTests.swift'              => TESTS,
   'HueHomeTests/SongStructureTests.swift'              => TESTS,
+  'HueHomeTests/SongEnergyTests.swift'                 => TESTS,
   'HueHomeTests/Composer2LightRolesTests.swift'        => TESTS,
   'HueHomeTests/Composer2BandTests.swift'              => TESTS,
 }

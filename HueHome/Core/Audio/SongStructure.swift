@@ -3,8 +3,9 @@
 //
 // Where we are in the song: a bar count that survives the clock's
 // corrections, the phrase grid (most pop and dance music changes on 8-bar
-// lines), and a history of what each bar sounded like — the ground the
-// build/drop detector and the Conductor stand on.
+// lines), a history of what each bar sounded like, and (build 921,
+// SongEnergy.swift) where its energy is going — calm, groove, build, peak,
+// breakdown — with the drop staged on the phrase grid.
 //
 //  • Song position. On the microphone, "bar 0" is wherever the clock first
 //    locked, and the clock nudges its phase (≤ 30 ms a pass) and may
@@ -73,7 +74,15 @@ struct SongBar: Sendable, Equatable {
     var start: Double
     var end: Double
     /// Mean log band level (the analyzer's `energy`): raw, not auto-levelled.
+    /// It rewards a FULL spectrum (a noise riser reads high).
     var energy: Float = 0
+    /// Loudness (build 921): log of the summed band energies — dominated by
+    /// the loudest bands, like RMS. A drop is loud here, a riser less so.
+    var loudness: Float = 0
+    /// The sub-bass (30–141 Hz, bands 0–1): mean log level. The bass-line
+    /// lane (build 919) listens at 141–375 Hz, so a pure sub-bass — a dance
+    /// drop's — shows here, not there.
+    var sub: Float = 0
     /// Mean rectified flux per frame, low (< 281 Hz) and high (≥ 2.8 kHz).
     var low: Float = 0
     var high: Float = 0
@@ -110,6 +119,8 @@ struct SongStructure: Sendable, Equatable {
     var phraseOffset = 0
     /// 0…1: how clearly the changes keep landing on that phrase grid.
     var phraseConfidence: Double = 0
+    /// Where the song's energy is going, and the staged drop (build 921).
+    var energy: SongEnergy = .none
 
     static let none = SongStructure()
 
@@ -172,13 +183,15 @@ final class SongStructureTracker {
     private var scores: [Double]
     private var noveltyMean = 0.0
     private var noveltyCount = 0
+    private let energyTracker: SongEnergyTracker
 
     static let historyBars = 64
     static let historyBeats = 64
 
-    init(tuning: SongStructureTuning = .standard) {
+    init(tuning: SongStructureTuning = .standard, energyTuning: SongEnergyTuning = .standard) {
         self.tuning = tuning
         scores = [Double](repeating: 0, count: tuning.phraseBeats)
+        energyTracker = SongEnergyTracker(tuning: energyTuning)
     }
 
     func reset() {
@@ -194,6 +207,7 @@ final class SongStructureTracker {
         scores = [Double](repeating: 0, count: tuning.phraseBeats)
         noveltyMean = 0
         noveltyCount = 0
+        energyTracker.reset()
     }
 
     /// One tracker pass: the analyzer's recent frames and the clock's grid.
@@ -325,6 +339,12 @@ final class SongStructureTracker {
         }
         structure.beatsCompleted += 1
         scorePhrases()
+        // The gap before a drop is a beat-sized event.
+        if s.count > 0 {
+            let level = s.bands.reduce(0, +) / Float(max(1, s.bands.count))
+            energyTracker.beatFinished(level: level, end: end, structure: structure)
+            structure.energy = energyTracker.energy
+        }
     }
 
     private func finishBar(start: Double, end: Double, frames: OnsetFrames, beatSeconds: Double) {
@@ -335,6 +355,8 @@ final class SongStructureTracker {
         if s.count > 0 {
             let beats = Float(max(0.25, (end - start) / max(beatSeconds, 1e-3)))
             bar.density = Float(s.hits) / beats
+            bar.loudness = logf(s.linear.reduce(0, +) + 1e-6)
+            bar.sub = n >= 2 ? (s.bands[0] + s.bands[1]) / 2 : 0
             // Flatness: geometric over arithmetic mean of the band energies.
             var logSum: Float = 0, sum: Float = 0
             for b in 0..<n { logSum += logf(s.linear[b] + 1e-6); sum += s.linear[b] }
@@ -348,6 +370,8 @@ final class SongStructureTracker {
         bars.append(bar)
         if bars.count > Self.historyBars { bars.removeFirst(bars.count - Self.historyBars) }
         structure.barsCompleted += 1
+        energyTracker.barFinished(bars, structure: structure)
+        structure.energy = energyTracker.energy
     }
 
     /// The novelty of the beat line `noveltyBeats` back (8 beats after it vs
