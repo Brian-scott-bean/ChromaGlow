@@ -4,13 +4,19 @@
 
 ---
 
-## Current Status Snapshot (updated 2026-10-30)
+## Current Status Snapshot (updated 2026-11-02)
 
 ### Pointers
 - Canonical agent context: `AGENTS.md`. Claude Code entry point: `CLAUDE.md` points there.
 - Live shared handoff: append-only entries in this `DEVLOG.md`. Git is the shared memory between tools.
 
 ### iOS — where we are RIGHT NOW
+- **BUILD 913 ON `experiment/play-along` — A SOUND DIAL IN TUNE, NOT MERGED (2026-11-02).** Tune → Feel → Sound:
+  Still · Lightly · As authored · Dances, saved with the look (`master.soundAmount`, 0…2, encoded only when not 1).
+  One scale in the engine covers a look's own sound and Play Along's alike; Still turns the reaction off and lets go
+  of the microphone; Play Along's choices are unchanged. A look with nothing to scale shows the Play Along switch
+  instead. Every built-in look at full Dances: 0 held frames. Rollback tag `checkpoint/pre-build-913-sound-in-tune`.
+  Simulator only — **hardware NOT verified.** Entry at the end of this file; device check in README §19.
 - **RESEARCH 2026-11-01 (docs only, `experiment/play-along`): what the "beyond any app" list would take.** Sound in
   Tune (1 build), real songs for the beat lab (1–2), the room is the band (~5), it knows what's coming (~6): about a
   dozen builds. Write-up `docs/ios/play-along/beyond-any-app-research-2026-11-01.md` (README §18). Decisions owed by
@@ -14162,3 +14168,35 @@ pick Spotify → Start → no crash".
   before it expired). No code changed; not pushed.
 - Recommended order: phone-check 911/912 → Sound in Tune → the lab → the room is the band → it knows what's coming.
 
+
+## 2026-11-02 — [Claude] Build 913: a Sound dial in Tune on `experiment/play-along` (not merged)
+
+- Brian: "build 913, start with Sound in Tune" (the first piece of the 2026-11-01 research, doc §1). Same branch and
+  worktree; rollback tag `checkpoint/pre-build-913-sound-in-tune` (= `257e1c0`). Nothing on `main` changed; nothing
+  pushed. Per look or app-wide was an open decision; built per look (the doc's recommendation, saved like Energy).
+- Commits:
+  - `a999cf3` **The Sound dial.** `Composer2MasterControls.soundAmount` (0…2, 1 = as authored; encoded only when not
+    1). `Composer2AudioModulation.scaled(by:)` applied once where `Composer2Engine` reads a layer's reaction: it
+    scales `intensity`, so punches, the moving-hits dip, speed, palette offset and event chance all follow, for a
+    look's own sound and Play Along's alike. Still (0) = no reaction at all, and the look stops holding the
+    microphone (`usesAudio`, `usesMicrophoneBands`, the beat-source part of `usesBeatClock`; new `hasSound` keeps the
+    authored meaning for Play Along and Tune). The moving-hits dip is skipped when the scaled punch can't travel.
+    Tune → Feel → Sound slider (Still · Lightly · As authored · Dances, snapping to 0 and 1); a look with nothing to
+    scale shows the Play Along switch with the consent sheet (`needsConsentBeforeListening`, shared with the button).
+  - `ccae59b` build 913 (24 entries).
+- Measured (simulator; every built-in look with Play Along engaged at Dances = 2.0 vs as authored, through the real
+  output path + an independent wire gate; report `docs/ios/play-along/sound-dial-gate-report-2026-11-02.txt`):
+  0 held frames in 147 cases (49 looks × 3; the `a999cf3` message says 150, which miscounted the 3 mean lines);
+  shaper share Hit 6 lights 0.52 % vs 0.41 %, Hit 3 lights Together 1.09 % vs 1.46 %, Groove 4 lights 1.14 % vs
+  1.07 %. 5 cases need the shaper more by over a point (Campfire Groove 4 lights 14.0 % vs 10.5 %), 7 need it less.
+- Tests (iOS 27.0 simulator `C10C70A7-A702-40A9-8810-A6F13B98C57B`): 12 new in `Composer2LabSoundTests`. Related
+  Composer suites 157/157. Full suite **2618/2618** (= 2606 + 12; `/Volumes/Dev/DerivedData/play-along-full-913.xcresult`),
+  serial. Guards green. Device build (generic iOS, Debug, unsigned) OK, CFBundleVersion 913. Not archived, not
+  installed.
+- Found on the way: the Dev image had dropped its volume mid-session (`/Volumes/Dev` gone, `fsck_apfs` "failed to
+  read container superblock" on the stale attachment). Detaching the stale image and attaching it again fixed it;
+  no data touched. Xcode then showed "workspace file has disappeared"; Brian was told to Close (not Re-save) and
+  reopen, so Xcode's in-memory 912 project can't overwrite the 913 one.
+- Not verified on hardware: all of it. Device check: README §19.
+- Still open: phone checks for 911–913; then the real-song lab (+ the Music Understanding iPhone probe), the room is
+  the band, it knows what's coming; decisions owed (research doc §6).

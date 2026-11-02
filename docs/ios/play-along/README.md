@@ -987,3 +987,54 @@ Measured on an M4 Pro Mac (not iPhone): Music Understanding reads a 2–3 minute
 activity at 20 Hz (4 s windows: drums 0.96, vocals 0.98, bass 0.62 agreement with whole-song), and returns structure
 only for a whole song; ShazamKit's `matchOffset` was within ±7 ms on clean audio. Recommended order: phone-check
 911/912 → Sound in Tune → the lab → the room is the band → it knows what's coming.
+
+## 19. A Sound dial in Tune (2026-11-02, build 913)
+
+The first piece of §18 (research doc §1). Same branch, rollback tag `checkpoint/pre-build-913-sound-in-tune`
+(= `257e1c0`).
+
+**What the user does:** open a look → **Tune** → **Feel** → **Sound**. Drag from **Still** through **Lightly** and
+**As authored** to **Dances**. The setting is saved with the look, like Energy. If the look can't react to sound at
+all (no sound of its own and Play Along off), the same spot shows the **Play Along** switch instead, with the same
+one-time explanation the main button shows before the microphone prompt.
+
+| Piece | What it does |
+|---|---|
+| Model | `Composer2MasterControls.soundAmount`, 0…2, 1 = as authored (or as Play Along derives it). Encoded only when it isn't 1, so every saved and built-in look encodes exactly as before. `sanitizedSoundAmount` clamps it, and a non-number reads as 1 |
+| Engine | One change where the engine reads a layer's reaction: `layer.audio.scaled(by: soundAmount)`. It scales `intensity`, which every use reads (punches, the moving-hits dip, speed, palette offset, event chance), and each use still clamps it to 1. A look's own sound (Beat Drop, Club Pulse) and Play Along's Groove/Hit punches and Glide swell all follow the dial |
+| Still (0) | No reaction at all: no palette steps, no events forced on hits, no moving-hits dip. It plays exactly what the look plays with no sound. The look stops holding the microphone (`usesAudio`, `usesMicrophoneBands` and the beat-source part of `usesBeatClock` follow the dial; a beat-locked rhythm keeps time). Play Along still listens, because the beat is what keeps the look in time |
+| Play Along | Unchanged. It still decides which layers already listen from their own settings (`hasSound`), so Feel keeps working at every dial position. Writing per-layer sound from Tune would have made Play Along treat those layers as "already listening" and stop applying Groove/Hit to them |
+| Tune | A `Composer2GlowSlider` after Energy. It snaps to Still and to As authored, so a look dragged back to As authored saves no Sound key. Words: Still · Lightly (< 0.85) · As authored (0.85–1.2) · Dances (> 1.2). Consent check shared with the button (`Composer2PlayAlongSettings.needsConsentBeforeListening`) |
+
+**Safety:** the dial applies before Dim Flashing Lights and the flash shaper, which stay the authority. With Dim
+Flashing Lights on, a hit at full Dances adds at most 30 % of the headroom, as it did before (tested).
+
+**Measured** (`Composer2LabSoundTests`: every built-in look with Play Along engaged, at Dances = 2.0 vs as authored,
+through `Composer2LiveOutput` on the 20 ms grid, then an independent copy of the wire gate; full report
+`sound-dial-gate-report-2026-11-02.txt`). Share of frames the shaper had to slow, mean over the 49 looks:
+
+| Feel, tempo, lights, hits | Dances | As authored |
+|---|---|---|
+| Hit 128 BPM, 6, Roll | 0.52 % | 0.41 % |
+| Hit 96 BPM, 3, Together | 1.09 % | 1.46 % |
+| Groove 120 BPM, 4, Roll | 1.14 % | 1.07 % |
+
+- The wire gate held **0** frames in all 147 cases at Dances (a hold is a stutter).
+- 5 of 147 cases need the shaper more by over a point, and 7 need it less. The largest: Campfire at Groove in 4
+  lights, 14.0 % vs 10.5 %. Others: Christmas Chase 6.0 % vs 2.8 %, Fourth of July 6.0 % vs 3.5 %. These are the
+  same one-light-sparkle looks §17 named: bigger punches make their sparkles' rises stand out more, so the shaper
+  softens them a little. No look goes above 20 %.
+
+Tested on the simulator only. **Not verified:** anything on a bridge, and how far "Dances" should go. At 2.0 most
+punches already reach full; a look whose own reaction is strong (Club Pulse, 0.7) saturates by about 1.4.
+
+Device check for build 913:
+1. A look that listens (Club Pulse), Live, music playing. Tune → Sound: Still should stop the pulse while the wave
+   keeps moving, and the orange microphone dot should go out if Play Along is off. Lightly should pulse about half
+   as hard. Dances should hit harder.
+2. Play Along on, Groove, a look with no sound of its own (Neon Nights): the same dial should scale Play Along's
+   pulse, and at Still the look should still move in time with the bars.
+3. A look with no sound of its own (Lava Lamp), Play Along off: Tune should show the Play Along switch in Sound's
+   place, and turning it on should switch the row to the Sound slider.
+4. Save a look at Lightly, close it and reopen it: Sound should still read Lightly.
+5. Dim Flashing Lights on: Dances should still be gentle.
