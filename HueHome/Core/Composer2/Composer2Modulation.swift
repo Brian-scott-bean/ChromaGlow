@@ -47,6 +47,10 @@ struct Composer2AudioModulation: Codable, Equatable {
         case kick
         case snare
         case hat
+        /// Whether a bass line / drums are playing, decided over about a
+        /// second (build 919, ActivityLanes): a slow swell, never a punch.
+        case bassLine
+        case drumsPlaying
     }
 
     enum Target: String, Codable, CaseIterable {
@@ -206,7 +210,7 @@ struct Composer2AudioModulation: Codable, Equatable {
     /// True when this source reads the microphone's analysis bands.
     var usesMicrophoneBands: Bool {
         switch source {
-        case .amplitude, .bass, .mid, .treble, .onset, .kick, .snare, .hat: return true
+        case .amplitude, .bass, .mid, .treble, .onset, .kick, .snare, .hat, .bassLine, .drumsPlaying: return true
         case .beat, .off: return false
         }
     }
@@ -267,6 +271,10 @@ struct Composer2AudioModulation: Codable, Equatable {
             return shaped(Double(features.mid))
         case .treble:
             return shaped(Double(features.treble))
+        case .bassLine:
+            return shaped(Double(features.bassActivity))
+        case .drumsPlaying:
+            return shaped(Double(features.drumActivity))
         case .beat:
             guard beat.bpm > 0, hostNow > 0 else { return 0 }
             return Composer2Math.clamp01(exp(-beat.timeSinceBeat(at: hostNow) / punchDecayTau))

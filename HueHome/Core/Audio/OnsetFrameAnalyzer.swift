@@ -13,7 +13,8 @@
 // Per frame: log-compressed energy in 18 log-spaced bands (30 Hz–16 kHz),
 // half-wave-rectified spectral flux (all bands, plus low / mid / high
 // groups), the band levels themselves (the bar tracker's chord-change
-// cue) and, since build 915, kick / snare / hi-hat hits (DrumLanes).
+// cue), since build 915 kick / snare / hi-hat hits (DrumLanes), and since
+// build 919 whether a bass line and drums are playing (ActivityLanes).
 // Measured against the old pipeline in docs/ios/play-along/beatlab.
 //
 // THREADING CONTRACT: `process` is owned by exactly one producer thread (the
@@ -41,6 +42,9 @@ struct OnsetFrames: Sendable, Equatable {
     var kick: [Float] = []
     var snare: [Float] = []
     var hat: [Float] = []
+    /// The slow lanes (build 919): 0…1 per frame, smoothed over about a second.
+    var bassActivity: [Float] = []
+    var drumActivity: [Float] = []
     var bandCount: Int = 0
     var frameRate: Double = 100
 
@@ -96,9 +100,11 @@ final class OnsetFrameAnalyzer: @unchecked Sendable {
     private var prevLevels: [Float] = []
     private var levels: [Float] = []
     private let lanes: DrumLanes
+    private let activityLanes: ActivityLanes
 
-    init(drumTuning: DrumLaneTuning = .standard) {
+    init(drumTuning: DrumLaneTuning = .standard, activityTuning: ActivityTuning = .standard) {
         lanes = DrumLanes(bandCount: Self.bandCount, tuning: drumTuning)
+        activityLanes = ActivityLanes(bandCount: Self.bandCount, tuning: activityTuning)
     }
 
     // ── Frame ring (cross-thread: producer writes, readers copy) ──
@@ -114,7 +120,10 @@ final class OnsetFrameAnalyzer: @unchecked Sendable {
     private var rKick: [Float] = []
     private var rSnare: [Float] = []
     private var rHat: [Float] = []
+    private var rBassActivity: [Float] = []
+    private var rDrumActivity: [Float] = []
     private var drums = DrumHits.none
+    private var activity = MusicActivity.none
     private var writeIndex = 0
     private var stored = 0
     private var frameRate: Double = 100
@@ -164,6 +173,7 @@ final class OnsetFrameAnalyzer: @unchecked Sendable {
         prevLevels = [Float](repeating: 0, count: Self.bandCount)
         levels = [Float](repeating: 0, count: Self.bandCount)
         lanes.reset()
+        activityLanes.reset()
 
         frameRate = fs / Double(hop)
         let cap = Int(Self.ringSeconds * frameRate) + 1
@@ -179,7 +189,10 @@ final class OnsetFrameAnalyzer: @unchecked Sendable {
         rKick = [Float](repeating: 0, count: cap)
         rSnare = [Float](repeating: 0, count: cap)
         rHat = [Float](repeating: 0, count: cap)
+        rBassActivity = [Float](repeating: 0, count: cap)
+        rDrumActivity = [Float](repeating: 0, count: cap)
         drums = .none
+        activity = .none
         writeIndex = 0
         stored = 0
         os_unfair_lock_unlock(&lock)
@@ -266,6 +279,9 @@ final class OnsetFrameAnalyzer: @unchecked Sendable {
         }
         energy /= Float(Self.bandCount)
         let hit = levels.withUnsafeBufferPointer { lanes.process(levels: $0, time: centreTime, frameRate: frameRate) }
+        let playing = levels.withUnsafeBufferPointer {
+            activityLanes.process(levels: $0, kick: hit.kick > 0, snare: hit.snare > 0, frameRate: frameRate)
+        }
 
         os_unfair_lock_lock(&lock)
         let k = writeIndex
@@ -280,6 +296,9 @@ final class OnsetFrameAnalyzer: @unchecked Sendable {
         rKick[k] = 0
         rSnare[k] = 0
         rHat[k] = hit.hat
+        rBassActivity[k] = playing.bass
+        rDrumActivity[k] = playing.drums
+        activity = playing
         // A held or confirmed hit keeps its onset time (DrumLanes may publish
         // it a frame or more on): it is marked on the frame it started.
         if hit.kick > 0 {
@@ -321,6 +340,8 @@ final class OnsetFrameAnalyzer: @unchecked Sendable {
         out.kick.reserveCapacity(wanted)
         out.snare.reserveCapacity(wanted)
         out.hat.reserveCapacity(wanted)
+        out.bassActivity.reserveCapacity(wanted)
+        out.drumActivity.reserveCapacity(wanted)
         let start = (writeIndex - wanted + capacity) % capacity
         for j in 0..<wanted {
             let k = (start + j) % capacity
@@ -335,6 +356,8 @@ final class OnsetFrameAnalyzer: @unchecked Sendable {
             out.kick.append(rKick[k])
             out.snare.append(rSnare[k])
             out.hat.append(rHat[k])
+            out.bassActivity.append(rBassActivity[k])
+            out.drumActivity.append(rDrumActivity[k])
         }
         return out
     }
@@ -344,5 +367,12 @@ final class OnsetFrameAnalyzer: @unchecked Sendable {
         os_unfair_lock_lock(&lock)
         defer { os_unfair_lock_unlock(&lock) }
         return drums
+    }
+
+    /// Whether a bass line and drums are playing (build 919). Safe from any thread.
+    func musicActivity() -> MusicActivity {
+        os_unfair_lock_lock(&lock)
+        defer { os_unfair_lock_unlock(&lock) }
+        return activity
     }
 }

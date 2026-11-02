@@ -61,6 +61,11 @@ struct AudioFeatures: Sendable, Equatable {
     /// fire predicted hits from it on the beat grid.
     var groove: GroovePattern = .none
 
+    /// Whether a bass line and drums are playing (build 919, ActivityLanes):
+    /// 0…1, decided over about a second — for washes, not hits.
+    var bassActivity: Float = 0
+    var drumActivity: Float = 0
+
     mutating func adopt(_ drums: DrumHits) {
         lastKickAt = drums.kickAt
         kickStrength = drums.kickStrength
@@ -68,6 +73,11 @@ struct AudioFeatures: Sendable, Equatable {
         snareStrength = drums.snareStrength
         lastHatAt = drums.hatAt
         hatStrength = drums.hatStrength
+    }
+
+    mutating func adopt(_ activity: MusicActivity) {
+        bassActivity = activity.bass
+        drumActivity = activity.drums
     }
 
     static let silent = AudioFeatures()

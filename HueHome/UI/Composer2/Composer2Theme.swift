@@ -353,6 +353,8 @@ enum Composer2Copy {
         case .kick: return "Kick"
         case .snare: return "Snare"
         case .hat: return "Hi-hat"
+        case .bassLine: return "Bass line"
+        case .drumsPlaying: return "Drums playing"
         }
     }
 

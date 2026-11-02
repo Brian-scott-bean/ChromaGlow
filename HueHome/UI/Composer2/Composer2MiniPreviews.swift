@@ -222,6 +222,9 @@ struct Composer2AudioPreview: View {
 
     static func level(bar: Int, features: AudioFeatures, listening: Bool, time: Double, audio: Composer2AudioModulation) -> Double {
         if listening {
+            // The slow lanes (build 919) show what they decided, across all bars.
+            if audio.source == .bassLine { return Composer2Math.clamp01(audio.shaped(Double(features.bassActivity))) }
+            if audio.source == .drumsPlaying { return Composer2Math.clamp01(audio.shaped(Double(features.drumActivity))) }
             let band: Float
             switch bar {
             case 0..<4: band = features.bass

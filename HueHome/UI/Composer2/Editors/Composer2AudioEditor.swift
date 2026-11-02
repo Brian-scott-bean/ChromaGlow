@@ -24,7 +24,9 @@ struct Composer2AudioEditorContent: View {
                     ("Hits", .onset, "bolt"),
                     ("Kick", .kick, "circle.circle"),
                     ("Snare", .snare, "circle.dotted"),
-                    ("Hi-hat", .hat, "sparkle")
+                    ("Hi-hat", .hat, "sparkle"),
+                    ("Bass line", .bassLine, "water.waves"),
+                    ("Drums playing", .drumsPlaying, "circle.grid.3x3")
                 ], selection: document.layerBinding(\.audio.source))
                 if audio.isActive {
                     Composer2AudioPreview(audio: audio, accent: Composer2Theme.accent(for: .audio))
