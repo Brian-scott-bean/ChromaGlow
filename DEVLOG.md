@@ -11,6 +11,12 @@
 - Live shared handoff: append-only entries in this `DEVLOG.md`. Git is the shared memory between tools.
 
 ### iOS — where we are RIGHT NOW
+- **BUILD 919 ON `experiment/play-along` — IS A BASS LINE / ARE DRUMS PLAYING (THE SLOW LANES), NOT MERGED
+  (2026-11-02).** Our own DSP decides over ~1 s whether a bass line and drums are playing (BabySlakh stems, held-out
+  songs: bass balanced accuracy 0.87–0.88 line/room, drums 0.84 in rooms); two new Sound sources (Bass line, Drums
+  playing); with The room is the band on, the floor lamps glow with the bass line (never a flash; 0 held frames, all
+  49 looks). No vocal lane (no licence-clean vocal music). Full suite 2662 + 1 expected failure. Rollback tag
+  `checkpoint/pre-build-919-slow-lanes`. README §25. Simulator only — **hardware NOT verified.**
 - **BUILD 918 ON `experiment/play-along` — THE ROOM IS THE BAND, NOT MERGED (2026-11-02).** Play Along → The room
   is the band (Groove/Hit): kick on the low lights, the look held at eye height, snare + a sub-flash hi-hat shimmer
   up high; every band drum flash shares one room-wide budget (≥ 0.34 s apart). All 49 looks: 0 held frames.
@@ -14490,3 +14496,36 @@ privacy OK and new wording (§6 item 2). Ask him; don't build it.
 **Owed by Brian (none block slice A):** phone runs of 911–918 (Sync Check, moving hits, Sound dial, the Music analysis
 probe's Copy results, drum looks, Light heights, the band); the first-listen privacy OK; AIST/RWC for vocal test
 music; whether light heights should ever be written to the bridge.
+
+## 2026-11-02 — [Claude] Build 919: is a bass line playing, are drums playing — the slow lanes (experiment/play-along)
+
+Chase picked the slice back up from Marshall's handoff (entry above). Step 5 of "the room is the band" (research doc
+§3.4). Rollback tag `checkpoint/pre-build-919-slow-lanes` (= `adf3225`). README §25 has the design and every number.
+
+**Commits:** `e222f41` feat(audio) ActivityLanes + plumbing + sources (Bass line, Drums playing) + 8 tests ·
+`937126f` feat(composer2) the band's floor lamps glow with the bass line (5th split layer, ≤ 0.25, never a flash) ·
+`0fcf354` feat(beatlab) `run.sh -activity` + `results-2026-11-02-activity.txt` · `c559b0e` chore build 919 (24 entries) ·
+this entry's commit (README §25, DEVLOG, `band-gate-report-2026-11-02-919.txt`).
+
+**What it does:** bass line = the 141–375 Hz bands' 5th-quietest frame of 0.3 s against the 30 s peak of the whole level
+(floored at ≈ −45 dBFS); drums = the top end's swing within 0.3 s + 0.2 × kick/snare hits in 2 s. Smoothed ~1 s, 0…1,
+0.5 = the threshold tuned on half of BabySlakh's songs against their STEMS. Published per frame (OnsetFrames), on every
+AudioFeatures (`bassActivity`/`drumActivity`), as two Sound sources, and as the band's floor-lamp glow.
+
+**Measured (held-out songs, line / room / speaker / hall):** bass balanced accuracy 0.87 / 0.88 / 0.87 / 0.75, per-song
+AUC 0.83–0.87; drums 0.72 / 0.84 / 0.84 / 0.71, per-song AUC 0.77–0.89. Drum-only sets read as a bass line 0–7 %.
+Quiet room: 0 up to −50 dBFS. Band gate report with the glow: 0 held frames, all 49 looks.
+
+**Known limits (README §25):** a guitar alone reads as a bass line 36–81 %; steady noise above ≈ −45 dBFS reads as one;
+strummed guitar on a clean line reads as drums; drums under-read in a hall. BabySlakh is rendered MIDI at 16 kHz.
+**No vocal lane** (no licence-clean vocal music; waits on AIST/RWC). No Music Understanding windows (wait for 914's probe).
+
+**How it was found (scratch, not committed):** ~20 candidate features over 280 recordings, AUC per set/song/pooled;
+logistic fits did no better on held-out songs. Two fixes found on the way: a plain minimum fell into 30 ms gaps between
+bass notes (→ 5th-quietest frame), and pink noise has a bass line's spectral balance (→ the −45 dBFS floor).
+
+**Validation:** targeted classes PASS on the simulator (ActivityLanesTests 8/8; Composer2BandTests incl. the new glow
+test; DrumLanes, OnsetFrameAnalyzer, Composer2LabGuard, Composer2LabPersistence: 47 + 1 expected failure).
+**Full suite: 2662 passed + 1 expected failure, 0 failed** (simulator rebooted; the first attempt ran beside the device build and the runner timed out before any test — rerun alone). Device build (Release, generic iOS, no signing): CFBundleVersion 919, probe strings 0,
+MusicUnderstanding links 0. `hardening_guards.sh` passed. Nothing installed, nothing pushed, `main` untouched.
+**Not verified on hardware.** Device check: README §25 (floor lamps glow with the bass, sink in a breakdown).

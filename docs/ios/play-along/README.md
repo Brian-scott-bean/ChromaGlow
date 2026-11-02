@@ -1317,3 +1317,88 @@ Device check for build 918 (after §23's Light heights):
    should thump on the kick, the ceiling lights snap on the snare, the middle lights hold the look.
 2. A busy dance track: drums should thin out evenly (never a strobe), and Dim Flashing Lights should still soften them.
 3. Turn the band off: the look goes back to the plain Feel on the next frame.
+
+## 25. Is a bass line playing, are drums playing: the slow lanes (2026-11-02, build 919)
+
+Step 5 of "the room is the band" (research doc §3.4 step 5). Same branch; rollback tag
+`checkpoint/pre-build-919-slow-lanes` (= `adf3225`).
+
+**What it is.** Two decisions over about a second — for washes and the song's shape, not for hits — from our own
+DSP on the same 10 ms frames as the drum lanes (`Core/Audio/ActivityLanes.swift`, run by `OnsetFrameAnalyzer`),
+so they work on every iOS version:
+
+| Lane | What it measures | Why |
+|---|---|---|
+| Bass line | How quiet the 141–375 Hz bands get over 0.3 s (their 5th-quietest 10 ms frame of 30), against the loudest the whole sound has been in the last ~30 s | A kick's low end is gone within 0.3 s, a held bass note isn't; the 5th-quietest frame passes over gaps of up to 40 ms between notes (the plain minimum fell into them). 141–375 Hz is the bass line's body and first harmonics — a small speaker still plays it; the bands below hold the kick as much as the bass |
+| Drums playing | How hard the top end (≥ 2.8 kHz) swings within 0.3 s, plus 0.2 × the kicks and snares the drum lanes heard in the last 2 s | Drums are bursts of noise; held notes and chords barely move the top end |
+
+Both are smoothed (τ 1 s — clamped near the threshold first, so a bass line coming back isn't held up by how far
+"off" it was) and mapped to 0…1, where 0.5 is the threshold that best told playing from not playing on half the
+songs. A quiet room is nothing: the "loudest lately" never counts below about −45 dBFS (pink noise at −50 dBFS
+reads 0).
+
+**Where they reach the lights.**
+- Every `AudioFeatures` carries `bassActivity` / `drumActivity` (stamped by the sink, like the drums); the analyzer's
+  frame ring carries them per frame (`OnsetFrames`), for the song-structure work next (§26).
+- Two new sound sources, **Bass line** and **Drums playing** (look editor → Sound): a slow drive, never a punch; they
+  can also move the colour slowly. The Sound preview shows the lane itself.
+- **The room is the band** (§24) gets a fifth split layer: the floor lamps **glow with the bass line** — up to 0.25
+  added (eased in and out), so they sink in a breakdown and come back with the bass. It is never a flash: even a
+  bass line switched on as a step with the Sound dial at ×2 rises < 0.10 per 20 ms frame (test), and it doesn't
+  claim the flash budget. Band gate report with the bass line stepping on and off every 2 s
+  (`band-gate-report-2026-11-02-919.txt`): 0 held frames on all 49 looks; frames the shaper slowed, mean 0.45 % →
+  0.59 % at 120 BPM, 0.99 % → 1.42 % at 150 BPM with a kick on every eighth (worst still Candy Cane, 22.5 %).
+
+**Measured** (beat lab, `run.sh -activity`, `beatlab/results-2026-11-02-activity.txt`). The app's analyzer, causal,
+on 1024-frame hops, read at the end of every 1 s window (hop 0.5 s). Truth: BabySlakh's stems — an instrument plays
+in a window when its stem is within 20 dB of its own loudest window (the mixes are the sum of the stems to within
+2 %); song ends where the whole mix is below −50 dBFS are left out. Groove MIDI and Candombe are drums with no bass;
+GuitarSet is a guitar alone. Balanced accuracy = the mean of "playing, read as on" and "not playing, read as off";
+per-song AUC = does the lane dip when the instrument drops out within one song. **Held-out songs** (not used to
+choose the thresholds), line / home-like room / small speaker / hall:
+
+| | Balanced accuracy | Per-song AUC |
+|---|---|---|
+| Bass line | 0.87 / 0.88 / 0.87 / 0.75 | 0.84 / 0.83 / 0.83 / 0.87 |
+| Drums playing | 0.72 / 0.84 / 0.84 / 0.71 | 0.85 / 0.89 / 0.85 / 0.77 |
+
+How fast (median, BabySlakh): a bass line coming in is read after 1.2–1.5 s, going out at once; drums coming in
+0.5–1.4 s (a hall: often never), going out ≤ 1 s. Drums-only recordings read as a bass line 0 % (line, room,
+speaker) to 7 % (hall). For comparison, Apple's Music Understanding agreed with whole-song analysis on bass 0.62 at
+4 s windows (research doc §3.2).
+
+**Known limits, recorded, not hidden:**
+- **Bass:** a guitar alone reads as a bass line 36 % (line) to 81 % (hall) of the time — its low strings sit in the
+  same band; Candombe's low drums in a hall 51 %. Steady broadband noise louder than about −45 dBFS (a fan, a
+  vacuum) reads as one too: its balance looks like a bass line's. The band only plays while Play Along holds a
+  beat, so noise alone never lights it there; a look with the Bass line source would glow.
+- **Drums:** strummed guitar on a clean line (a music service's own audio) reads as drums 96 %; in rooms 28–33 %.
+  A hall smears the top end's swing, so drums under-read (BabySlakh 14 % on, truth 87 %).
+- **The test music:** BabySlakh is MIDI rendered with sample libraries at 16 kHz (nothing above 8 kHz; the rooms'
+  "air" adds a little back). 20 songs. Real recordings and a phone mic will differ.
+- **No vocal lane.** The licence-clean corpus has no vocal recordings (Slakh = rendered MIDI, GuitarSet = guitar),
+  so there's nothing honest to tune or test one on. It waits for Brian's AIST/RWC decision (research doc §6 item 4).
+- **Music Understanding windows** (iOS 27) are not part of this build; they wait for the 914 probe's phone results.
+
+**How it was chosen** (scratch exploration, not committed): about 20 candidate features on 280 recordings (the four
+sets × four conditions), scored by AUC per set, per song and pooled; then a one-number threshold per lane tuned on
+the songs whose id hashes even, scored on the rest. Learned (logistic) combinations of 2–8 features did no better
+on held-out songs than these two hand-built ones, and a pooled fit for drums was worse (it is pulled between
+drum-only recordings, mixes and a guitar alone).
+
+Tests: `ActivityLanesTests` (8): a synthetic bass line reads as playing (and not as drums), drums without bass are
+not a bass line, a chord in the mids is neither, a quiet room is nothing, the bass dropping out and coming back
+(< 0.5 within 3 s, > 0.5 within 3.5 s) while the drums stay on, the lanes never rise faster than a wash (< 0.05 per
+10 ms frame), the features and the two sources. `Composer2BandTests` (9, + the glow). Simulator only. **Not verified
+on hardware.**
+
+Device check for build 919:
+1. Play Along on, Feel Groove or Hit, **The room is the band** on, a song with a bass line that drops out (a
+   breakdown, an intro on drums or keys alone): the floor lamps should glow a little brighter while the bass plays,
+   sink within a second or two of it stopping, and come back within one to two seconds of it returning — on top of
+   the kick thumps.
+2. Look editor → a layer → Sound → **Bass line**, then **Drums playing**: the preview bars should rise and fall with
+   the bass / the drums, slowly. Stop the music: both fall to nothing within a couple of seconds and stay there in
+   a quiet room.
+3. A song with no bass (a solo acoustic guitar or piano): expect the Bass line source to read partly on (the known
+   limit above).
