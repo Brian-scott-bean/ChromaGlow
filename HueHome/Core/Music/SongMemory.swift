@@ -9,17 +9,23 @@
 // the same speakers locks at once — on the beat and on the one — instead of
 // after seconds of listening.
 //
-// - Key: the tempo cache's track key plus the phone's output route, hashed
-//   (SHA-256), so the file holds no readable listening history. The route
-//   is in the key because the offset is "as heard in the room": other
-//   speakers, other delay. New speakers relearn in seconds.
+// - Key: the tempo cache's track key plus the phone's output route, as an
+//   HMAC-SHA256 under a secret that never leaves this phone (32 random
+//   bytes in the Keychain, this device only — audit B9, build 923). A plain
+//   hash could be checked against a list of songs by anyone holding the
+//   file; without the secret it can't. The route is in the key because the
+//   offset is "as heard in the room": other speakers, other delay. New
+//   speakers relearn in seconds.
 // - Value: derived numbers only (tempo, beat offset, the one, confidences)
 //   — never audio, never names.
 // - Learning: only while a music service drives the clock AND the
 //   microphone keeps confirming the offset; a circular mean weighted by
 //   phase confidence, stored once 8 bars agree and refreshed every 16 more.
 // - Persistence: the tempo-cache.json idiom — tolerant decode, `.atomic`,
-//   bounded (oldest out).
+//   bounded (oldest out) — written off the main thread (B9), with data
+//   protection, kept out of backups (it relearns in seconds). A file from
+//   before B9 (unsalted keys, no `version`) starts clean: its keys can't be
+//   re-keyed without knowing the songs.
 //
 // It serves only the sync it was learned for (Apple's Media Player
 // guidance: don't gather information about the user's audio content for
@@ -98,17 +104,28 @@ final class SongMemory {
     static let barConfidenceToStore = 0.5
 
     private struct FileContents: Codable {
+        /// 2 = keys under this phone's secret (B9). Older files are dropped.
+        static let currentVersion = 2
+        var version = FileContents.currentVersion
         var entries: [String: Entry] = [:]
 
         init() {}
 
-        enum CodingKeys: String, CodingKey { case entries }
+        enum CodingKeys: String, CodingKey { case version, entries }
 
         /// One damaged entry costs that song, not the whole memory.
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
+            let stored = (try? c.decode(Int.self, forKey: .version)) ?? 1
+            guard stored >= Self.currentVersion else { return }    // unsalted keys: start clean
             let raw = (try? c.decode([String: Lenient].self, forKey: .entries)) ?? [:]
             entries = raw.compactMapValues(\.entry)
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(Self.currentVersion, forKey: .version)
+            try c.encode(entries, forKey: .entries)
         }
 
         private struct Lenient: Decodable {
@@ -162,10 +179,15 @@ final class SongMemory {
 
     // MARK: Keys
 
-    /// The hashed key for a track on an output route.
+    /// The key for a track on an output route, under this phone's secret.
     nonisolated static func key(for query: TempoQuery, route: String) -> String {
-        let digest = SHA256.hash(data: Data("\(query.cacheKey)\u{1F}route:\(route)".utf8))
-        return digest.map { String(format: "%02x", $0) }.joined()
+        key(for: query, route: route, secret: KeySecret.shared.key)
+    }
+
+    /// The key under a given secret (tests).
+    nonisolated static func key(for query: TempoQuery, route: String, secret: SymmetricKey) -> String {
+        let mac = HMAC<SHA256>.authenticationCode(for: Data("\(query.cacheKey)\u{1F}route:\(route)".utf8), using: secret)
+        return mac.map { String(format: "%02x", $0) }.joined()
     }
 
     /// The route fingerprint as last seen — refreshed off the main thread at
@@ -174,8 +196,12 @@ final class SongMemory {
     /// lands: that drive simply finds nothing remembered).
     nonisolated static func cachedRoute() -> String { RouteCache.shared.value }
 
-    /// Start the first route read early (the music session's activation).
-    nonisolated static func primeRouteCache() { _ = RouteCache.shared }
+    /// Start the first route read early (the music session's activation),
+    /// and the secret's Keychain read with it, off the main thread.
+    nonisolated static func primeRouteCache() {
+        _ = RouteCache.shared
+        DispatchQueue.global(qos: .utility).async { _ = KeySecret.shared.key }
+    }
 
     /// The phone's output route as a stable fingerprint: built-in speaker and
     /// receiver count as one; headphones, Bluetooth, AirPlay and car audio
@@ -320,12 +346,16 @@ final class SongMemory {
 
     // MARK: Persistence (tempo-cache idiom: tolerant decode, .atomic)
 
+    /// File access, off the main thread (B9): writes queue here; a read
+    /// waits behind them, so a relaunch in the same process sees the last one.
+    nonisolated private static let io = DispatchQueue(label: "com.huehome.songmemory.io", qos: .utility)
+
     private func load() -> FileContents {
         if let contents { return contents }
         var loaded = FileContents()
-        if let fileURL, let data = try? Data(contentsOf: fileURL),
+        if let fileURL, let data = Self.io.sync(execute: { try? Data(contentsOf: fileURL) }),
            let decoded = try? JSONDecoder().decode(FileContents.self, from: data) {
-            loaded = decoded   // missing or corrupt → start clean, never throw
+            loaded = decoded   // missing, corrupt or from before B9 → start clean, never throw
         }
         contents = loaded
         return loaded
@@ -333,11 +363,61 @@ final class SongMemory {
 
     private func persist(_ file: FileContents) {
         contents = file
-        guard let fileURL, let data = try? JSONEncoder().encode(file) else { return }
-        try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(),
-                                                 withIntermediateDirectories: true)
-        // .atomic ONLY — never pair with .withoutOverwriting (M-13 crash class).
-        try? data.write(to: fileURL, options: [.atomic])
+        guard let fileURL else { return }
+        Self.io.async {
+            guard let data = try? JSONEncoder().encode(file) else { return }
+            try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(),
+                                                     withIntermediateDirectories: true)
+            // .atomic (never with .withoutOverwriting: M-13 crash class), and
+            // encrypted at rest until the phone is first unlocked.
+            try? data.write(to: fileURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+            // An atomic write is a new file: mark it again. A cache, not a backup.
+            var url = fileURL
+            var values = URLResourceValues()
+            values.isExcludedFromBackup = true
+            try? url.setResourceValues(values)
+        }
+    }
+
+    /// Waits for queued writes (tests).
+    nonisolated static func flushWrites() { io.sync {} }
+}
+
+/// The key's secret (B9): 32 random bytes in the Keychain (after first
+/// unlock, this device only, never synced), read once and cached. Created
+/// only when the Keychain says there is none; if it can't be read for any
+/// other reason (or saved), a secret for this run only is used — the memory
+/// works until the app quits and relearns after — rather than overwriting
+/// the one that holds every remembered song.
+private final class KeySecret: @unchecked Sendable {
+    static let shared = KeySecret()
+    static let account = "song_memory_key_secret"
+
+    private let lock = NSLock()
+    private var cached: SymmetricKey?
+
+    var key: SymmetricKey {
+        lock.lock()
+        defer { lock.unlock() }
+        if let cached { return cached }
+        let loaded = Self.loadOrCreate()
+        cached = loaded
+        return loaded
+    }
+
+    private static func loadOrCreate() -> SymmetricKey {
+        do {
+            let stored = try KeychainManager.shared.load(for: account)
+            if let data = Data(base64Encoded: stored), data.count == 32 { return SymmetricKey(data: data) }
+            return SymmetricKey(size: .bits256)    // unreadable: this run only
+        } catch KeychainError.itemNotFound {
+            let fresh = SymmetricKey(size: .bits256)
+            let bytes = fresh.withUnsafeBytes { Data($0) }
+            try? KeychainManager.shared.save(value: bytes.base64EncodedString(), for: account)
+            return fresh
+        } catch {
+            return SymmetricKey(size: .bits256)    // locked or failing: this run only
+        }
     }
 }
 

@@ -8,6 +8,7 @@
 // whole loop — mic confirms, coordinator remembers, the next play drives
 // the clock straight onto the beat.
 
+import CryptoKit
 import XCTest
 @testable import HueHome
 
@@ -134,17 +135,18 @@ final class SongMemoryTests: XCTestCase {
     func testTheFileHoldsNoReadableListeningHistory() throws {
         let memory = SongMemory(fileURL: fileURL)
         learn(memory, key: key())
+        SongMemory.flushWrites()   // written off the main thread (B9)
         let text = try String(contentsOf: fileURL, encoding: .utf8)
         XCTAssertFalse(text.contains("Golden"))
         XCTAssertFalse(text.contains("JVKE"))
         XCTAssertFalse(text.contains("USA2P2230223"))
-        XCTAssertEqual(key().count, 64, "a SHA-256 digest")
+        XCTAssertEqual(key().count, 64, "an HMAC-SHA256 under this phone's secret")
         XCTAssertNotEqual(key(route: "builtIn"), key(route: "Headphones#1"))
     }
 
     func testADamagedFileCostsOnlyTheDamagedSong() throws {
         let json = """
-        {"entries":{"aaa":{"bpm":120,"beatOffset":0.25,"downbeatSlot":2,"beatsPerBar":4,"phaseConfidence":0.8,\
+        {"version":2,"entries":{"aaa":{"bpm":120,"beatOffset":0.25,"downbeatSlot":2,"beatsPerBar":4,"phaseConfidence":0.8,\
         "barConfidence":0.7,"observations":20,"updatedAt":0},"bbb":{"bpm":"fast"},"ccc":{"bpm":96,"beatOffset":0.1}}}
         """
         try Data(json.utf8).write(to: fileURL)
@@ -155,6 +157,48 @@ final class SongMemoryTests: XCTestCase {
 
         try Data("not json".utf8).write(to: fileURL)
         XCTAssertEqual(SongMemory(fileURL: fileURL).count, 0, "garbage starts clean, never throws")
+    }
+
+    // MARK: - B9: a secret key, off-main writes, protected and not backed up
+
+    func testAFileFromBeforeTheSecretKeyStartsClean() throws {
+        // Unsalted keys (no "version"): they can't be re-keyed without the songs.
+        let json = """
+        {"entries":{"aaa":{"bpm":120,"beatOffset":0.25,"downbeatSlot":2,"beatsPerBar":4,"phaseConfidence":0.8,\
+        "barConfidence":0.7,"observations":20,"updatedAt":0}}}
+        """
+        try Data(json.utf8).write(to: fileURL)
+        let memory = SongMemory(fileURL: fileURL)
+        XCTAssertEqual(memory.count, 0, "relearned in seconds instead")
+        learn(memory, key: key())
+        SongMemory.flushWrites()
+        let text = try String(contentsOf: fileURL, encoding: .utf8)
+        XCTAssertTrue(text.contains("\"version\":2"))
+        XCTAssertFalse(text.contains("\"aaa\""), "the old entries are gone")
+    }
+
+    func testTheKeyNeedsThisPhonesSecret() {
+        let query = TempoQuery(track: track)
+        let a = SymmetricKey(size: .bits256), b = SymmetricKey(size: .bits256)
+        XCTAssertEqual(SongMemory.key(for: query, route: "builtIn", secret: a),
+                       SongMemory.key(for: query, route: "builtIn", secret: a), "stable under one secret")
+        XCTAssertNotEqual(SongMemory.key(for: query, route: "builtIn", secret: a),
+                          SongMemory.key(for: query, route: "builtIn", secret: b))
+        // Not the plain hash a list of songs could be checked against.
+        let plain = SHA256.hash(data: Data("\(query.cacheKey)\u{1F}route:builtIn".utf8))
+            .map { String(format: "%02x", $0) }.joined()
+        XCTAssertNotEqual(key(), plain)
+        XCTAssertEqual(key(), key(), "the phone's secret is read once and kept")
+    }
+
+    func testTheFileIsWrittenOffTheMainThreadAndKeptOutOfBackups() throws {
+        let memory = SongMemory(fileURL: fileURL)
+        learn(memory, key: key())
+        XCTAssertNotNil(memory.entry(key()), "in memory at once")
+        SongMemory.flushWrites()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fileURL.path))
+        let values = try fileURL.resourceValues(forKeys: [.isExcludedFromBackupKey])
+        XCTAssertEqual(values.isExcludedFromBackup, true, "a cache that relearns, not a backup")
     }
 
     func testTheMemoryIsBoundedOldestOut() {
