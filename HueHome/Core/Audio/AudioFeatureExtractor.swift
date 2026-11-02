@@ -66,6 +66,10 @@ struct AudioFeatures: Sendable, Equatable {
     var bassActivity: Float = 0
     var drumActivity: Float = 0
 
+    /// Where we are in the song: bars, the phrase grid (build 920,
+    /// SongStructureTracker). Kept apart from BeatSnapshot.
+    var structure: SongStructure = .none
+
     mutating func adopt(_ drums: DrumHits) {
         lastKickAt = drums.kickAt
         kickStrength = drums.kickStrength
