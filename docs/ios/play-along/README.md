@@ -1498,3 +1498,45 @@ phrase numbers re-measured on them (`results-2026-11-02-phrase-921synth.txt`): s
 Tests: `SongEnergyTests` (6): a build staged on the phrase line and the drop confirmed, a build that leads nowhere
 easing back, drums dropping out as a breakdown, an unsure phrase grid staging on the build's own bars (less sure),
 the gap raising the call, the snapshot. Simulator only. **Not verified on hardware.**
+
+## 28. The Conductor: Follow the song (2026-11-02, build 922)
+
+Step 3 of "it knows what's coming" (research doc §4.2). Same branch; rollback tag
+`checkpoint/pre-build-922-conductor` (= `1d20088`). **Off by default:** Play Along → long-press → **Follow the song**
+(Groove or Hit; Entertainment streaming only, like the band).
+
+**What it does** (`Core/Composer2/Composer2Conductor.swift`, pure; `Composer2LiveOutput` runs it every frame before
+the flash shaper) when the song tracker has staged a drop (§27):
+
+| When | What the lights do |
+|---|---|
+| Staged drop at confidence ≥ 0.5, first third of the build | Play Along's beat punches every **4** beats, whole-room, a little softer (×0.8) |
+| Middle third | Every **2** beats (×0.95) |
+| Last third | Every beat (×1.1) |
+| Counting | From the drop: the punches are counted so one lands **on** it — the quantizer's new "land at time T" (`Composer2Quantizer.landing(at:beat:)`) puts the staged drop on the grid the frames are rendered with |
+| The last half beat, **only at confidence ≥ 0.9** | The room dims to 35 % — a fall, never a flash |
+| The drop's first bar (staged time reached, or the drop confirmed) | Every beat, stronger (×1.3); the dim is gone — the return is one rise, judged by the flash shaper and the wire gate like any other |
+| No staged drop, or below 0.5 | Nothing changes |
+
+Only Play Along's beat punches are reshaped (`beatEvery` / `beatAnchor` on the modulation, encoded only when set; the
+derived look is never saved). The band's drums (§24), authored sound and events are left as they are; with the band
+on, the Conductor changes nothing but the dim. **Open question:** the dim applies to whatever Play Along plays, Calm
+looks included (the band leaves Calm looks alone) — say if Calm looks should never dim. A wrong blackout is worse than a missed one (research doc §5), and
+§27 measured confident false calls on synthetic dance songs, so the dim waits for 0.9 and the whole thing is opt-in
+until it has been seen on real music.
+
+**Safety, measured** (`Composer2ConductorTests.testConductedDropsStayInsideTheFlashGate`: every built-in look, Hit,
+Follow the song on, a drop staged at 0.95 through 8 s of build, the dim and the drop, through `Composer2LiveOutput`
+and an independent wire gate; `conductor-gate-report-2026-11-02.txt`): **0 held frames on all 49 looks**, the dim
+engaged in every one; the flash shaper slowed 0.49 % of frames on average (worst Fireplace 4.8 %, Supercell 4.1 %).
+
+Tests: `Composer2ConductorTests` (7): nothing without a sure staged drop, the build tightening 4 → 2 → 1 onto the drop
+(a punch lands on it, none 1 or 2 beats before), the dim only at ≥ 0.9, only in the last half beat, only falling,
+the drop's bar, land at time T, only beat punches reshaped (the band's drums untouched; encoding), and the gate
+report. Simulator only. **Not verified on hardware** — and it can only be judged on real dance music in a real room.
+
+Device check for build 922: Play Along on, Feel Hit, **Follow the song** on, a dance track with a clear build and
+drop (a long riser and snare roll): through the build the punches should thin out and then tighten — every bar,
+every half bar, every beat — and the first hit of the drop should land on the drop. A dim just before it happens
+only when the app is very sure; expect it rarely. Note any build that is never followed, any drop the punches miss
+by a beat or two, and above all any dim that is NOT followed by a drop.

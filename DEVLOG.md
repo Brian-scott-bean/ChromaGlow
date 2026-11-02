@@ -11,6 +11,11 @@
 - Live shared handoff: append-only entries in this `DEVLOG.md`. Git is the shared memory between tools.
 
 ### iOS — where we are RIGHT NOW
+- **BUILD 922 ON `experiment/play-along` — THE CONDUCTOR (FOLLOW THE SONG), NOT MERGED (2026-11-02).** Off by default:
+  Play Along → Follow the song. With a staged drop (≥ 0.5) beat punches go every 4 → 2 → 1 beats onto it (one lands ON
+  the drop); only at ≥ 0.9 the room dims for the last half beat. 0 held frames on all 49 looks. Full suite 2682 + 1
+  expected failure. Rollback tag `checkpoint/pre-build-922-conductor`. README §28. **STOPPED before "knows what's
+  coming" step 4 — needs Brian's privacy OK** (DEVLOG 922 entry). Simulator only — **hardware NOT verified.**
 - **BUILD 921 ON `experiment/play-along` — WHERE THE SONG'S ENERGY IS GOING (BUILD AND DROP), NOT MERGED (2026-11-02).**
   States per bar (calm/groove/build/peak/breakdown) and a staged drop with a confidence on the phrase grid. Weak on
   synthetic dance songs (drops called ahead 2–29 %, confident false calls up to 1.3 per song), 0 false calls on 74 min of
@@ -14592,3 +14597,38 @@ next build's work-in-progress `Composer2Conductor.swift` sitting unregistered in
 folder); with it moved aside the guard class passed 9/9 against the same 921 build. Device build (Release, generic iOS,
 no signing): CFBundleVersion 921, probe strings 0, MusicUnderstanding links 0. Nothing installed or pushed; `main`
 untouched. **Not verified on hardware.**
+
+## 2026-11-02 — [Claude] Build 922: the Conductor — Follow the song (experiment/play-along)
+
+"It knows what's coming" step 3 (research doc §4.2). Rollback tag `checkpoint/pre-build-922-conductor` (= `1d20088`).
+README §28. **Off by default** (Play Along → Follow the song).
+
+**Commits:** `4c5637d` feat(composer2) Composer2Conductor + `beatEvery`/`beatAnchor` on the modulation + the quantizer's
+"land at time T" + live-output wiring (re-plans on a new cue; the dim before the shaper) + 7 tests · `1bcdbd3` feat(ui)
+the toggle (`playAlong.conductor`, never in Room mode) · `99cdff9` chore build 922 · this entry's commit (README §28,
+DEVLOG, `conductor-gate-report-2026-11-02.txt`).
+
+**What it does:** with a drop staged at ≥ 0.5, Play Along's beat punches go every 4 → 2 → 1 beats through the build,
+whole-room, counted so one lands ON the drop; only at ≥ 0.9 the room dims to 35 % over the last half beat (a fall);
+the drop's first bar punches every beat ×1.3. Only beat punches are reshaped (the band's drums are untouched).
+
+**Safety:** every built-in look through a conducted build, the dim and the drop vs an independent wire gate: **0 held
+frames on all 49**, shaper slowed 0.49 % of frames on average (worst Fireplace 4.8 %). Open question for Brian: the
+dim also applies to Calm looks (the band leaves them alone).
+
+**Why opt-in:** build 921's detector is weak on synthetic dance songs (confident false calls up to 1.3 per song on a
+clean line) — a wrong blackout is worse than a missed one. It needs real dance music in a real room to judge.
+
+**Validation:** Composer2ConductorTests 7/7 + band, Play Along, quantizer, persistence, guard and activity classes PASS.
+**Full suite: 2682 passed + 1 expected failure, 0 failed** (rebooted simulator, run alone). Device build (Release, generic iOS, no signing): CFBundleVersion 922, probe strings 0,
+MusicUnderstanding links 0, the toggle's text present. `hardening_guards.sh` passed. Nothing installed or pushed;
+`main` untouched. **Not verified on hardware.**
+
+**Slice status (919–922) and the STOP:** slice A (919) and "knows what's coming" steps 1–3 (920–922) are committed.
+**Stopped before step 4** (the song maps' first-listen in-memory buffer + the Music Understanding pass): it keeps a
+song's audio in memory while it plays, which needs Brian's privacy OK and new wording (research doc §6 item 2) — asked,
+not built. Owed by Brian, in order of what unblocks the most: (1) the step-4 privacy OK and wording; (2) phone runs of
+911–922 (the band glow and Follow the song especially need real dance music in a real room); (3) whether Calm looks
+should ever dim under Follow the song; (4) AIST/RWC for vocal test music; (5) the 914 probe's Copy results; (6) whether
+light heights should be written to the bridge. Next without Brian: the bass-line lane's sub-bass blind spot (§27 found
+it) and a real dance-music set with drop labels whose licence allows commercial use.

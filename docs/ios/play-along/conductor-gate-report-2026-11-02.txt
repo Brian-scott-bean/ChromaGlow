@@ -1,0 +1,56 @@
+Conductor gate report — build 922 (2026-11-02). Composer2ConductorTests.testConductedDropsStayInsideTheFlashGate:
+every built-in look, Play Along Hit + Follow the song, 6 lights, a drop staged at 116 s with confidence 0.95 (the
+dim engages), from 104 s through the build's last two thirds, the half-beat dim and the drop to 118 s, through
+Composer2LiveOutput on the 20 ms grid, then an independent copy of the wire gate (first second not counted).
+shaped = share of frames the flash shaper slowed; holds = frames the gate held; dimmed = the pre-drop dim ran.
+
+Haunted House shaped=0.002 holds=0 dimmed=yes
+Jack-o'-Lantern shaped=0.000 holds=0 dimmed=yes
+Witch's Brew shaped=0.020 holds=0 dimmed=yes
+Graveyard Fog shaped=0.000 holds=0 dimmed=yes
+Poltergeist shaped=0.002 holds=0 dimmed=yes
+Blood Moon shaped=0.000 holds=0 dimmed=yes
+Mad Scientist shaped=0.000 holds=0 dimmed=yes
+Trick or Treat shaped=0.000 holds=0 dimmed=yes
+Christmas Chase shaped=0.000 holds=0 dimmed=yes
+Classic C9 String shaped=0.000 holds=0 dimmed=yes
+Theater Chase shaped=0.002 holds=0 dimmed=yes
+Candy Cane shaped=0.000 holds=0 dimmed=yes
+Fairy Lights shaped=0.005 holds=0 dimmed=yes
+Silent Night shaped=0.000 holds=0 dimmed=yes
+Snowfall shaped=0.000 holds=0 dimmed=yes
+Golden Ornaments shaped=0.000 holds=0 dimmed=yes
+Fourth of July shaped=0.009 holds=0 dimmed=yes
+New Year's Eve shaped=0.018 holds=0 dimmed=yes
+Valentine's Glow shaped=0.035 holds=0 dimmed=yes
+St. Patrick's shaped=0.011 holds=0 dimmed=yes
+Festival of Lights shaped=0.000 holds=0 dimmed=yes
+Diwali shaped=0.014 holds=0 dimmed=yes
+Spring Pastels shaped=0.000 holds=0 dimmed=yes
+Thunderstorm shaped=0.000 holds=0 dimmed=yes
+Supercell shaped=0.041 holds=0 dimmed=yes
+Heat Lightning shaped=0.000 holds=0 dimmed=yes
+Passing Storm shaped=0.000 holds=0 dimmed=yes
+Rainy Night shaped=0.000 holds=0 dimmed=yes
+Aurora Drift shaped=0.000 holds=0 dimmed=yes
+Ocean Waves shaped=0.003 holds=0 dimmed=yes
+Fireflies shaped=0.006 holds=0 dimmed=yes
+Starry Night shaped=0.000 holds=0 dimmed=yes
+Underwater shaped=0.000 holds=0 dimmed=yes
+Enchanted Forest shaped=0.000 holds=0 dimmed=yes
+Golden Hour shaped=0.000 holds=0 dimmed=yes
+Sunset Glow shaped=0.000 holds=0 dimmed=yes
+Fireplace shaped=0.048 holds=0 dimmed=yes
+Candlelight shaped=0.000 holds=0 dimmed=yes
+Campfire shaped=0.006 holds=0 dimmed=yes
+Lava Lamp shaped=0.000 holds=0 dimmed=yes
+Disco Fever shaped=0.000 holds=0 dimmed=yes
+Neon Nights shaped=0.018 holds=0 dimmed=yes
+Rainbow Wave shaped=0.002 holds=0 dimmed=yes
+Beat Drop shaped=0.000 holds=0 dimmed=yes
+Club Pulse shaped=0.000 holds=0 dimmed=yes
+Breathing Calm shaped=0.000 holds=0 dimmed=yes
+Cloud Drift shaped=0.000 holds=0 dimmed=yes
+Cozy Evening shaped=0.000 holds=0 dimmed=yes
+Deep Focus shaped=0.000 holds=0 dimmed=yes
+TOTAL holds 0 over 49 looks
