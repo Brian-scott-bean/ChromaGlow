@@ -212,7 +212,28 @@ struct Composer2AudioModulation: Codable, Equatable {
         }
     }
 
-    /// When this source last heard its hit (0 = not yet). Sources that
+    /// A drum source's latest hit as the lights play it at `hostNow`: heard
+    /// by the lanes, or predicted on the beat grid by the groove map (build
+    /// 916) — one identity per hit, so a predicted kick and the same kick
+    /// heard a moment later are one hit. Other sources: `lastHitTime(_:)`.
+    func lastHitTime(_ features: AudioFeatures, beat: BeatSnapshot, hostNow: Double) -> Double {
+        drumHit(features, beat: beat, hostNow: hostNow)?.time ?? lastHitTime(features)
+    }
+
+    private func drumHit(_ f: AudioFeatures, beat: BeatSnapshot, hostNow: Double) -> (time: Double, strength: Float)? {
+        let kind: DrumLanes.Kind
+        let heard: (time: Double, strength: Float)
+        switch source {
+        case .kick: kind = .kick; heard = (f.lastKickAt, f.kickStrength)
+        case .snare: kind = .snare; heard = (f.lastSnareAt, f.snareStrength)
+        case .hat: kind = .hat; heard = (f.lastHatAt, f.hatStrength)
+        default: return nil
+        }
+        guard hostNow > 0 else { return heard }
+        return f.groove.latestHit(kind, heardAt: heard.time, heardStrength: heard.strength, beat: beat, at: hostNow)
+    }
+
+    /// When this source last HEARD its hit (0 = not yet). Sources that
     /// aren't hits report any hit, as `triggerEventsOnOnset` always has.
     func lastHitTime(_ features: AudioFeatures) -> Double {
         switch source {
@@ -248,12 +269,11 @@ struct Composer2AudioModulation: Codable, Equatable {
             }
             return Composer2Math.clamp01(Double(features.onsetStrength))
         case .kick, .snare, .hat:
-            // As hard as the drum was struck, against its recent loudest.
-            let at = lastHitTime(features)
-            guard hostNow > 0, at > 0, hostNow >= at else { return 0 }
-            let strength: Float = source == .kick ? features.kickStrength
-                : source == .snare ? features.snareStrength : features.hatStrength
-            return Composer2Math.clamp01(Double(strength) * exp(-(hostNow - at) / punchDecayTau))
+            // As hard as the drum was struck, against its recent loudest — or,
+            // predicted, as hard as it usually is on that slot.
+            guard hostNow > 0, let hit = drumHit(features, beat: beat, hostNow: hostNow),
+                  hit.time > 0, hostNow >= hit.time else { return 0 }
+            return Composer2Math.clamp01(Double(hit.strength) * exp(-(hostNow - hit.time) / punchDecayTau))
         }
     }
 

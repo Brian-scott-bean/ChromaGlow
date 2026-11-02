@@ -171,9 +171,12 @@ struct AudioPCMSink: Sendable {
         }
     }
 
-    /// Kick, snare and hi-hat as the onset frames heard them (build 915).
+    /// Kick, snare and hi-hat as the onset frames heard them (build 915), and
+    /// the groove map's pattern (916).
     private func stampDrums(_ features: inout AudioFeatures) {
-        if let onsets { features.adopt(onsets.drumHits()) }
+        guard let onsets else { return }
+        features.adopt(onsets.drumHits())
+        features.groove = GrooveMap.published()
     }
 
     /// The source went quiet (paused, disconnected, stalled): show silence

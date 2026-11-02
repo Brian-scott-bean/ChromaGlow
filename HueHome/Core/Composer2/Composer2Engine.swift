@@ -321,7 +321,7 @@ enum Composer2Engine {
                         }
                     }
                 case .onset, .kick, .snare, .hat:
-                    let hitAt = mod.lastHitTime(audio)
+                    let hitAt = mod.lastHitTime(audio, beat: beat, hostNow: hostNow)
                     if hitAt > ls.lastOnsetSeen {
                         ls.lastOnsetSeen = hitAt
                         ls.paletteStepPhase = Composer2Math.frac(ls.paletteStepPhase + mod.paletteStep)
@@ -349,7 +349,7 @@ enum Composer2Engine {
                                                             startTime: time, timingVariation: timing)
                 }
                 var force = false
-                let hitAt = mod.lastHitTime(audio)
+                let hitAt = mod.lastHitTime(audio, beat: beat, hostNow: hostNow)
                 if mod.triggerEventsOnOnset, mod.isActive, hitAt > 0, hitAt > ls.lastEventOnsetSeen {
                     force = true
                     ls.lastEventOnsetSeen = hitAt
@@ -394,10 +394,10 @@ enum Composer2Engine {
                 var firstIsReference = true
                 if mod.source == .beat, hostNow > 0 {
                     hits = Composer2Hits.beatHits(travel, beat: beat, at: hostNow, groups: hitPlan.groups, fade: fade)
-                } else if mod.isHit, hostNow > 0, mod.lastHitTime(audio) > 0 {
+                } else if mod.isHit, hostNow > 0, mod.lastHitTime(audio, beat: beat, hostNow: hostNow) > 0 {
                     // A heard hit starts a wave once the last one is far
                     // enough behind it (the same spacing as on the grid).
-                    let hitAt = mod.lastHitTime(audio)
+                    let hitAt = mod.lastHitTime(audio, beat: beat, hostNow: hostNow)
                     if hitAt > (ls.hitWaves.last?.time ?? 0),
                        let wave = Composer2Hits.heardWave(travel, at: hitAt, after: ls.hitWaves.last,
                                                           number: ls.hitWaveCount &+ 1, groups: hitPlan.groups,

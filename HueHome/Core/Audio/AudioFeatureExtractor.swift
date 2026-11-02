@@ -57,6 +57,10 @@ struct AudioFeatures: Sendable, Equatable {
     var lastHatAt: Double = 0
     var hatStrength: Float = 0
 
+    /// Where each drum falls in the bar (build 916, GrooveMap): drum sources
+    /// fire predicted hits from it on the beat grid.
+    var groove: GroovePattern = .none
+
     mutating func adopt(_ drums: DrumHits) {
         lastKickAt = drums.kickAt
         kickStrength = drums.kickStrength

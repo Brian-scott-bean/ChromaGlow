@@ -99,6 +99,9 @@ final class AudioAnalysisEngine {
     private var activeGeneration: UInt64 = 0
     private let tempoEstimator = TempoEstimator()
     private let beatTracker = BeatTracker()
+    /// Where each drum falls in the bar (build 916), learned on the tracker
+    /// pass from the same frames, on the clock's grid.
+    private let grooveMap = GrooveMap()
 
     /// The pre-Play-Along tracker (one value per ~100 ms buffer). Kept for
     /// side-by-side checks on a device: `defaults write com.huehome.pro
@@ -452,6 +455,7 @@ final class AudioAnalysisEngine {
         // extractor, so nothing here touches one a callback may be using.
         activeExtractor = nil
         activeOnsets = nil
+        GrooveMap.publish(.none)
         // A grid the mic owned is a memory once the mic is off.
         BeatClock.shared.audioStopped()
     }
@@ -478,6 +482,7 @@ final class AudioAnalysisEngine {
         let onsets = activeOnsets
         let estimator = self.tempoEstimator
         let tracker = self.beatTracker
+        let groove = self.grooveMap
         let legacy = onsets == nil
             || UserDefaults.standard.bool(forKey: Self.legacyTrackerDefaultsKey)
         tempoTask = Task { @MainActor [weak self] in
@@ -488,6 +493,8 @@ final class AudioAnalysisEngine {
             await previous?.value
             estimator.reset()
             tracker.reset()
+            groove.reset()
+            GrooveMap.publish(.none)
             while !Task.isCancelled, self?.engineRunning == true {
                 if !legacy, let onsets {
                     await self?.trackerPass(onsets: onsets, tracker: tracker)
@@ -521,6 +528,7 @@ final class AudioAnalysisEngine {
         let frames = onsets.snapshot(seconds: BeatTracker.windowSeconds + 2)
         guard !frames.isEmpty else {
             BeatClock.shared.noteNoBeat()
+            GrooveMap.publish(grooveMap.update(frames, beat: BeatClock.snapshot()))
             return
         }
         var prior: TempoPrior?
@@ -541,6 +549,9 @@ final class AudioAnalysisEngine {
             // Play Along lets go instead of punching on a ghost grid.
             BeatClock.shared.noteNoBeat()
         }
+        // The drums on the grid the clock now holds (cheap: a few thousand
+        // frames scanned per pass).
+        GrooveMap.publish(grooveMap.update(frames, beat: BeatClock.snapshot()))
     }
 }
 
