@@ -74,6 +74,29 @@ final class BeatTrackerTests: XCTestCase {
         XCTAssertLessThanOrEqual(confidentShare(Synth.track(r)), 0.05)
     }
 
+    /// Audit B4: a music service's tempo used to floor the tracker's
+    /// confidence at 0.72 whenever its tempo matched — so room noise or
+    /// speech, with a song playing somewhere the mic can't hear, read as a
+    /// confident beat and the lock never let go. The service tempo still
+    /// picks the tempo; only the room's own evidence makes it confident.
+    func testAServiceTempoDoesNotMakeRoomNoiseABeat() {
+        let r = Synth.render(.init(bpm: 100, leadIn: 0.2, bars: 10, drums: false, bass: false, chords: false),
+                             noise: 0.02)
+        XCTAssertLessThanOrEqual(confidentShare(Synth.track(r, prior: TempoPrior(bpm: 100, strength: 0.8))), 0.05)
+    }
+
+    func testAServiceTempoDoesNotMakeSpeechABeat() {
+        let r = Synth.render(.init(bpm: 100, leadIn: 0.2, bars: 10, bursts: true))
+        XCTAssertLessThanOrEqual(confidentShare(Synth.track(r, prior: TempoPrior(bpm: 100, strength: 0.8))), 0.05)
+    }
+
+    func testAServiceTempoStillLocksTheMusicItMatches() {
+        let r = Synth.render(.init(bpm: 120, leadIn: 0.37, bars: 12))
+        let snaps = Synth.track(r, prior: TempoPrior(bpm: 120, strength: 0.8))
+        XCTAssertGreaterThanOrEqual(confidentShare(snaps), 0.8)
+        XCTAssertEqual(snaps.last?.snap.bpm ?? 0, 120, accuracy: 1)
+    }
+
     // MARK: - Metre
 
     /// Alone, the tracker prefers the lighting tempo (87 for a 174 track).

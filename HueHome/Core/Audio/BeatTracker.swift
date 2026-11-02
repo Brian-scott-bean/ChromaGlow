@@ -100,6 +100,8 @@ final class BeatTracker: @unchecked Sendable {
     static let maxBPM = 200.0
     static let bpmStep = 0.25
     static let priorCenterBPM = 115.0
+    /// The room's own tempo confidence at which a known tempo lifts it fully.
+    static let priorEvidence = 0.3
     static let priorOctaves = 0.9
     static let phaseStep = 0.002
     static let phaseBeats = 12
@@ -205,7 +207,14 @@ final class BeatTracker: @unchecked Sendable {
         var tempoConfidence = min(1, max(0, (normACF - tuning.confidenceFloor) / tuning.confidenceSpan))
         adoptTempo(best, prior: prior)
         if let prior, Self.isSameMeter(currentBPM, prior.bpm) {
-            tempoConfidence = max(tempoConfidence, 0.9 * prior.strength)
+            // A known tempo helps the room's own evidence over the line, but
+            // never stands in for it (audit B4, build 923): it used to floor
+            // the confidence at 0.9 × strength (0.72), so speech or noise with
+            // a song playing somewhere read as a confident beat and the lock
+            // never let go. Now the lift grows with what the room shows — none
+            // without a beat, the full 0.72 from `priorEvidence` up.
+            let evidence = min(1, tempoConfidence / Self.priorEvidence)
+            tempoConfidence = max(tempoConfidence, 0.9 * prior.strength * evidence)
         }
 
         // Phase: comb over the last 12 beats at the exact period.
