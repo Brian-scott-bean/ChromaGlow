@@ -4,7 +4,9 @@
 // Play Along → The room is the band: the look's base layer is split across
 // the room's heights (Composer2LightRoles), the way a lighting designer
 // splits a stage:
-//  • low lights (floor lamps)  — punch on the KICK;
+//  • low lights (floor lamps)  — punch on the KICK, and glow while a BASS
+//    LINE plays (build 919: rising and falling over about a second — never
+//    a flash);
 //  • middle lights (eye height) — the look itself, swelling gently with the
 //    music (a held wash);
 //  • high lights (ceiling)     — punch on the SNARE, plus a hi-hat shimmer
@@ -28,6 +30,10 @@ enum Composer2Band {
     static let minGap = BeatMath.FlashSafety.minOnsetLedgerPeriod
     /// A hi-hat adds at most this — under the 0.10 rise a flash counts from.
     static let hatShimmer = 0.08
+    /// The bass line's glow on the low lights (build 919): at most this much
+    /// light, eased in and out (smoothing τ 0.25 s on top of the lane's own
+    /// ~1 s), so even a bass line starting from nothing rises ~0.02 per frame.
+    static let bassGlow = 0.25
     static let kickIntensity = 0.7
     static let snareIntensity = 0.6
 
@@ -72,13 +78,24 @@ enum Composer2Band {
                                               smoothing: 0, intensity: hatShimmer, targets: [.brightness],
                                               punchDecay: 0)
 
+        // The bass line: a slow glow on the low lights while one plays.
+        var bassLine = base
+        bassLine.id = layerID(base.id, salt: 4)
+        bassLine.name = base.name + " · bass line"
+        bassLine.mask = .role([.low])
+        bassLine.blend = .addLighten
+        bassLine.rhythm = Composer2Rhythm(shape: .steady, maxBrightness: 0)
+        bassLine.audio = Composer2AudioModulation(source: .bassLine, brightnessMode: .punch, sensitivity: 0.7,
+                                                  threshold: 0.1, smoothing: 0.5, intensity: bassGlow,
+                                                  targets: [.brightness])
+
         var out = played
         for i in out.layers.indices where i != bi && out.layers[i].events == nil && !authored.layers[i].audio.isActive {
             // An accent's own cycles stay locked to the bars; the drums are the
             // band's punches now.
             out.layers[i].audio = authored.layers[i].audio
         }
-        out.layers.replaceSubrange(bi...bi, with: [middle, low, high, hats])
+        out.layers.replaceSubrange(bi...bi, with: [middle, low, high, hats, bassLine])
         return out
     }
 

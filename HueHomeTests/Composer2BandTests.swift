@@ -39,9 +39,10 @@ final class Composer2BandTests: XCTestCase {
     func testTheBandSplitsTheBaseLayerByHeight() throws {
         let look = steadyLook()
         let band = Composer2PlayAlong.apply(look, feel: .groove, bpm: 120, band: true)
-        XCTAssertEqual(band.layers.count, 4)
-        guard band.layers.count == 4 else { return }
+        XCTAssertEqual(band.layers.count, 5)
+        guard band.layers.count == 5 else { return }
         let middle = band.layers[0], low = band.layers[1], high = band.layers[2], hats = band.layers[3]
+        let bassLine = band.layers[4]
         XCTAssertEqual(middle.id, look.layers[0].id, "the wash keeps the base layer's identity")
         XCTAssertEqual(middle.mask.roles, [.middle])
         XCTAssertEqual(middle.audio.source, .amplitude, "a held wash that swells")
@@ -52,7 +53,10 @@ final class Composer2BandTests: XCTestCase {
         XCTAssertFalse(hats.audio.sharesFlashBudget, "the shimmer is never a flash")
         XCTAssertLessThanOrEqual(hats.audio.intensity, 0.08)
         XCTAssertEqual(hats.blend, .addLighten)
-        XCTAssertEqual(Set(band.layers.map(\.id)).count, 4, "every copy its own id")
+        XCTAssertEqual(bassLine.mask.roles, [.low]); XCTAssertEqual(bassLine.audio.source, .bassLine)
+        XCTAssertFalse(bassLine.audio.sharesFlashBudget, "the bass line's glow is never a flash")
+        XCTAssertEqual(bassLine.blend, .addLighten)
+        XCTAssertEqual(Set(band.layers.map(\.id)).count, 5, "every copy its own id")
         XCTAssertEqual(Composer2PlayAlong.apply(look, feel: .groove, bpm: 120, band: true), band, "deterministic")
         XCTAssertEqual(try JSONDecoder().decode(Composer2Composition.self, from: JSONEncoder().encode(band)), band)
     }
@@ -117,7 +121,43 @@ final class Composer2BandTests: XCTestCase {
         while ((Int(s) % 4) + 4) % 4 % 2 != 1 { s -= 1 }
         f.lastKickAt = kickEveryEighth ? lastEighth : epoch + k * b; f.kickStrength = 1
         f.lastSnareAt = epoch + s * b; f.snareStrength = 0.9
+        // A bass line that comes and goes every 2 s, as a step (the lane
+        // itself ramps over about a second — this is harsher).
+        f.bassActivity = Int(floor((t - epoch) / 2)) % 2 == 0 ? 1 : 0
         return f
+    }
+
+    // MARK: - The bass line (build 919)
+
+    func testTheBassLineGlowsOnTheLowLightsWithoutAFlash() {
+        // A bass line starting from nothing, as a step, with the Sound dial at
+        // its most (×2): the low lights glow up over about a second and never
+        // rise by a flash's 0.10 in one 20 ms frame; the others don't move.
+        var look = Composer2PlayAlong.apply(steadyLook(0.3), feel: .groove, bpm: 120, band: true)
+        look.master.soundAmount = 2
+        var state = Composer2EngineState()
+        let g = room()
+        let b = beat(120)
+        var previous: [Double] = []
+        var maxRise = 0.0
+        var before: [Double] = [], after: [Double] = []
+        for step in 0..<Int(6 * 50) {
+            let t = epoch + Double(step) * 0.02
+            var f = AudioFeatures()
+            f.bassActivity = t - epoch >= 2 ? 1 : 0
+            let frames = Composer2Engine.evaluate(look, time: t - epoch, geometry: g, state: &state,
+                                                  audio: f, beat: b, hostNow: t)
+            let bri = frames.map(\.brightness)
+            if previous.count == bri.count { maxRise = max(maxRise, zip(bri, previous).map { $0 - $1 }.max() ?? 0) }
+            previous = bri
+            if step == 99 { before = bri }
+            if step == Int(6 * 50) - 1 { after = bri }
+        }
+        XCTAssertLessThan(maxRise, 0.10, "a glow, not a flash")
+        XCTAssertGreaterThan(after[0] - before[0], 0.15, "the low lights glow while the bass plays")
+        XCTAssertGreaterThan(after[3] - before[3], 0.15)
+        XCTAssertEqual(after[2], before[2], accuracy: 0.02, "the high lights don't follow the bass")
+        XCTAssertEqual(after[1], before[1], accuracy: 0.02, "nor the middle ones")
     }
 
     func testKickLightsTheLowLightsAndSnareTheHighOnes() {
