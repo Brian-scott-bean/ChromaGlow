@@ -11,6 +11,12 @@
 - Live shared handoff: append-only entries in this `DEVLOG.md`. Git is the shared memory between tools.
 
 ### iOS — where we are RIGHT NOW
+- **BUILD 920 ON `experiment/play-along` — WHERE WE ARE IN THE SONG (BARS, BEATS, PHRASES), NOT MERGED (2026-11-02).**
+  "It knows what's coming" step 1: a song position that only moves forward, 64 bars of raw per-bar features, and the
+  phrase grid found in beats (the clock's one is right only ~40 % of the time on real songs). Synthetic dance songs:
+  section starts called a bar ahead 0.50–0.72; BabySlakh at chance with low confidence (its changes aren't 8-bar
+  phrased). Nothing visible yet. Full suite 2669 + 1 expected failure. Rollback tag `checkpoint/pre-build-920-phrases`.
+  README §26. Simulator only.
 - **BUILD 919 ON `experiment/play-along` — IS A BASS LINE / ARE DRUMS PLAYING (THE SLOW LANES), NOT MERGED
   (2026-11-02).** Our own DSP decides over ~1 s whether a bass line and drums are playing (BabySlakh stems, held-out
   songs: bass balanced accuracy 0.87–0.88 line/room, drums 0.84 in rooms); two new Sound sources (Bass line, Drums
@@ -14529,3 +14535,30 @@ test; DrumLanes, OnsetFrameAnalyzer, Composer2LabGuard, Composer2LabPersistence:
 **Full suite: 2662 passed + 1 expected failure, 0 failed** (simulator rebooted; the first attempt ran beside the device build and the runner timed out before any test — rerun alone). Device build (Release, generic iOS, no signing): CFBundleVersion 919, probe strings 0,
 MusicUnderstanding links 0. `hardening_guards.sh` passed. Nothing installed, nothing pushed, `main` untouched.
 **Not verified on hardware.** Device check: README §25 (floor lamps glow with the bass, sink in a breakdown).
+
+## 2026-11-02 — [Claude] Build 920: where we are in the song — bars, beats and phrases (experiment/play-along)
+
+"It knows what's coming" step 1 (research doc §4.2). Rollback tag `checkpoint/pre-build-920-phrases` (= `2b34c8c`).
+README §26. Nothing on the lights changes in this build.
+
+**Commits:** `16af047` feat(audio) SongStructureTracker + SongStructure (engine pass, mirror, `AudioFeatures.structure`)
++ 7 tests · `77e06d7` feat(beatlab) ArrangementSynth + `run.sh -phrase` + `results-2026-11-02-phrase.txt` ·
+`3413b8a` chore build 920 (24 entries) · this entry's commit (README §26, DEVLOG).
+
+**What it does:** counts bars and beats as they're passed (only forward, through nudges and re-labelled ones; new tempo
+or ~4 s without a grid = new song), keeps 64 bars of raw per-bar features (energy, flux, hits/beat, flatness, change,
+slow lanes), and finds the phrase grid in BEATS (novelty 8 beats vs 8, local peaks summed per position in a 32-beat
+phrase). Published as `SongStructure` through its own mirror, apart from `BeatSnapshot`.
+
+**The finding that shaped it:** the clock's "one" is on a true downbeat only 38–43 % of the time on BabySlakh (81–87 %
+on the synthetic dance songs). A first version counted phrases in the clock's bars and looked better on the synthetic
+songs only because their downbeats are easy; counted in beats, the grid doesn't inherit a wrong one.
+
+**Measured:** synthetic dance arrangements — section starts called a bar ahead (±1 beat) 0.53 / 0.69 / 0.72 / 0.50
+(line/room/speaker/hall; chance ≈ 0.125). BabySlakh vs instrumentation changes — at chance (0.05–0.06), as it should be:
+its changes aren't 8-bar phrased (best 8-bar grid in hindsight 25 %), and the confidence stays low there (≥ 0.3 on 1 %).
+No licence-clean dance music with section labels exists in the corpus (EDM-drop set skipped for its licence).
+
+**Validation:** SongStructureTests 7/7 + the audio/band/guard classes (64) PASS on the simulator. **Full suite: 2669 passed + 1 expected failure, 0 failed** (rebooted simulator, run alone).
+Device build (Release, generic iOS, no signing): CFBundleVersion 920, probe strings 0, MusicUnderstanding links 0.
+Nothing installed, nothing pushed, `main` untouched. **Not verified on hardware** (nothing visible yet).

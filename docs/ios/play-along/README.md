@@ -1402,3 +1402,46 @@ Device check for build 919:
    a quiet room.
 3. A song with no bass (a solo acoustic guitar or piano): expect the Bass line source to read partly on (the known
    limit above).
+
+## 26. Where we are in the song: bars and phrases (2026-11-02, build 920)
+
+Step 1 of "it knows what's coming" (research doc §4.2). Same branch; rollback tag `checkpoint/pre-build-920-phrases`
+(= `2b34c8c`). Nothing visible changes yet: this is the ground the build/drop detector (§27) and the Conductor (§28)
+stand on.
+
+**What it is** (`Core/Audio/SongStructure.swift`, run on the tracker pass beside the groove map, ~2 Hz):
+
+| Piece | What it does |
+|---|---|
+| Song position | Bars and beats counted as they are **passed**, on whatever grid the clock holds at that moment, so the count only moves forward: a phase nudge or a re-labelled "one" makes one bar a beat longer or shorter, never a jump back. A new tempo (> 3 %) or ~4 s without a trusted grid starts a new song |
+| What each bar sounded like | Per bar (the last 64): raw energy (the analyzer's mean log band level — *not* the auto-levelled `level`, which flattens a build), low and high flux, drum hits per beat, spectral flatness, change from the bar before, the slow lanes (§25), and the band levels |
+| Phrases, in beats | Every beat line gets a novelty (the 8 beats after it against the 8 before: band levels and the slow lanes). Local peaks are summed per position in a 32-beat phrase (8 bars), with ~3 phrases of memory; the phrase grid is where the changes keep landing. A song that starts from silence gives a prior (its first beat starts a phrase — a guess, confidence ≤ 0.5) |
+| `SongStructure` | The published value: song start, bars/beats so far, the phrase grid and its confidence; `bar(at:)`, `beatInPhrase(at:)`, `phraseProgress(at:)`, `nextPhraseStart(after:)`. Its own lock-guarded mirror, stamped on every `AudioFeatures` (`structure`) — kept apart from `BeatSnapshot` |
+
+**Why beats, not bars** (beat lab, `run.sh -phrase`): the clock's "one" lands on a true downbeat only **38–43 %** of the
+time on BabySlakh (on *some* beat 63–70 %; tempo right 70–72 % of the time), against 81–87 % on the synthetic dance
+arrangements. A phrase grid counted in the clock's bars inherits that error; one counted in beats doesn't (re-labelling
+the bar moves no beat line), and where the music changes is itself evidence of where the one is. A first version in
+bars scored better on the synthetic songs only because their downbeats are easy.
+
+**Measured** (beat lab, `run.sh -phrase`, `beatlab/results-2026-11-02-phrase.txt`; the whole live chain, causal):
+
+| | Section starts called a bar ahead (±1 beat) | …with confidence ≥ 0.3 | Phrase grid right (per bar) |
+|---|---|---|---|
+| Synthetic dance arrangements (8 songs, ~30 section starts per condition), line / room / speaker / hall | 0.53 / 0.69 / 0.72 / 0.50 | 0.47 / 0.52 / 0.59 / 0.39 | 0.53 / 0.60 / 0.61 / 0.47 |
+| BabySlakh (20 songs) vs where its instrumentation changes (134–229 changes) | 0.06 / 0.06 / 0.05 / 0.06 | 0.01 / 0.01 / 0.01 / 0.01 | 0.13 / 0.12 / 0.10 / 0.12 |
+
+Chance for an 8-bar grid is about 0.125. **On the synthetic songs the phrase grid works; on BabySlakh it is at chance —
+and so it should be:** BabySlakh's instrumentation changes aren't on an 8-bar grid at all (the best 8-bar grid per
+song *in hindsight* catches only 25 % of them; 4-bar 41 %), and the confidence stays low there (≥ 0.3 on 0–1 % of
+them), which is what the Conductor will check before doing anything drastic. Real dance music, which is phrased in
+8s, isn't in the licence-clean corpus (the EDM-drop set was skipped for its licence), so the dance-music numbers are
+synthetic only.
+
+**Not done:** no song memory (step 4 — needs Brian's privacy OK, see the DEVLOG), no section names, no phrase lengths
+other than 8 bars, no 3/4.
+
+Tests: `SongStructureTests` (7): the count only moves forward through nudges and a re-labelled one, a new tempo is a
+new song, a lost grid ends it (after ~4 s, not at once), phrases land where the music changes, a song from silence
+starts a phrase, the per-bar features, the snapshot's arithmetic. Simulator only. **Not verified on hardware** (and
+there is nothing to see on the lights yet).
