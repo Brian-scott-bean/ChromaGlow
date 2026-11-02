@@ -14,6 +14,7 @@
 #   docs/ios/play-along/beatlab/run.sh -corpus    # the shipping tracker on real songs, clean and in rooms
 #   docs/ios/play-along/beatlab/run.sh -drums     # kick/snare/hi-hat recall and precision
 #   docs/ios/play-along/beatlab/run.sh -selftest  # the room convolution against a direct sum
+#   docs/ios/play-along/beatlab/run.sh -tracktune # build 915: search the tracker's smoothing and confidence
 set -euo pipefail
 HERE=${0:a:h}
 REPO=${HERE:h:h:h:h}

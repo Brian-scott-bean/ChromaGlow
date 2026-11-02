@@ -7,6 +7,8 @@
 // predictive grid every render loop reads.
 //
 // Method (prototype and measurements: docs/ios/play-along/beatlab):
+//  • Onset flux, detrended and smoothed over ~90 ms (build 915: human timing
+//    spreads a beat's hits a frame or two apart — BeatTrackerTuning).
 //  • Tempo: autocorrelation of the detrended onset flux over the last 8 s,
 //    scored by a 4-harmonic comb on a 0.25-BPM grid with fractional lags,
 //    weighted by a log-Gaussian "lighting tempo" prior (115 BPM, σ 0.9
@@ -39,6 +41,11 @@ struct BeatObservation: Sendable, Equatable {
     var barSlot: Int?
     /// 0–1: how clearly one slot wins.
     var barConfidence: Double
+    /// The raw evidence the confidences were read from (the beat lab
+    /// re-maps them): the normalised autocorrelation at the beat, and how far
+    /// the best phase stands above the average one (0…1).
+    var periodicity: Double = 0
+    var peakiness: Double = 0
 
     var period: Double { 60 / bpm }
 }
@@ -50,7 +57,41 @@ struct TempoPrior: Sendable, Equatable {
     var strength: Double = 1
 }
 
+/// The tracker's adjustable settings, swept in the beat lab on real
+/// recordings (docs/ios/play-along/beatlab, `run.sh -tracktune`; build 915).
+/// Before 915 the tracker read raw one-frame spikes with a 0.2 floor: on
+/// human-timed music it found the right tempo and never trusted it — the
+/// lights played along on 0.22 (mean beat F) of the lab's real songs; with
+/// these, 0.49, with fewer false locks on non-music (10.9 % → 8.3 %) and the
+/// beats landing a median +0.9 ms from the real ones.
+struct BeatTrackerTuning: Sendable, Equatable {
+    /// Hann smoothing of the detrended flux before the tempo and phase combs,
+    /// over 2n + 1 frames (0 = none). Human timing puts a beat's hits a few
+    /// milliseconds apart; one-frame spikes then never line up at the exact
+    /// beat lag.
+    var smoothFrames: Int = 4
+    /// Normalised autocorrelation that maps to zero / full tempo confidence.
+    var confidenceFloor: Double = 0.16
+    var confidenceSpan: Double = 0.3
+    /// Confidence reads the autocorrelation's best value within ± this many
+    /// frames of the beat lag.
+    var lagTolerance: Int = 0
+    /// The phase comb reads the smoothed flux too (false: only the tempo and
+    /// its confidence do; the phase reads the raw spikes).
+    var smoothPhase: Bool = true
+
+    static let standard = BeatTrackerTuning()
+    /// The tracker as it shipped before build 915 (the lab's reference).
+    static let raw = BeatTrackerTuning(smoothFrames: 0, confidenceFloor: 0.2, confidenceSpan: 0.3)
+}
+
 final class BeatTracker: @unchecked Sendable {
+
+    let tuning: BeatTrackerTuning
+
+    init(tuning: BeatTrackerTuning = .standard) {
+        self.tuning = tuning
+    }
 
     // ── Tunables (measured in the beat lab) ──
     static let windowSeconds = 8.0
@@ -67,9 +108,6 @@ final class BeatTracker: @unchecked Sendable {
     static let silenceSeconds = 0.8
     /// A frame is "quiet" below this share of the window's loud level.
     static let silenceRatio: Float = 0.3
-    /// Normalised autocorrelation that maps to zero / full tempo confidence.
-    static let confidenceFloor = 0.2
-    static let confidenceSpan = 0.3
 
     // ── State (single caller: the tempo pass) ──
     private var currentBPM = 0.0
@@ -109,6 +147,8 @@ final class BeatTracker: @unchecked Sendable {
             while lo < newLo { acc -= Double(frames.flux[lo]); lo += 1; cnt -= 1 }
             x[i] = max(0, Double(frames.flux[idx]) - acc / Double(max(1, cnt)))
         }
+        let raw = x
+        if tuning.smoothFrames > 0 { x = Self.hannSmoothed(x, radius: tuning.smoothFrames) }
         let total = x.reduce(0, +)
         guard total > 1e-6 else { return nil }
         let mean = total / Double(n)
@@ -155,8 +195,14 @@ final class BeatTracker: @unchecked Sendable {
                 if abs(d) < 1 { best += d * Self.bpmStep }
             }
         }
-        let normACF = at(60 * fr / best) / acf[0]
-        var tempoConfidence = min(1, max(0, (normACF - Self.confidenceFloor) / Self.confidenceSpan))
+        var peakACF = at(60 * fr / best)
+        if tuning.lagTolerance > 0 {
+            for d in 1...tuning.lagTolerance {
+                peakACF = max(peakACF, at(60 * fr / best + Double(d)), at(60 * fr / best - Double(d)))
+            }
+        }
+        let normACF = peakACF / acf[0]
+        var tempoConfidence = min(1, max(0, (normACF - tuning.confidenceFloor) / tuning.confidenceSpan))
         adoptTempo(best, prior: prior)
         if let prior, Self.isSameMeter(currentBPM, prior.bpm) {
             tempoConfidence = max(tempoConfidence, 0.9 * prior.strength)
@@ -166,12 +212,13 @@ final class BeatTracker: @unchecked Sendable {
         let period = 60 / currentBPM
         let tEnd = frames.times[frames.count - 1]
         let t0 = frames.times[start]
+        let px = tuning.smoothPhase ? x : raw
         func sample(_ t: Double) -> Double? {
             let pos = (t - t0) * fr
             guard pos >= 0 else { return nil }
             let i = Int(pos), f = pos - Double(i)
-            guard i + 1 < n else { return i < n ? x[i] : nil }
-            return x[i] * (1 - f) + x[i + 1] * f
+            guard i + 1 < n else { return i < n ? px[i] : nil }
+            return px[i] * (1 - f) + px[i + 1] * f
         }
         var bestPhase = 0.0, bestEnergy = -Double.infinity, energySum = 0.0, steps = 0
         var phi = 0.0
@@ -195,7 +242,25 @@ final class BeatTracker: @unchecked Sendable {
         let bar = barEstimate(frames, start: start, lastBeat: lastBeat, period: period)
         return BeatObservation(bpm: currentBPM, lastBeat: lastBeat,
                                tempoConfidence: tempoConfidence, phaseConfidence: phaseConfidence,
-                               barSlot: bar?.slot, barConfidence: bar?.confidence ?? 0)
+                               barSlot: bar?.slot, barConfidence: bar?.confidence ?? 0,
+                               periodicity: normACF, peakiness: peakiness)
+    }
+
+    /// `x` convolved with a normalised Hann window of 2·radius + 1 taps.
+    static func hannSmoothed(_ x: [Double], radius: Int) -> [Double] {
+        guard radius > 0, x.count > 1 else { return x }
+        let taps = (-radius...radius).map { 0.5 + 0.5 * cos(Double.pi * Double($0) / Double(radius + 1)) }
+        let norm = taps.reduce(0, +)
+        var y = [Double](repeating: 0, count: x.count)
+        for i in 0..<x.count {
+            var s = 0.0
+            for (k, w) in taps.enumerated() {
+                let j = i + k - radius
+                if j >= 0 && j < x.count { s += x[j] * w }
+            }
+            y[i] = s / norm
+        }
+        return y
     }
 
     // MARK: - Tempo prior and hysteresis

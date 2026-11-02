@@ -270,6 +270,7 @@ if let i = args.firstIndex(of: "-metrics"), i + 2 < args.count {
 }
 if args.contains("-corpus") { MainActor.assumeIsolated { corpusReport(args) }; exit(0) }
 if args.contains("-drums") { drumReport(args, detectors: [("today's hit", legacyOnsets)]); exit(0) }
+if args.contains("-tracktune") { MainActor.assumeIsolated { trackTune(args) }; exit(0) }
 if args.contains("-onset") { onsetLatencyReport(); exit(0) }
 if args.contains("-cpu") {
     let r = Synth.render([Segment(bpm: 124, leadIn: 0.3, bars: 60)], seed: 3)
