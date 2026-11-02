@@ -1540,3 +1540,36 @@ drop (a long riser and snare roll): through the build the punches should thin ou
 every half bar, every beat — and the first hit of the drop should land on the drop. A dim just before it happens
 only when the app is very sure; expect it rarely. Note any build that is never followed, any drop the punches miss
 by a beat or two, and above all any dim that is NOT followed by a drop.
+
+## 29. Fixes before merge, part 2: B9, B4, B7 (2026-11-02, build 923)
+
+The rest of the 2026-10-19 audit's Play Along list that is written down (§14). Same branch; rollback tag
+`checkpoint/pre-build-923-premerge-fixes` (= `33e3fd9`). One commit each; every fix has a test that failed before it.
+
+| Bug | What was wrong | Fix |
+|---|---|---|
+| B9 | The song memory's keys were a plain SHA-256 of the track and the output route — anyone with `song-memory.json` could check it against a list of songs — and the file was encoded and rewritten on the main thread | HMAC-SHA256 under a 32-byte secret in the Keychain (after first unlock, this device only, never synced; created only when the Keychain says there is none — any other failure uses a secret for this run only rather than overwrite the real one). Writes on a utility queue, data protection until first unlock, out of backups. **Old files start clean** (their keys can't be re-keyed without the songs): every song relearns its grid once, in a few seconds of play |
+| B4 | A music service's tempo floored the tracker's confidence at 0.72 whenever the tempos matched — speech-like bursts with a song "playing" read as a confident beat **59 %** of the time (noise 7 %), and the lock never let go (§14's B2 fade never ran) | The known tempo still picks the tempo, but lifts the confidence only in proportion to the room's own evidence (`max(own, 0.72 × min(1, own / 0.3))`): bursts and noise with a known tempo stay under the tests' 5 % bound; music with its known tempo still locks (≥ 80 % of passes confident, the right tempo) |
+| B7 | With a music service driving and the mic having moved the grid onto the real beat — but not yet the six agreeing passes that make the offset trusted — the drive snapped back to the "first beat at t=0" guess two seconds after the mic went quiet: **130 ms** off in the test | The drive re-anchors on the offset the mic learned, trusted or not; t=0 only when there is none. Untrusted, it still enters at phase confidence 0.3 (below Play Along's 0.5) |
+
+**Measured, not built — the bass-line lane's sub-bass blind spot (§27).** The obvious fix — let the bass-line lane
+(§25) also hear 30–141 Hz — was tried on the same 280 recordings as §25's exploration (scratch, not committed): every
+variant (the sub-bass floor + 1.0 … + 2.5 log units, 0.3 or 0.5 s) made held-out BabySlakh worse (balanced accuracy
+in a room 0.89 → 0.77–0.87, per-song AUC 0.82 → 0.67–0.79) and read Candombe's low hand drums as a bass line 16–79 %
+of the time (was 4 %). Its only gain would be dance music with a pure sine sub, which the corpus doesn't have. Not
+shipped; the lane stays as it is, the limit stays recorded, and the drop is confirmed on the sub-bass directly (§27).
+
+**B10–B12 are not here** — they were reported in chat on 2026-10-19 and never written into the repo, the DEVLOG or
+the project memory, so there is nothing to fix them against. A fresh pre-merge read of the Play Along chain would
+find whatever is still wrong.
+
+Tests: `SongMemoryTests` + 3 (an old file starts clean, the key needs the phone's secret and isn't the plain hash,
+written off the main thread and out of backups; the file-reading tests wait for the write queue),
+`BeatTrackerTests` + 3 (B4: noise and speech with a known tempo aren't a beat; music with it still locks),
+`BeatClockPlayAlongTests` + 1 (B7). Simulator only. **Not verified on hardware.**
+
+Device check for build 923: (1) Play Along with Apple Music: a song you played before needs a few seconds to
+relearn once (B9 started the memory clean), then locks at once on the next play as before. (2) Apple Music playing
+but the speaker off or muted (or talk in the room): Play Along should let go within a few seconds instead of
+punching on a guessed grid (B4). (3) A song locked through the mic, then headphones (the mic hears nothing): the
+lights should stay on the beat, not jump a fraction of a beat (B7).

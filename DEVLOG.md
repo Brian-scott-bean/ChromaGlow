@@ -11,6 +11,12 @@
 - Live shared handoff: append-only entries in this `DEVLOG.md`. Git is the shared memory between tools.
 
 ### iOS — where we are RIGHT NOW
+- **BUILD 923 ON `experiment/play-along` — PRE-MERGE FIXES B9, B4, B7, NOT MERGED (2026-11-02).** Song memory keyed
+  under a Keychain secret and written off the main thread (old memory starts clean — songs relearn once); a music
+  service's tempo no longer makes noise or speech a confident beat; the service drive keeps the mic's offset when the
+  mic goes quiet. The bass-line sub-bass change was measured and NOT shipped. B10–B12 were never written down — not
+  done. Full suite 2689 + 1 expected failure. Rollback tag `checkpoint/pre-build-923-premerge-fixes`. README §29.
+  Simulator only — **hardware NOT verified.**
 - **BUILD 922 ON `experiment/play-along` — THE CONDUCTOR (FOLLOW THE SONG), NOT MERGED (2026-11-02).** Off by default:
   Play Along → Follow the song. With a staged drop (≥ 0.5) beat punches go every 4 → 2 → 1 beats onto it (one lands ON
   the drop); only at ≥ 0.9 the room dims for the last half beat. 0 held frames on all 49 looks. Full suite 2682 + 1
@@ -14632,3 +14638,29 @@ not built. Owed by Brian, in order of what unblocks the most: (1) the step-4 pri
 should ever dim under Follow the song; (4) AIST/RWC for vocal test music; (5) the 914 probe's Copy results; (6) whether
 light heights should be written to the bridge. Next without Brian: the bass-line lane's sub-bass blind spot (§27 found
 it) and a real dance-music set with drop labels whose licence allows commercial use.
+
+## 2026-11-02 — [Claude] Build 923: pre-merge fixes B9, B4, B7 (experiment/play-along)
+
+Brian: "go with your recommendation" — a phone round on 911–922 (his), and meanwhile the fixes that make the branch
+ready to merge. Rollback tag `checkpoint/pre-build-923-premerge-fixes` (= `33e3fd9`). README §29.
+
+**Commits:** `a244425` fix(music) B9 — song-memory keys are HMAC-SHA256 under a 32-byte Keychain secret (this device
+only; created only on "not found", otherwise a this-run secret, never an overwrite), writes on a utility queue, data
+protection, out of backups; pre-B9 files start clean (songs relearn once) · `96701d3` fix(audio) B4 — a known tempo
+lifts the tracker's confidence only in proportion to the room's own evidence (was a 0.72 floor: speech-like bursts
+with a song "playing" read as a confident beat 59 % of the time) · `70b1a75` fix(audio) B7 — the service drive
+re-anchors on the offset the mic learned, trusted or not (was a snap back to the t=0 guess, 130 ms off, 2 s after the
+mic went quiet) · `457199b` chore build 923 · this entry's commit. Every fix has a test that failed before it.
+
+**Measured and NOT shipped:** the bass-line lane hearing 30–141 Hz too (§27's sub-bass blind spot). Every variant made
+held-out BabySlakh worse (room balanced accuracy 0.89 → 0.77–0.87) and read Candombe's low drums as a bass line 16–79 %
+(was 4 %); the only gain would be pure-sine-sub dance music the corpus doesn't have. The limit stays documented.
+
+**B10–B12 not done:** they were reported in chat on 2026-10-19 and never written to the repo, the DEVLOG, the project
+memory or the canvas memory — there is nothing to fix them against. A fresh pre-merge read of the Play Along chain is
+the way to recover what they were.
+
+**Validation:** SongMemory, BeatTracker, BeatClockPlayAlong, BeatClockServiceDrive: 73/73 PASS. **Full suite: 2689 passed + 1 expected failure, 0 failed** (rebooted simulator, run alone).
+Device build (Release, generic iOS, no signing): CFBundleVersion 923, probe strings 0, MusicUnderstanding links 0.
+`hardening_guards.sh` passed. Nothing installed or pushed; `main` untouched. **Not verified on hardware** — device
+check in README §29 (songs relearn once; a muted speaker lets go; headphones keep the beat).
