@@ -27,6 +27,9 @@ struct Composer2SlotGeometry: Equatable {
     let principalAngleDegrees: Double
     /// Light id per slot when the caller could resolve one (UI layouts).
     let lightIDs: [String]?
+    /// Low / middle / high per slot (build 917, Composer2LightRoles). Empty
+    /// when unknown: a role mask then covers the whole room.
+    var roles: [Composer2LightRole] = []
 
     static func linear(count: Int, lightIDs: [String]? = nil) -> Composer2SlotGeometry {
         let n = Swift.max(0, count)
@@ -117,10 +120,19 @@ struct Composer2SlotGeometry: Equatable {
     }
 
     func withLightIDs(_ ids: [String]?) -> Composer2SlotGeometry {
-        Composer2SlotGeometry(count: count, px: px, pz: pz, linearIndex: linearIndex,
-                              radial: radial, angular: angular, hasSpatialData: hasSpatialData,
-                              principalAngleDegrees: principalAngleDegrees,
-                              lightIDs: ids?.count == count ? ids : nil)
+        var g = Composer2SlotGeometry(count: count, px: px, pz: pz, linearIndex: linearIndex,
+                                      radial: radial, angular: angular, hasSpatialData: hasSpatialData,
+                                      principalAngleDegrees: principalAngleDegrees,
+                                      lightIDs: ids?.count == count ? ids : nil)
+        g.roles = roles
+        return g
+    }
+
+    /// The same geometry with a role per slot (ignored unless one per slot).
+    func withRoles(_ roles: [Composer2LightRole]) -> Composer2SlotGeometry {
+        var g = self
+        g.roles = roles.count == count ? roles : []
+        return g
     }
 
     /// Per-slot 0…1 position along an axis. Without spatial data every axis
@@ -193,6 +205,8 @@ struct Composer2LayerMask: Codable, Equatable {
         case lightIDs = "light_ids"
         case randomSubset = "random_subset"
         case region
+        /// The lights at some heights (build 917): low / middle / high.
+        case role
     }
 
     var kind: Kind = .wholeRoom
@@ -208,11 +222,13 @@ struct Composer2LayerMask: Codable, Equatable {
     var regionZ1: Double = 1
     var feather: Double = 0
     var invert: Bool = false
+    /// Role mask: the heights it covers.
+    var roles: [Composer2LightRole] = []
 
     init(kind: Kind = .wholeRoom, slots: [Int] = [], lightIDs: [String] = [],
          fraction: Double = 0.5, count: Int? = nil,
          regionX0: Double = 0, regionZ0: Double = 0, regionX1: Double = 1, regionZ1: Double = 1,
-         feather: Double = 0, invert: Bool = false) {
+         feather: Double = 0, invert: Bool = false, roles: [Composer2LightRole] = []) {
         self.kind = kind
         self.slots = slots
         self.lightIDs = lightIDs
@@ -224,10 +240,11 @@ struct Composer2LayerMask: Codable, Equatable {
         self.regionZ1 = regionZ1
         self.feather = feather
         self.invert = invert
+        self.roles = roles
     }
 
     enum CodingKeys: String, CodingKey {
-        case kind, slots, lightIDs, fraction, count, regionX0, regionZ0, regionX1, regionZ1, feather, invert
+        case kind, slots, lightIDs, fraction, count, regionX0, regionZ0, regionX1, regionZ1, feather, invert, roles
     }
 
     init(from decoder: Decoder) throws {
@@ -244,6 +261,25 @@ struct Composer2LayerMask: Codable, Equatable {
         regionZ1 = (try? c.decode(Double.self, forKey: .regionZ1)) ?? d.regionZ1
         feather = (try? c.decode(Double.self, forKey: .feather)) ?? d.feather
         invert = (try? c.decode(Bool.self, forKey: .invert)) ?? d.invert
+        // Unknown role names (a newer version) are dropped, not an error.
+        roles = ((try? c.decode([String].self, forKey: .roles)) ?? []).compactMap(Composer2LightRole.init(rawValue:))
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(kind, forKey: .kind)
+        try c.encode(slots, forKey: .slots)
+        try c.encode(lightIDs, forKey: .lightIDs)
+        try c.encode(fraction, forKey: .fraction)
+        try c.encodeIfPresent(count, forKey: .count)
+        try c.encode(regionX0, forKey: .regionX0)
+        try c.encode(regionZ0, forKey: .regionZ0)
+        try c.encode(regionX1, forKey: .regionX1)
+        try c.encode(regionZ1, forKey: .regionZ1)
+        try c.encode(feather, forKey: .feather)
+        try c.encode(invert, forKey: .invert)
+        // Only role masks write roles, so every other mask encodes exactly as before.
+        if !roles.isEmpty { try c.encode(roles, forKey: .roles) }
     }
 
     static let wholeRoom = Composer2LayerMask()
@@ -254,6 +290,11 @@ struct Composer2LayerMask: Codable, Equatable {
 
     static func randomCount(_ count: Int) -> Composer2LayerMask {
         Composer2LayerMask(kind: .randomSubset, count: count)
+    }
+
+    /// The lights at these heights (the whole room while heights are unknown).
+    static func role(_ roles: [Composer2LightRole]) -> Composer2LayerMask {
+        Composer2LayerMask(kind: .role, roles: roles)
     }
 
     static func slots(_ slots: [Int]) -> Composer2LayerMask {
@@ -270,6 +311,7 @@ struct Composer2LayerMask: Codable, Equatable {
         case .lightIDs: base = lightIDs.isEmpty ? total : Swift.min(total, lightIDs.count)
         case .randomSubset: base = Composer2LayerMask.subsetCount(total: total, fraction: fraction, count: count)
         case .region: base = total
+        case .role: base = total
         }
         return invert ? total - base : base
     }
@@ -326,6 +368,15 @@ struct Composer2LayerMask: Codable, Equatable {
                 let inX = Composer2LayerMask.softInside(x, lo: xr.lo, hi: xr.hi, feather: f)
                 let inZ = Composer2LayerMask.softInside(z, lo: zr.lo, hi: zr.hi, feather: f)
                 w[i] = inX * inZ
+            }
+
+        case .role:
+            if geometry.roles.count == n, !roles.isEmpty {
+                let wanted = Set(roles)
+                for i in 0..<n where wanted.contains(geometry.roles[i]) { w[i] = 1 }
+            } else {
+                // Heights unknown → the whole room, never a silent no-op.
+                w = Array(repeating: 1.0, count: n)
             }
         }
         if invert { w = w.map { 1 - $0 } }

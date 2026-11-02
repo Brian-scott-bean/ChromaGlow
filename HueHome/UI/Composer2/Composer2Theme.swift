@@ -322,6 +322,7 @@ enum Composer2Copy {
         case .slots, .lightIDs: where_ = "\(count) of \(total) lights"
         case .randomSubset: where_ = "Random \(count) of \(total)"
         case .region: where_ = "Region"
+        case .role: where_ = mask.roles.isEmpty ? "Whole room" : mask.roles.map(\.title).joined(separator: " + ") + " lights"
         }
         let axis: String
         switch direction.axisKind {

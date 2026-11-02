@@ -72,10 +72,19 @@ struct Composer2SlotLayout: Equatable {
     /// replaces this with the orchestrator's own geometry.
     var geometry: Composer2SlotGeometry {
         guard !slots.isEmpty else { return .linear(count: 0) }
-        if slots.allSatisfy(\.hasPosition) {
-            return Composer2SlotGeometry(points: slots.map { ($0.x ?? 0.5, $0.z ?? 0.5) }, lightIDs: lightIDs)
-        }
-        return .linear(count: slots.count, lightIDs: lightIDs)
+        let base = slots.allSatisfy(\.hasPosition)
+            ? Composer2SlotGeometry(points: slots.map { ($0.x ?? 0.5, $0.z ?? 0.5) }, lightIDs: lightIDs)
+            : .linear(count: slots.count, lightIDs: lightIDs)
+        // Heights for role masks: the user's answers, else the product type
+        // (a layout's z is the floor plan, not a height; the live loop adds
+        // the bridge's heights).
+        return base.withRoles(roles.map(\.role))
+    }
+
+    /// Low / middle / high per slot, and where each came from.
+    var roles: [(role: Composer2LightRole, source: Composer2LightRoles.Source)] {
+        Composer2LightRoles.resolve(lightIDs: slots.map(\.lightID), z: slots.map { _ in nil },
+                                    archetypes: slots.map(\.archetype), answers: Composer2LightRoles.answers())
     }
 
     /// Lights that cannot show colour (they follow brightness, and warmth where they can).

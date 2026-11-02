@@ -191,6 +191,8 @@ final class Composer2LiveOutput: ConcurrentCompositionFrameSource, @unchecked Se
     private var cachedRadial: [Double] = []
     private var cachedAngular: [Double] = []
     private var geometryFromBox = false
+    /// `Composer2LightRoles.version` the installed geometry's roles came from.
+    private var installedRolesVersion: UInt64 = .max
 
     /// A backwards jump larger than this resets the engine state.
     static let backwardsResetTolerance: Double = 0.5
@@ -403,8 +405,10 @@ final class Composer2LiveOutput: ConcurrentCompositionFrameSource, @unchecked Se
         // Composer 2.1: exact slots win. The orchestrator's own order carries
         // light identity, segments and real positions; nothing is reconstructed.
         if slots.count == count, count > 0 {
-            if geometryFromBox, _liveSlots == slots, _geometry.count == count { return }
+            let rolesVersion = Composer2LightRoles.version
+            if geometryFromBox, _liveSlots == slots, _geometry.count == count, rolesVersion == installedRolesVersion { return }
             _liveSlots = slots
+            installedRolesVersion = rolesVersion
             let ids = slots.map { $0.lightID ?? "slot-\($0.index)" }
             if slots.allSatisfy({ $0.position != nil }) {
                 // The SAME floor-plan mapping the on-screen layout uses — the
@@ -419,6 +423,8 @@ final class Composer2LiveOutput: ConcurrentCompositionFrameSource, @unchecked Se
             } else {
                 _geometry = .linear(count: count, lightIDs: ids)
             }
+            // Build 917: which lights are low, middle and high.
+            _geometry = _geometry.withRoles(Composer2LightRoles.resolve(slots, answers: Composer2LightRoles.answers()).map(\.role))
             cachedRadial = radial
             cachedAngular = angular
             geometryFromBox = true

@@ -213,6 +213,7 @@ struct Composer2PlayAlongSheet: View {
     @State private var lightTimingMs: Double = 0
     @State private var measuredMs: Int?
     @State private var showSyncCheck = false
+    @State private var showHeights = false
     @State private var tapped = false
     @Environment(\.dismiss) private var dismiss
 
@@ -257,6 +258,34 @@ struct Composer2PlayAlongSheet: View {
                          : settings.hits.subtitle)
                         .font(.footnote)
                         .foregroundStyle(LuminousPalette.inkSecondary)
+                }
+
+                Button {
+                    HapticManager.shared.selection()
+                    showHeights = true
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "arrow.up.and.down")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundStyle(LuminousPalette.cyan)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Light heights").font(.headline).foregroundStyle(LuminousPalette.ink)
+                            Text("Which lights are low, middle and high")
+                                .font(.footnote).foregroundStyle(LuminousPalette.inkSecondary)
+                        }
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(LuminousPalette.inkSecondary)
+                    }
+                    .padding(.horizontal, 16)
+                    .frame(minHeight: 60)
+                    .luminousGlass(radius: 18, accent: LuminousPalette.cyan, selected: false)
+                }
+                .buttonStyle(LuminousPressStyle(scale: 0.97))
+                .sheet(isPresented: $showHeights) {
+                    Composer2LightHeightsView()
+                        .presentationDetents([.medium, .large])
                 }
 
                 Toggle(isOn: Binding(get: { settings.onTheOne }, set: { settings.onTheOne = $0 })) {

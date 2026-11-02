@@ -233,6 +233,8 @@ struct CompositionRenderSlot: Equatable, Sendable, Identifiable {
     let capability: CompositionSlotCapability
     /// The light's reported white range, for tunable-white slots.
     let mirekRange: ClosedRange<Int>?
+    /// The light's Hue product type (archetype) — a fallback for its height.
+    var archetype: String? = nil
 
     var id: Int { index }
     var isSegment: Bool { segmentCount > 1 }
@@ -275,7 +277,8 @@ struct CompositionRenderSlot: Equatable, Sendable, Identifiable {
                 index: i, bridgeID: bridgeID, lightID: lightID, channelID: ch.id,
                 segmentIndex: segment, segmentCount: count,
                 position: CompositionSlotPosition(x: ch.position.x, y: ch.position.y, z: ch.position.z),
-                capability: capability(of: light), mirekRange: mirekRange(of: light)))
+                capability: capability(of: light), mirekRange: mirekRange(of: light),
+                archetype: light?.metadata.archetype))
         }
         return out
     }
@@ -297,7 +300,8 @@ struct CompositionRenderSlot: Equatable, Sendable, Identifiable {
                 out.append(CompositionRenderSlot(
                     index: out.count, bridgeID: bridgeID, lightID: lightID, channelID: nil,
                     segmentIndex: segment, segmentCount: count, position: position,
-                    capability: capability(of: light), mirekRange: mirekRange(of: light)))
+                    capability: capability(of: light), mirekRange: mirekRange(of: light),
+                    archetype: light?.metadata.archetype))
             }
         }
         return out

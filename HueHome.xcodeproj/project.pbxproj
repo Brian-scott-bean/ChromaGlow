@@ -53,6 +53,7 @@
 		205FA61450F673A59715AA8D /* AppGallerySnapshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1CB5759E124FFB9E98E1577 /* AppGallerySnapshotTests.swift */; };
 		23AB37160B7BF08CCC821B64 /* SongMemoryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93018495FE81C6B985F07D56 /* SongMemoryTests.swift */; };
 		247CE554FFB9B5DC9B8BE024 /* MicrophoneHopRelay.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC4A5DF5A7F91936931FFC8D /* MicrophoneHopRelay.swift */; };
+		251E5AD9F5E36B94BDF94A8D /* Composer2Roles.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4C78B9790168E5C448A67C1 /* Composer2Roles.swift */; };
 		25A0C7076C0B0342D9B3DA5D /* RoomDetailViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 902129FD7D8F8D92935465A5 /* RoomDetailViewModel.swift */; };
 		2630AD68CFAC77AB8FB6509F /* GuestAccessBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47B7FF7BBDB9A7FACD17098D /* GuestAccessBanner.swift */; };
 		26D1EC085E750BEC1AE3B4B6 /* Composer2Rhythm.swift in Sources */ = {isa = PBXBuildFile; fileRef = F706C9323F7BD051BA15FCA4 /* Composer2Rhythm.swift */; };
@@ -103,6 +104,7 @@
 		4B877271E843BC31EAE8D90D /* MicDemandPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 824843114E2CF9D61F1C85E7 /* MicDemandPolicyTests.swift */; };
 		4BF64D53B0E97F7FAFFDD67B /* CompositionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78AC498F54F25255B55133B1 /* CompositionStore.swift */; };
 		4CC8ABF8933F3B2A769C1218 /* SceneChip.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9122685BB2530B50697D4D2 /* SceneChip.swift */; };
+		4CDAF66BCE355D091B597606 /* Composer2LightRolesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD2BD61F08E6F3CDE9AFC0E6 /* Composer2LightRolesTests.swift */; };
 		4D6A92C35CE3146DFFDADE81 /* ShazamPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0EA7D31963C88AF14FFD401 /* ShazamPolicyTests.swift */; };
 		4E1F8C560D419953E6B9532C /* ScanSceneView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD09875F12D6AC24C7CFEEAD /* ScanSceneView.swift */; };
 		5018BCF991BE3F3C5FBEB15D /* HueLight.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7885050FC8A417F31C0B04D /* HueLight.swift */; };
@@ -177,6 +179,7 @@
 		81A97C848EAA34AD15696908 /* EffectEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7ACCF18A91D92561912E10F /* EffectEngine.swift */; };
 		82325DE8379009D468A9CFB0 /* Composer2Presets+Seasons.swift in Sources */ = {isa = PBXBuildFile; fileRef = A222893F005E038ECF6D3A85 /* Composer2Presets+Seasons.swift */; };
 		8252C553B77E1CCF98FB60E8 /* Composer2LabQuantizerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20E4F78D01711CA31623C84A /* Composer2LabQuantizerTests.swift */; };
+		832FD829F34BC4F68AA55ADC /* Composer2LightHeightsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 627493433A0629A363826B9E /* Composer2LightHeightsView.swift */; };
 		834EEE6D6EA013E62EA9F9DF /* HueAPIClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42E682D174C75541F8F57CFC /* HueAPIClientTests.swift */; };
 		83D16D11D9A22B3D443CED94 /* HueTokens.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E53201A81D93BB2967E3651 /* HueTokens.swift */; };
 		8424E092EB34CC3A86B96832 /* Composer2PresetLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BF3FF7E5923A8031C024A37 /* Composer2PresetLibrary.swift */; };
@@ -684,6 +687,7 @@
 		5FE8BB403C3BA723AFC596B6 /* SceneQRRenderer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SceneQRRenderer.swift; path = ./HueHome/Core/Share/SceneQRRenderer.swift; sourceTree = "<group>"; };
 		60DE6C014C8B60AA31B63454 /* FrameDeadlinePacer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = FrameDeadlinePacer.swift; path = ./HueHome/Core/Network/FrameDeadlinePacer.swift; sourceTree = "<group>"; };
 		6135738C5F72FCC699CF515B /* HueIntentEntityTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueIntentEntityTests.swift; path = ./HueHomeTests/HueIntentEntityTests.swift; sourceTree = "<group>"; };
+		627493433A0629A363826B9E /* Composer2LightHeightsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = Composer2LightHeightsView.swift; path = ./HueHome/UI/Composer2/Composer2LightHeightsView.swift; sourceTree = "<group>"; };
 		6278B21D6E2592BB36A4CB8F /* BridgeDiscoveryService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BridgeDiscoveryService.swift; path = HueHome/Core/Network/BridgeDiscoveryService.swift; sourceTree = "<group>"; };
 		63C8F3767D9E9548F65D6205 /* CopySceneSheet.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CopySceneSheet.swift; path = ./HueHome/UI/Scenes/CopySceneSheet.swift; sourceTree = "<group>"; };
 		64D82B811F32CC9FC4340A05 /* Composer2SpaceEditor.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = Composer2SpaceEditor.swift; path = ./HueHome/UI/Composer2/Editors/Composer2SpaceEditor.swift; sourceTree = "<group>"; };
@@ -832,6 +836,7 @@
 		ABEC9608CE446B81077C19AC /* Composer2Space.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = Composer2Space.swift; path = ./HueHome/Core/Composer2/Composer2Space.swift; sourceTree = "<group>"; };
 		AC9B34ED59C76D2F93085D37 /* Composer2LookCard.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = Composer2LookCard.swift; path = ./HueHome/UI/Composer2/Composer2LookCard.swift; sourceTree = "<group>"; };
 		AD09875F12D6AC24C7CFEEAD /* ScanSceneView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ScanSceneView.swift; path = ./HueHome/UI/Share/ScanSceneView.swift; sourceTree = "<group>"; };
+		AD2BD61F08E6F3CDE9AFC0E6 /* Composer2LightRolesTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = Composer2LightRolesTests.swift; path = ./HueHomeTests/Composer2LightRolesTests.swift; sourceTree = "<group>"; };
 		AE5AD8C9BE2A656785901E8F /* Composer2Hits.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = Composer2Hits.swift; path = ./HueHome/Core/Composer2/Composer2Hits.swift; sourceTree = "<group>"; };
 		AF8A54B6A1F1A2CC5FAF3CEE /* SplashView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SplashView.swift; path = HueHome/UI/Splash/SplashView.swift; sourceTree = "<group>"; };
 		B1LDM3TA000000000000001 /* BuildMetadata.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BuildMetadata.swift; path = HueHome/Core/App/BuildMetadata.swift; sourceTree = "<group>"; };
@@ -953,6 +958,7 @@
 		D2A9BD5B62E32B243BDEB862 /* AutomationsViewModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AutomationsViewModel.swift; path = HueHome/Core/ViewModels/AutomationsViewModel.swift; sourceTree = "<group>"; };
 		D36749ED79E50438D25F2262 /* SyncCheck.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SyncCheck.swift; path = ./HueHome/Core/Audio/SyncCheck.swift; sourceTree = "<group>"; };
 		D3A258BF9285E1A9E501678A /* HueColorUtils.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HueColorUtils.swift; path = HueHome/UI/Components/HueColorUtils.swift; sourceTree = "<group>"; };
+		D4C78B9790168E5C448A67C1 /* Composer2Roles.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = Composer2Roles.swift; path = ./HueHome/Core/Composer2/Composer2Roles.swift; sourceTree = "<group>"; };
 		D553B5FE1416CC61158E2455 /* SceneCopyEngineTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SceneCopyEngineTests.swift; path = ./HueHomeTests/SceneCopyEngineTests.swift; sourceTree = "<group>"; };
 		D66D292CDB77621748122E50 /* GuestInvitePayloadCodecTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GuestInvitePayloadCodecTests.swift; path = ./HueHomeTests/GuestInvitePayloadCodecTests.swift; sourceTree = "<group>"; };
 		D7284B7AD7CD7BDF665D4B7E /* ScenesTabView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ScenesTabView.swift; path = ./HueHome/UI/Scenes/ScenesTabView.swift; sourceTree = "<group>"; };
@@ -1232,6 +1238,7 @@
 				20A7918AC5EEEC15512A4FEA /* Composer2LandingSource.swift */,
 				064DC61F67A1DC4E962EFD64 /* Composer2AlbumPalette.swift */,
 				AE5AD8C9BE2A656785901E8F /* Composer2Hits.swift */,
+				D4C78B9790168E5C448A67C1 /* Composer2Roles.swift */,
 			);
 			name = Composer2;
 			sourceTree = "<group>";
@@ -1272,6 +1279,7 @@
 				705839271E043082BA1D5944 /* ComposerRoomLooks.swift */,
 				3A08DAAE180BE56F32BC2BEC /* Composer2PlayAlongControls.swift */,
 				4939B38D409B400F470FA9E3 /* Composer2SyncCheckView.swift */,
+				627493433A0629A363826B9E /* Composer2LightHeightsView.swift */,
 			);
 			name = Composer2;
 			sourceTree = "<group>";
@@ -1900,6 +1908,7 @@
 				46F3FAF91C458B9361EE4463 /* MusicAnalysisProbeTests.swift */,
 				3DB797CB447044CCC1FF126D /* DrumLanesTests.swift */,
 				3F43F684F46F75708EB895F4 /* GrooveMapTests.swift */,
+				AD2BD61F08E6F3CDE9AFC0E6 /* Composer2LightRolesTests.swift */,
 			);
 			name = HueHomeTests;
 			sourceTree = "<group>";
@@ -2604,6 +2613,8 @@
 				9B03BC4FE62F609B20C7AD52 /* MusicAnalysisProbeView.swift in Sources */,
 				1FDB40E121CFDC844B20D683 /* DrumLanes.swift in Sources */,
 				7C5B2CD0B1E9EDBD9C8EA9EC /* GrooveMap.swift in Sources */,
+				251E5AD9F5E36B94BDF94A8D /* Composer2Roles.swift in Sources */,
+				832FD829F34BC4F68AA55ADC /* Composer2LightHeightsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -2751,6 +2762,7 @@
 				C6313EF6D953D806F19BF119 /* MusicAnalysisProbeTests.swift in Sources */,
 				B7006DC77D968B11F7B9C305 /* DrumLanesTests.swift in Sources */,
 				001384674214A8F03CFF8F2C /* GrooveMapTests.swift in Sources */,
+				4CDAF66BCE355D091B597606 /* Composer2LightRolesTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
