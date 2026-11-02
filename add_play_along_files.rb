@@ -51,6 +51,7 @@ AUDIO    = ['HueHome', 'Core', 'Audio']
 MUSIC    = ['HueHome', 'Core', 'Music']
 CORE_C2  = ['HueHome', 'Core', 'Composer2']
 UI_C2    = ['HueHome', 'UI', 'Composer2']
+UI_SET   = ['HueHome', 'UI', 'Settings']
 TESTS    = ['HueHomeTests']
 
 APP_FILES = {
@@ -70,6 +71,8 @@ APP_FILES = {
   'HueHome/Core/Composer2/Composer2Hits.swift'         => CORE_C2,
   'HueHome/UI/Composer2/Composer2PlayAlongControls.swift' => UI_C2,
   'HueHome/UI/Composer2/Composer2SyncCheckView.swift'  => UI_C2,
+  'HueHome/Core/Music/MusicAnalysisProbe.swift'        => MUSIC,
+  'HueHome/UI/Settings/MusicAnalysisProbeView.swift'   => UI_SET,
 }
 
 TEST_FILES = {
@@ -88,6 +91,7 @@ TEST_FILES = {
   'HueHomeTests/SyncCheckTests.swift'                  => TESTS,
   'HueHomeTests/Composer2LabHitsTests.swift'           => TESTS,
   'HueHomeTests/Composer2LabSoundTests.swift'          => TESTS,
+  'HueHomeTests/MusicAnalysisProbeTests.swift'         => TESTS,
 }
 
 existing = existing_paths(project)

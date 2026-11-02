@@ -325,6 +325,15 @@ struct SettingsView: View {
             } message: {
                 Text("This removes every look ChromaGlow saved to \(orchestrator.bridgeLabel(for: cleanBridgeFrozenID ?? "")), including any that are running right now in other rooms. Looks on your other bridges aren't touched.")
             }
+
+            #if DEBUG
+            LuminousRowDivider()
+            NavigationLink(destination: MusicAnalysisProbeView()) {
+                LuminousRow(symbol: "waveform.badge.magnifyingglass", tint: LuminousPalette.violet,
+                            title: "Music analysis probe", subtitle: "Debug: time Apple's music analysis on this phone")
+            }
+            .buttonStyle(LuminousRowButtonStyle())
+            #endif
         }
     }
 
