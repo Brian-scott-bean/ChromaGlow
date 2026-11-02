@@ -12,8 +12,9 @@
 //
 // Per frame: log-compressed energy in 18 log-spaced bands (30 Hz–16 kHz),
 // half-wave-rectified spectral flux (all bands, plus low / mid / high
-// groups) and the band levels themselves (the bar tracker's chord-change
-// cue). Measured against the old pipeline in docs/ios/play-along/beatlab.
+// groups), the band levels themselves (the bar tracker's chord-change
+// cue) and, since build 915, kick / snare / hi-hat hits (DrumLanes).
+// Measured against the old pipeline in docs/ios/play-along/beatlab.
 //
 // THREADING CONTRACT: `process` is owned by exactly one producer thread (the
 // source's audio thread). No allocation once warm. Readers copy frames out
@@ -36,6 +37,10 @@ struct OnsetFrames: Sendable, Equatable {
     var energy: [Float] = []      // mean log band level (silence detection)
     /// Band levels, `bandCount` per frame, row-major.
     var bands: [Float] = []
+    /// Each drum's hit strength on the frame it fired (0 elsewhere).
+    var kick: [Float] = []
+    var snare: [Float] = []
+    var hat: [Float] = []
     var bandCount: Int = 0
     var frameRate: Double = 100
 
@@ -45,6 +50,18 @@ struct OnsetFrames: Sendable, Equatable {
     func band(_ frame: Int, _ b: Int) -> Float { bands[frame * bandCount + b] }
 
     static let empty = OnsetFrames()
+}
+
+/// The latest kick, snare and hi-hat (capture times; 0 = none yet).
+struct DrumHits: Sendable, Equatable {
+    var kickAt: Double = 0
+    var kickStrength: Float = 0
+    var snareAt: Double = 0
+    var snareStrength: Float = 0
+    var hatAt: Double = 0
+    var hatStrength: Float = 0
+
+    static let none = DrumHits()
 }
 
 final class OnsetFrameAnalyzer: @unchecked Sendable {
@@ -78,6 +95,11 @@ final class OnsetFrameAnalyzer: @unchecked Sendable {
     private var bandRanges: [Range<Int>] = []
     private var prevLevels: [Float] = []
     private var levels: [Float] = []
+    private let lanes: DrumLanes
+
+    init(drumTuning: DrumLaneTuning = .standard) {
+        lanes = DrumLanes(bandCount: Self.bandCount, tuning: drumTuning)
+    }
 
     // ── Frame ring (cross-thread: producer writes, readers copy) ──
     private var lock = os_unfair_lock()
@@ -89,6 +111,10 @@ final class OnsetFrameAnalyzer: @unchecked Sendable {
     private var rHigh: [Float] = []
     private var rEnergy: [Float] = []
     private var rBands: [Float] = []
+    private var rKick: [Float] = []
+    private var rSnare: [Float] = []
+    private var rHat: [Float] = []
+    private var drums = DrumHits.none
     private var writeIndex = 0
     private var stored = 0
     private var frameRate: Double = 100
@@ -137,6 +163,7 @@ final class OnsetFrameAnalyzer: @unchecked Sendable {
         bandRanges = (0..<(edges.count - 1)).map { b in edges[b]..<max(edges[b] + 1, edges[b + 1]) }
         prevLevels = [Float](repeating: 0, count: Self.bandCount)
         levels = [Float](repeating: 0, count: Self.bandCount)
+        lanes.reset()
 
         frameRate = fs / Double(hop)
         let cap = Int(Self.ringSeconds * frameRate) + 1
@@ -149,6 +176,10 @@ final class OnsetFrameAnalyzer: @unchecked Sendable {
         rHigh = [Float](repeating: 0, count: cap)
         rEnergy = [Float](repeating: 0, count: cap)
         rBands = [Float](repeating: 0, count: cap * Self.bandCount)
+        rKick = [Float](repeating: 0, count: cap)
+        rSnare = [Float](repeating: 0, count: cap)
+        rHat = [Float](repeating: 0, count: cap)
+        drums = .none
         writeIndex = 0
         stored = 0
         os_unfair_lock_unlock(&lock)
@@ -234,6 +265,7 @@ final class OnsetFrameAnalyzer: @unchecked Sendable {
             else { high += rise }
         }
         energy /= Float(Self.bandCount)
+        let hit = levels.withUnsafeBufferPointer { lanes.process(levels: $0, time: centreTime, frameRate: frameRate) }
 
         os_unfair_lock_lock(&lock)
         let k = writeIndex
@@ -245,9 +277,29 @@ final class OnsetFrameAnalyzer: @unchecked Sendable {
         rEnergy[k] = energy
         let base = k * Self.bandCount
         for b in 0..<Self.bandCount { rBands[base + b] = levels[b] }
+        rKick[k] = 0
+        rSnare[k] = 0
+        rHat[k] = hit.hat
+        // A held or confirmed hit keeps its onset time (DrumLanes may publish
+        // it a frame or more on): it is marked on the frame it started.
+        if hit.kick > 0 {
+            drums.kickAt = lanes.lastKickTime; drums.kickStrength = hit.kick
+            rKick[slot(back: centreTime - lanes.lastKickTime, from: k)] = hit.kick
+        }
+        if hit.snare > 0 {
+            drums.snareAt = lanes.lastSnareTime; drums.snareStrength = hit.snare
+            rSnare[slot(back: centreTime - lanes.lastSnareTime, from: k)] = hit.snare
+        }
+        if hit.hat > 0 { drums.hatAt = centreTime; drums.hatStrength = hit.hat }
         writeIndex = (k + 1) % capacity
         stored = min(stored + 1, capacity)
         os_unfair_lock_unlock(&lock)
+    }
+
+    /// The ring slot `seconds` before slot `k` (at most what the ring holds).
+    private func slot(back seconds: Double, from k: Int) -> Int {
+        let frames = min(max(0, Int((seconds * frameRate).rounded())), stored, capacity - 1)
+        return (k - frames + capacity) % capacity
     }
 
     /// The last `seconds` of frames (oldest first). Safe from any thread.
@@ -266,6 +318,9 @@ final class OnsetFrameAnalyzer: @unchecked Sendable {
         out.high.reserveCapacity(wanted)
         out.energy.reserveCapacity(wanted)
         out.bands.reserveCapacity(wanted * Self.bandCount)
+        out.kick.reserveCapacity(wanted)
+        out.snare.reserveCapacity(wanted)
+        out.hat.reserveCapacity(wanted)
         let start = (writeIndex - wanted + capacity) % capacity
         for j in 0..<wanted {
             let k = (start + j) % capacity
@@ -277,7 +332,17 @@ final class OnsetFrameAnalyzer: @unchecked Sendable {
             out.energy.append(rEnergy[k])
             let base = k * Self.bandCount
             for b in 0..<Self.bandCount { out.bands.append(rBands[base + b]) }
+            out.kick.append(rKick[k])
+            out.snare.append(rSnare[k])
+            out.hat.append(rHat[k])
         }
         return out
+    }
+
+    /// The latest kick, snare and hi-hat. Safe from any thread.
+    func drumHits() -> DrumHits {
+        os_unfair_lock_lock(&lock)
+        defer { os_unfair_lock_unlock(&lock) }
+        return drums
     }
 }

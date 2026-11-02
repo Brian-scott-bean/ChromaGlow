@@ -47,6 +47,25 @@ struct AudioFeatures: Sendable, Equatable {
 
     var timestamp: Double = 0       // host time of this hop
 
+    // Drums (build 915: OnsetFrameAnalyzer's DrumLanes). Capture times, as
+    // the beat grid; 0 = none yet. Strength 0…1 against the lane's recent
+    // loudest.
+    var lastKickAt: Double = 0
+    var kickStrength: Float = 0
+    var lastSnareAt: Double = 0
+    var snareStrength: Float = 0
+    var lastHatAt: Double = 0
+    var hatStrength: Float = 0
+
+    mutating func adopt(_ drums: DrumHits) {
+        lastKickAt = drums.kickAt
+        kickStrength = drums.kickStrength
+        lastSnareAt = drums.snareAt
+        snareStrength = drums.snareStrength
+        lastHatAt = drums.hatAt
+        hatStrength = drums.hatStrength
+    }
+
     static let silent = AudioFeatures()
 }
 

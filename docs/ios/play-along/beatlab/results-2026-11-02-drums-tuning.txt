@@ -1,0 +1,56 @@
+Drum lanes tuning — build 915 (2026-11-02). run.sh -drumtune: 24 Groove MIDI + 20 BabySlakh, line + home-like room.
+Pass 1 (first grid) is superseded; pass 2 = lane families for precision; pass 3 = + kick confirmation by decay, snare veto.
+
+== Pass 2
+recorded 88 recordings (44 tracks × line, room) in 47 s
+best kick: k 5.0 floor 2.00 (mean F 0.759 of 35 tried)
+best kick: bands 0...2 (mean F 0.759 of 5 tried)
+best kick: gap 0.09 (mean F 0.759 of 4 tried)
+best snare: k 0.5 floor 1.50 (mean F 0.582 of 30 tried)
+best snare: body 3...5 noise 11...14 (mean F 0.582 of 6 tried)
+best snare: gap 0.06 (mean F 0.583 of 4 tried)
+best hat: k 2.5 floor 0.15 (mean F 0.683 of 36 tried)
+best hat: bands 14...17 (mean F 0.754 of 4 tried)
+best hat: gap 0.07 (mean F 0.759 of 4 tried)
+best kick: click 0.00 (mean F 0.759 of 4 tried)
+best kick: memory 0.75 s (mean F 0.759 of 3 tried)
+standard:
+  standard                   gmd    line  kick R 0.96 P 0.56 F 0.70 | snare R 0.74 P 0.54 F 0.62 | hat R 0.94 P 0.74 F 0.83
+  standard                   gmd    room  kick R 0.92 P 0.50 F 0.65 | snare R 0.65 P 0.56 F 0.60 | hat R 0.79 P 0.72 F 0.75
+  standard                   slakh  line  kick R 0.94 P 0.35 F 0.51 | snare R 0.85 P 0.24 F 0.38 | hat R 0.68 P 0.76 F 0.72
+  standard                   slakh  room  kick R 0.89 P 0.29 F 0.44 | snare R 0.83 P 0.23 F 0.36 | hat R 0.15 P 0.61 F 0.23
+tuned: DrumLaneTuning(kickBands: ClosedRange(0...2), snareBodyBands: ClosedRange(3...5), snareNoiseBands: ClosedRange(11...14), hatBands: ClosedRange(14...17), kickK: 5.0, snareK: 0.5, hatK: 2.5, memory: 0.75, kickFloor: 2.0, snareFloor: 1.5, hatFloor: 0.15, kickGap: 0.09, snareGap: 0.06, hatGap: 0.07, kickClick: 0.0)
+  tuned                      gmd    line  kick R 0.95 P 0.74 F 0.83 | snare R 0.73 P 0.58 F 0.65 | hat R 0.94 P 0.73 F 0.82
+  tuned                      gmd    room  kick R 0.84 P 0.82 F 0.83 | snare R 0.58 P 0.66 F 0.61 | hat R 0.81 P 0.72 F 0.77
+  tuned                      slakh  line  kick R 0.86 P 0.62 F 0.73 | snare R 0.72 P 0.45 F 0.56 | hat R 0.83 P 0.75 F 0.79
+  tuned                      slakh  room  kick R 0.65 P 0.66 F 0.65 | snare R 0.48 P 0.56 F 0.52 | hat R 0.72 P 0.61 F 0.66
+EXIT 0
+
+== Pass 3
+recorded 88 recordings (44 tracks × line, room) in 38 s
+best kick: k 6.0 floor 2.00 (mean F 0.760 of 35 tried)
+best kick: bands 0...2 (mean F 0.760 of 5 tried)
+best kick: gap 0.09 (mean F 0.760 of 4 tried)
+best snare: k 0.5 floor 1.50 (mean F 0.583 of 30 tried)
+best snare: body 3...5 noise 11...14 (mean F 0.583 of 6 tried)
+best snare: gap 0.06 (mean F 0.583 of 4 tried)
+best hat: k 2.0 floor 0.30 (mean F 0.771 of 36 tried)
+best hat: bands 14...17 (mean F 0.771 of 4 tried)
+best hat: gap 0.07 (mean F 0.771 of 4 tried)
+best kick: click 0.00 (mean F 0.760 of 4 tried)
+best kick: memory 0.75 s (mean F 0.760 of 3 tried)
+best kick: confirm 12 frames, decay 2.0 (mean F 0.774 of 21 tried)
+best kick: k 6.0 floor 2.00 (mean F 0.774 of 15 tried)
+best snare: veto on kick false (mean F 0.583 of 2 tried)
+best snare: k 0.5 floor 1.50 (mean F 0.583 of 9 tried)
+standard:
+  standard                   gmd    line  kick R 0.95 P 0.74 F 0.83 | snare R 0.73 P 0.58 F 0.65 | hat R 0.94 P 0.73 F 0.82
+  standard                   gmd    room  kick R 0.84 P 0.82 F 0.83 | snare R 0.58 P 0.66 F 0.61 | hat R 0.81 P 0.72 F 0.77
+  standard                   slakh  line  kick R 0.86 P 0.62 F 0.73 | snare R 0.72 P 0.45 F 0.56 | hat R 0.83 P 0.75 F 0.79
+  standard                   slakh  room  kick R 0.65 P 0.66 F 0.65 | snare R 0.48 P 0.56 F 0.52 | hat R 0.72 P 0.61 F 0.66
+tuned: DrumLaneTuning(kickBands: ClosedRange(0...2), snareBodyBands: ClosedRange(3...5), snareNoiseBands: ClosedRange(11...14), hatBands: ClosedRange(14...17), kickK: 6.0, snareK: 0.5, hatK: 2.0, memory: 0.75, kickFloor: 2.0, snareFloor: 1.5, hatFloor: 0.3, kickGap: 0.09, snareGap: 0.06, hatGap: 0.07, kickClick: 0.0, kickConfirmFrames: 12, kickDecay: 2.0, snareVetoOnKick: false)
+  tuned                      gmd    line  kick R 0.94 P 0.80 F 0.86 | snare R 0.73 P 0.58 F 0.65 | hat R 0.95 P 0.72 F 0.82
+  tuned                      gmd    room  kick R 0.81 P 0.85 F 0.83 | snare R 0.58 P 0.66 F 0.61 | hat R 0.83 P 0.71 F 0.77
+  tuned                      slakh  line  kick R 0.82 P 0.70 F 0.75 | snare R 0.72 P 0.45 F 0.56 | hat R 0.86 P 0.74 F 0.80
+  tuned                      slakh  room  kick R 0.60 P 0.72 F 0.65 | snare R 0.48 P 0.56 F 0.52 | hat R 0.74 P 0.67 F 0.70
+EXIT 0

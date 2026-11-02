@@ -1,0 +1,167 @@
+Kick vs bass — build 915 (2026-11-02). run.sh -kickbass: the -drumtune set (24 Groove MIDI takes + 20 BabySlakh
+mixes, line + a measured home-like room), ±50 ms; recall on strokes ≥ velocity 40, precision against every stroke
+of the drum's family. Each kick band is one 47 Hz FFT bin, so a bass note that starts from silence rises like a
+kick; BabySlakh (full mixes with bass) is where that shows, as kick precision.
+
+Ways tried, starting from the lanes as handed over (pass 2):
+  level gate N      a kick must bring the kick bands within N (log units, summed over 3 bins) of the loudest low
+                    end lately (fading with a 4 s time constant). No wait.
+  confirm F decay D a kick is published only once the low end falls by D within F frames (a kick dies away, a bass
+                    note holds) — the light is F × 10 ms late.
+  snare veto W      no snare on a frame the kick lane fired on, nor within W after one.
+  hold 1            a snare is held one frame and dropped if the kick lane fires in it.
+
+Decision: level gate 2 + snare veto 50 ms + hold 1, no confirmation ("standard (build 915)", last row). It reaches
+the precision 120 ms of confirmation reaches on mixes (kick P 0.62 → 0.70) with no wait, and the veto + hold lift
+snare precision on mixes 0.45 → 0.67 (recall 0.72 → 0.55: fewer false flashes, some missed snares). The hold costs
+snares 10 ms. Known limit, kept as an expected failure in DrumLanesTests: a bass line in a song with NO drums still
+reads as kicks (its notes are the loudest low end there is), and about a second into a drum break with the bass
+going on, bass notes pass the gate again.
+
+recorded 88 recordings (44 tracks × line, room) in 50 s
+variant                          set    cond   kick R    P     F  | snare R   P     F
+pass 2 (as handed over)          gmd    line  0.95 0.74 0.83 | 0.73 0.58 0.65
+pass 2 (as handed over)          gmd    room  0.84 0.82 0.83 | 0.58 0.66 0.61
+pass 2 (as handed over)          slakh  line  0.86 0.62 0.73 | 0.72 0.45 0.56
+pass 2 (as handed over)          slakh  room  0.65 0.66 0.65 | 0.48 0.56 0.52
+pass 2 (as handed over)          mean F kick 0.759 snare 0.583
+level gate 0.5                   gmd    line  0.79 0.90 0.84 | 0.73 0.58 0.65
+level gate 0.5                   gmd    room  0.48 0.88 0.62 | 0.58 0.66 0.61
+level gate 0.5                   slakh  line  0.76 0.79 0.77 | 0.72 0.45 0.56
+level gate 0.5                   slakh  room  0.50 0.80 0.62 | 0.48 0.56 0.52
+level gate 0.5                   mean F kick 0.712 snare 0.583
+level gate 1.0                   gmd    line  0.85 0.89 0.87 | 0.73 0.58 0.65
+level gate 1.0                   gmd    room  0.56 0.88 0.69 | 0.58 0.66 0.61
+level gate 1.0                   slakh  line  0.80 0.76 0.78 | 0.72 0.45 0.56
+level gate 1.0                   slakh  room  0.56 0.77 0.65 | 0.48 0.56 0.52
+level gate 1.0                   mean F kick 0.746 snare 0.583
+level gate 1.5                   gmd    line  0.89 0.88 0.88 | 0.73 0.58 0.65
+level gate 1.5                   gmd    room  0.65 0.89 0.75 | 0.58 0.66 0.61
+level gate 1.5                   slakh  line  0.82 0.73 0.77 | 0.72 0.45 0.56
+level gate 1.5                   slakh  room  0.60 0.75 0.67 | 0.48 0.56 0.52
+level gate 1.5                   mean F kick 0.767 snare 0.583
+level gate 2.0                   gmd    line  0.91 0.87 0.89 | 0.73 0.58 0.65
+level gate 2.0                   gmd    room  0.71 0.89 0.79 | 0.58 0.66 0.61
+level gate 2.0                   slakh  line  0.84 0.70 0.76 | 0.72 0.45 0.56
+level gate 2.0                   slakh  room  0.62 0.72 0.67 | 0.48 0.56 0.52
+level gate 2.0                   mean F kick 0.779 snare 0.583
+level gate 3.0                   gmd    line  0.94 0.84 0.89 | 0.73 0.58 0.65
+level gate 3.0                   gmd    room  0.80 0.87 0.84 | 0.58 0.66 0.61
+level gate 3.0                   slakh  line  0.85 0.66 0.75 | 0.72 0.45 0.56
+level gate 3.0                   slakh  room  0.65 0.69 0.67 | 0.48 0.56 0.52
+level gate 3.0                   mean F kick 0.785 snare 0.583
+level gate 4.0                   gmd    line  0.95 0.81 0.87 | 0.73 0.58 0.65
+level gate 4.0                   gmd    room  0.83 0.85 0.84 | 0.58 0.66 0.61
+level gate 4.0                   slakh  line  0.86 0.64 0.73 | 0.72 0.45 0.56
+level gate 4.0                   slakh  room  0.65 0.67 0.66 | 0.48 0.56 0.52
+level gate 4.0                   mean F kick 0.777 snare 0.583
+confirm 3 decay 0.5 (+30 ms)     gmd    line  0.82 0.76 0.79 | 0.73 0.58 0.65
+confirm 3 decay 0.5 (+30 ms)     gmd    room  0.62 0.83 0.71 | 0.58 0.66 0.61
+confirm 3 decay 0.5 (+30 ms)     slakh  line  0.78 0.68 0.73 | 0.72 0.45 0.56
+confirm 3 decay 0.5 (+30 ms)     slakh  room  0.53 0.70 0.60 | 0.48 0.56 0.52
+confirm 3 decay 0.5 (+30 ms)     mean F kick 0.708 snare 0.583
+confirm 4 decay 0.5 (+40 ms)     gmd    line  0.94 0.77 0.85 | 0.73 0.58 0.65
+confirm 4 decay 0.5 (+40 ms)     gmd    room  0.75 0.84 0.79 | 0.58 0.66 0.61
+confirm 4 decay 0.5 (+40 ms)     slakh  line  0.81 0.68 0.74 | 0.72 0.45 0.56
+confirm 4 decay 0.5 (+40 ms)     slakh  room  0.58 0.70 0.63 | 0.48 0.56 0.52
+confirm 4 decay 0.5 (+40 ms)     mean F kick 0.753 snare 0.583
+confirm 4 decay 1.0 (+40 ms)     gmd    line  0.93 0.79 0.85 | 0.73 0.58 0.65
+confirm 4 decay 1.0 (+40 ms)     gmd    room  0.66 0.86 0.75 | 0.58 0.66 0.61
+confirm 4 decay 1.0 (+40 ms)     slakh  line  0.79 0.70 0.74 | 0.72 0.45 0.56
+confirm 4 decay 1.0 (+40 ms)     slakh  room  0.53 0.71 0.61 | 0.48 0.56 0.52
+confirm 4 decay 1.0 (+40 ms)     mean F kick 0.738 snare 0.583
+confirm 6 decay 1.0 (+60 ms)     gmd    line  0.94 0.79 0.86 | 0.73 0.58 0.65
+confirm 6 decay 1.0 (+60 ms)     gmd    room  0.74 0.85 0.79 | 0.58 0.66 0.61
+confirm 6 decay 1.0 (+60 ms)     slakh  line  0.82 0.68 0.74 | 0.72 0.45 0.56
+confirm 6 decay 1.0 (+60 ms)     slakh  room  0.59 0.71 0.65 | 0.48 0.56 0.52
+confirm 6 decay 1.0 (+60 ms)     mean F kick 0.759 snare 0.583
+confirm 8 decay 1.5 (+80 ms)     gmd    line  0.94 0.80 0.86 | 0.73 0.58 0.65
+confirm 8 decay 1.5 (+80 ms)     gmd    room  0.78 0.85 0.82 | 0.58 0.66 0.61
+confirm 8 decay 1.5 (+80 ms)     slakh  line  0.82 0.70 0.75 | 0.72 0.45 0.56
+confirm 8 decay 1.5 (+80 ms)     slakh  room  0.59 0.71 0.64 | 0.48 0.56 0.52
+confirm 8 decay 1.5 (+80 ms)     mean F kick 0.768 snare 0.583
+confirm 12 decay 2.0 (+120 ms)   gmd    line  0.94 0.80 0.86 | 0.73 0.58 0.65
+confirm 12 decay 2.0 (+120 ms)   gmd    room  0.81 0.85 0.83 | 0.58 0.66 0.61
+confirm 12 decay 2.0 (+120 ms)   slakh  line  0.82 0.70 0.75 | 0.72 0.45 0.56
+confirm 12 decay 2.0 (+120 ms)   slakh  room  0.60 0.72 0.65 | 0.48 0.56 0.52
+confirm 12 decay 2.0 (+120 ms)   mean F kick 0.774 snare 0.583
+gate 1.0 + confirm 4 (+40 ms)    gmd    line  0.84 0.90 0.87 | 0.73 0.58 0.65
+gate 1.0 + confirm 4 (+40 ms)    gmd    room  0.53 0.90 0.67 | 0.58 0.66 0.61
+gate 1.0 + confirm 4 (+40 ms)    slakh  line  0.80 0.77 0.78 | 0.72 0.45 0.56
+gate 1.0 + confirm 4 (+40 ms)    slakh  room  0.55 0.78 0.64 | 0.48 0.56 0.52
+gate 1.0 + confirm 4 (+40 ms)    mean F kick 0.741 snare 0.583
+gate 2.0 + confirm 4 (+40 ms)    gmd    line  0.91 0.88 0.90 | 0.73 0.58 0.65
+gate 2.0 + confirm 4 (+40 ms)    gmd    room  0.66 0.90 0.76 | 0.58 0.66 0.61
+gate 2.0 + confirm 4 (+40 ms)    slakh  line  0.83 0.71 0.77 | 0.72 0.45 0.56
+gate 2.0 + confirm 4 (+40 ms)    slakh  room  0.60 0.73 0.66 | 0.48 0.56 0.52
+gate 2.0 + confirm 4 (+40 ms)    mean F kick 0.772 snare 0.583
+gate inf + snare veto 0 ms       gmd    line  0.95 0.74 0.83 | 0.58 0.62 0.60
+gate inf + snare veto 0 ms       gmd    room  0.84 0.82 0.83 | 0.50 0.72 0.59
+gate inf + snare veto 0 ms       slakh  line  0.86 0.62 0.73 | 0.57 0.57 0.57
+gate inf + snare veto 0 ms       slakh  room  0.65 0.66 0.65 | 0.41 0.64 0.50
+gate inf + snare veto 0 ms       mean F kick 0.759 snare 0.565
+gate inf + snare veto 30 ms      gmd    line  0.95 0.74 0.83 | 0.47 0.66 0.55
+gate inf + snare veto 30 ms      gmd    room  0.84 0.82 0.83 | 0.47 0.73 0.57
+gate inf + snare veto 30 ms      slakh  line  0.86 0.62 0.73 | 0.54 0.63 0.58
+gate inf + snare veto 30 ms      slakh  room  0.65 0.66 0.65 | 0.41 0.64 0.50
+gate inf + snare veto 30 ms      mean F kick 0.759 snare 0.550
+gate inf + snare veto 50 ms      gmd    line  0.95 0.74 0.83 | 0.47 0.66 0.55
+gate inf + snare veto 50 ms      gmd    room  0.84 0.82 0.83 | 0.47 0.73 0.57
+gate inf + snare veto 50 ms      slakh  line  0.86 0.62 0.73 | 0.54 0.64 0.58
+gate inf + snare veto 50 ms      slakh  room  0.65 0.66 0.65 | 0.41 0.64 0.50
+gate inf + snare veto 50 ms      mean F kick 0.759 snare 0.549
+gate 2.0 + snare veto 0 ms       gmd    line  0.91 0.87 0.89 | 0.66 0.65 0.65
+gate 2.0 + snare veto 0 ms       gmd    room  0.71 0.89 0.79 | 0.55 0.71 0.62
+gate 2.0 + snare veto 0 ms       slakh  line  0.84 0.70 0.76 | 0.63 0.59 0.61
+gate 2.0 + snare veto 0 ms       slakh  room  0.62 0.72 0.67 | 0.45 0.63 0.52
+gate 2.0 + snare veto 0 ms       mean F kick 0.779 snare 0.601
+gate 2.0 + snare veto 30 ms      gmd    line  0.91 0.87 0.89 | 0.63 0.66 0.64
+gate 2.0 + snare veto 30 ms      gmd    room  0.71 0.89 0.79 | 0.54 0.71 0.61
+gate 2.0 + snare veto 30 ms      slakh  line  0.84 0.70 0.76 | 0.62 0.62 0.62
+gate 2.0 + snare veto 30 ms      slakh  room  0.62 0.72 0.67 | 0.45 0.63 0.52
+gate 2.0 + snare veto 30 ms      mean F kick 0.779 snare 0.598
+gate 2.0 + snare veto 50 ms      gmd    line  0.91 0.87 0.89 | 0.63 0.66 0.64
+gate 2.0 + snare veto 50 ms      gmd    room  0.71 0.89 0.79 | 0.54 0.71 0.61
+gate 2.0 + snare veto 50 ms      slakh  line  0.84 0.70 0.76 | 0.62 0.62 0.62
+gate 2.0 + snare veto 50 ms      slakh  room  0.62 0.72 0.67 | 0.44 0.63 0.52
+gate 2.0 + snare veto 50 ms      mean F kick 0.779 snare 0.598
+gate 3.0 + snare veto 0 ms       gmd    line  0.94 0.84 0.89 | 0.64 0.65 0.65
+gate 3.0 + snare veto 0 ms       gmd    room  0.80 0.87 0.84 | 0.54 0.72 0.61
+gate 3.0 + snare veto 0 ms       slakh  line  0.85 0.66 0.75 | 0.61 0.59 0.60
+gate 3.0 + snare veto 0 ms       slakh  room  0.65 0.69 0.67 | 0.44 0.64 0.52
+gate 3.0 + snare veto 0 ms       mean F kick 0.785 snare 0.594
+gate 3.0 + snare veto 30 ms      gmd    line  0.94 0.84 0.89 | 0.60 0.67 0.63
+gate 3.0 + snare veto 30 ms      gmd    room  0.80 0.87 0.84 | 0.52 0.72 0.60
+gate 3.0 + snare veto 30 ms      slakh  line  0.85 0.66 0.75 | 0.59 0.63 0.61
+gate 3.0 + snare veto 30 ms      slakh  room  0.65 0.69 0.67 | 0.43 0.64 0.51
+gate 3.0 + snare veto 30 ms      mean F kick 0.785 snare 0.589
+gate 3.0 + snare veto 50 ms      gmd    line  0.94 0.84 0.89 | 0.59 0.67 0.63
+gate 3.0 + snare veto 50 ms      gmd    room  0.80 0.87 0.84 | 0.52 0.72 0.60
+gate 3.0 + snare veto 50 ms      slakh  line  0.85 0.66 0.75 | 0.59 0.63 0.61
+gate 3.0 + snare veto 50 ms      slakh  room  0.65 0.69 0.67 | 0.43 0.64 0.51
+gate 3.0 + snare veto 50 ms      mean F kick 0.785 snare 0.589
+gate 2.0 + veto 50 ms + hold 1   gmd    line  0.91 0.87 0.89 | 0.57 0.72 0.63
+gate 2.0 + veto 50 ms + hold 1   gmd    room  0.71 0.89 0.79 | 0.50 0.79 0.61
+gate 2.0 + veto 50 ms + hold 1   slakh  line  0.84 0.70 0.76 | 0.55 0.67 0.60
+gate 2.0 + veto 50 ms + hold 1   slakh  room  0.62 0.72 0.67 | 0.40 0.71 0.51
+gate 2.0 + veto 50 ms + hold 1   mean F kick 0.779 snare 0.590
+gate 2.0 + veto 50 + hold 1 + hat 2/.3 gmd    line  0.91 0.87 0.89 | 0.57 0.72 0.63
+gate 2.0 + veto 50 + hold 1 + hat 2/.3 gmd    room  0.71 0.89 0.79 | 0.50 0.79 0.61
+gate 2.0 + veto 50 + hold 1 + hat 2/.3 slakh  line  0.84 0.70 0.76 | 0.55 0.67 0.60
+gate 2.0 + veto 50 + hold 1 + hat 2/.3 slakh  room  0.62 0.72 0.67 | 0.40 0.71 0.51
+gate 2.0 + veto 50 + hold 1 + hat 2/.3 mean F kick 0.779 snare 0.590
+gate 3.0 + veto 50 ms + hold 1   gmd    line  0.94 0.84 0.89 | 0.53 0.72 0.61
+gate 3.0 + veto 50 ms + hold 1   gmd    room  0.80 0.87 0.84 | 0.47 0.79 0.59
+gate 3.0 + veto 50 ms + hold 1   slakh  line  0.85 0.66 0.75 | 0.53 0.68 0.59
+gate 3.0 + veto 50 ms + hold 1   slakh  room  0.65 0.69 0.67 | 0.39 0.72 0.50
+gate 3.0 + veto 50 ms + hold 1   mean F kick 0.785 snare 0.573
+gate 3.0 + veto 50 + hold 1 + hat 2/.3 gmd    line  0.94 0.84 0.89 | 0.53 0.72 0.61
+gate 3.0 + veto 50 + hold 1 + hat 2/.3 gmd    room  0.80 0.87 0.84 | 0.47 0.79 0.59
+gate 3.0 + veto 50 + hold 1 + hat 2/.3 slakh  line  0.85 0.66 0.75 | 0.53 0.68 0.59
+gate 3.0 + veto 50 + hold 1 + hat 2/.3 slakh  room  0.65 0.69 0.67 | 0.39 0.72 0.50
+gate 3.0 + veto 50 + hold 1 + hat 2/.3 mean F kick 0.785 snare 0.573
+standard (build 915)             gmd    line  0.91 0.87 0.89 | 0.57 0.72 0.63
+standard (build 915)             gmd    room  0.71 0.89 0.79 | 0.50 0.79 0.61
+standard (build 915)             slakh  line  0.84 0.70 0.76 | 0.55 0.67 0.60
+standard (build 915)             slakh  room  0.62 0.72 0.67 | 0.40 0.71 0.51
+standard (build 915)             mean F kick 0.779 snare 0.590

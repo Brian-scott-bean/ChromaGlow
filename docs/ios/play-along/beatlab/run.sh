@@ -14,6 +14,8 @@
 #   docs/ios/play-along/beatlab/run.sh -corpus    # the shipping tracker on real songs, clean and in rooms
 #   docs/ios/play-along/beatlab/run.sh -drums     # kick/snare/hi-hat recall and precision
 #   docs/ios/play-along/beatlab/run.sh -selftest  # the room convolution against a direct sum
+#   docs/ios/play-along/beatlab/run.sh -drumtune  # build 915: search the drum lanes' settings
+#   docs/ios/play-along/beatlab/run.sh -kickbass  # build 915: kick vs bass — level gate, decay confirmation, snare veto/hold
 #   docs/ios/play-along/beatlab/run.sh -tracktune # build 915: search the tracker's smoothing and confidence
 set -euo pipefail
 HERE=${0:a:h}
@@ -26,6 +28,7 @@ xcrun swiftc -O -swift-version 5 -o "$OUT/beatlab" "$HERE"/*.swift \
   "$REPO/HueHome/Core/Audio/TempoEstimator.swift" \
   "$REPO/HueHome/Core/Audio/BeatClock.swift" \
   "$REPO/HueHome/Core/Audio/OnsetFrameAnalyzer.swift" \
+  "$REPO/HueHome/Core/Audio/DrumLanes.swift" \
   "$REPO/HueHome/Core/Audio/BeatTracker.swift" \
   "$REPO/HueHome/Core/Music/MusicSource.swift"
 "$OUT/beatlab" "$@"

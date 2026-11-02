@@ -21,7 +21,10 @@ struct Composer2AudioEditorContent: View {
                     ("Mid", .mid, "speaker.wave.2"),
                     ("Treble", .treble, "speaker.wave.3"),
                     ("Beat", .beat, "metronome"),
-                    ("Hits", .onset, "bolt")
+                    ("Hits", .onset, "bolt"),
+                    ("Kick", .kick, "circle.circle"),
+                    ("Snare", .snare, "circle.dotted"),
+                    ("Hi-hat", .hat, "sparkle")
                 ], selection: document.layerBinding(\.audio.source))
                 if audio.isActive {
                     Composer2AudioPreview(audio: audio, accent: Composer2Theme.accent(for: .audio))
@@ -33,7 +36,7 @@ struct Composer2AudioEditorContent: View {
                     Composer2SliderRow(title: "Noise gate", value: document.layerBinding(\.audio.threshold), range: 0...0.9)
                     Composer2SliderRow(title: "Smoothing", value: document.layerBinding(\.audio.smoothing), range: 0...1)
                     Composer2SliderRow(title: "Intensity", value: document.layerBinding(\.audio.intensity), range: 0...1)
-                    if audio.source == .beat || audio.source == .onset {
+                    if audio.source == .beat || audio.isHit {
                         Composer2SliderRow(title: "Punch decay", value: document.layerBinding(\.audio.punchDecay), range: 0...1)
                     }
                 }
@@ -48,7 +51,7 @@ struct Composer2AudioEditorContent: View {
                     targetToggle("Color position", .palettePosition)
                     targetToggle("Motion speed", .motionSpeed)
                     targetToggle("Event chance", .eventProbability)
-                    if audio.source == .onset {
+                    if audio.isHit {
                         StageToggleRow(title: "Trigger events on hits", isOn: document.layerBinding(\.audio.triggerEventsOnOnset))
                     }
                 }

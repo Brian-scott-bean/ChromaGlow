@@ -269,7 +269,11 @@ if let i = args.firstIndex(of: "-metrics"), i + 2 < args.count {
     exit(0)
 }
 if args.contains("-corpus") { MainActor.assumeIsolated { corpusReport(args) }; exit(0) }
-if args.contains("-drums") { drumReport(args, detectors: [("today's hit", legacyOnsets)]); exit(0) }
+if args.contains("-drums") {
+    drumReport(args, detectors: [("today's hit", legacyOnsets), ("drum lanes", laneDetector())]); exit(0)
+}
+if args.contains("-drumtune") { drumTune(args); exit(0) }
+if args.contains("-kickbass") { kickBass(args); exit(0) }
 if args.contains("-tracktune") { MainActor.assumeIsolated { trackTune(args) }; exit(0) }
 if args.contains("-onset") { onsetLatencyReport(); exit(0) }
 if args.contains("-cpu") {

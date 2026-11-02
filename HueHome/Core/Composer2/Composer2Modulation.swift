@@ -43,6 +43,10 @@ struct Composer2AudioModulation: Codable, Equatable {
         case treble
         case beat
         case onset
+        /// One drum heard on its own (build 915, DrumLanes).
+        case kick
+        case snare
+        case hat
     }
 
     enum Target: String, Codable, CaseIterable {
@@ -187,7 +191,7 @@ struct Composer2AudioModulation: Codable, Equatable {
     /// True when this modulation's punches move through the room: a beat or
     /// hit source that adds light, with a travel other than "together".
     var travels: Bool {
-        guard let travel, travel != .together, isActive, source == .beat || source == .onset,
+        guard let travel, travel != .together, isActive, source == .beat || isHit,
               brightnessMode == .punch, targets.contains(.brightness) else { return false }
         return true
     }
@@ -195,8 +199,27 @@ struct Composer2AudioModulation: Codable, Equatable {
     /// True when this source reads the microphone's analysis bands.
     var usesMicrophoneBands: Bool {
         switch source {
-        case .amplitude, .bass, .mid, .treble, .onset: return true
+        case .amplitude, .bass, .mid, .treble, .onset, .kick, .snare, .hat: return true
         case .beat, .off: return false
+        }
+    }
+
+    /// A heard hit: any hit (Hits) or one drum (Kick, Snare, Hi-hat).
+    var isHit: Bool {
+        switch source {
+        case .onset, .kick, .snare, .hat: return true
+        default: return false
+        }
+    }
+
+    /// When this source last heard its hit (0 = not yet). Sources that
+    /// aren't hits report any hit, as `triggerEventsOnOnset` always has.
+    func lastHitTime(_ features: AudioFeatures) -> Double {
+        switch source {
+        case .kick: return features.lastKickAt
+        case .snare: return features.lastSnareAt
+        case .hat: return features.lastHatAt
+        default: return features.lastOnsetAt
         }
     }
 
@@ -224,6 +247,13 @@ struct Composer2AudioModulation: Codable, Equatable {
                 return Composer2Math.clamp01(exp(-(hostNow - features.lastOnsetAt) / punchDecayTau))
             }
             return Composer2Math.clamp01(Double(features.onsetStrength))
+        case .kick, .snare, .hat:
+            // As hard as the drum was struck, against its recent loudest.
+            let at = lastHitTime(features)
+            guard hostNow > 0, at > 0, hostNow >= at else { return 0 }
+            let strength: Float = source == .kick ? features.kickStrength
+                : source == .snare ? features.snareStrength : features.hatStrength
+            return Composer2Math.clamp01(Double(strength) * exp(-(hostNow - at) / punchDecayTau))
         }
     }
 
@@ -260,7 +290,7 @@ struct Composer2AudioModulation: Codable, Equatable {
 
     /// Continuous palette offset for band sources (beat/onset step instead).
     func paletteOffset(drive: Double) -> Double {
-        guard targets.contains(.palettePosition), isActive, usesMicrophoneBands, source != .onset else { return 0 }
+        guard targets.contains(.palettePosition), isActive, usesMicrophoneBands, !isHit else { return 0 }
         return Composer2Math.clamp01(drive) * Composer2Math.clamp01(intensity) * 0.5
     }
 }

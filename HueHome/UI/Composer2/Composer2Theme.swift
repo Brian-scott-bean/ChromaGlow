@@ -349,6 +349,9 @@ enum Composer2Copy {
         case .treble: return "Treble"
         case .beat: return "Beat"
         case .onset: return "Hits"
+        case .kick: return "Kick"
+        case .snare: return "Snare"
+        case .hat: return "Hi-hat"
         }
     }
 

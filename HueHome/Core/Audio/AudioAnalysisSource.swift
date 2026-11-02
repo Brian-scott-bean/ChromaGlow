@@ -90,21 +90,22 @@ struct AudioPCMSink: Sendable {
                 bufferStart: when.flatMap { $0.isHostTimeValid ? AVAudioTime.seconds(forHostTime: $0.hostTime) : nil },
                 frameCount: frameCount,
                 sampleRate: Double(sampleRate))
-            if let features = extractor.process(
-                data: data,
-                frameCount: frameCount,
-                sampleRate: sampleRate,
-                hostTime: hostTime,
-                captureTime: captureTime
-            ) {
-                AudioAnalysisEngine.publish(features, generation: generation)
-            }
             if let onsets {
                 // The buffer's first sample, from its AVAudioTime; without a
                 // valid time, the arrival time less the buffer's length.
                 let start = when.flatMap { $0.isHostTimeValid ? AVAudioTime.seconds(forHostTime: $0.hostTime) : nil }
                     ?? hostTime - Double(frameCount) / Double(sampleRate)
                 onsets.process(data, frameCount: frameCount, sampleRate: Double(sampleRate), bufferStart: start)
+            }
+            if var features = extractor.process(
+                data: data,
+                frameCount: frameCount,
+                sampleRate: sampleRate,
+                hostTime: hostTime,
+                captureTime: captureTime
+            ) {
+                stampDrums(&features)
+                AudioAnalysisEngine.publish(features, generation: generation)
             }
         }
         AudioAnalysisEngine.fanOut(buffer, sampleRate: sampleRate)
@@ -121,16 +122,18 @@ struct AudioPCMSink: Sendable {
         guard isCurrent else { return }
         let captureTime = AudioFeatureExtractor.captureMidpoint(
             bufferStart: captureStart, frameCount: frameCount, sampleRate: Double(sampleRate))
-        if let features = extractor.process(
+        // The onset frames first, so the drums this hop heard ride on its features.
+        onsets?.process(data, frameCount: frameCount, sampleRate: Double(sampleRate), bufferStart: captureStart)
+        if var features = extractor.process(
             data: data,
             frameCount: frameCount,
             sampleRate: sampleRate,
             hostTime: arrival,
             captureTime: captureTime
         ) {
+            stampDrums(&features)
             AudioAnalysisEngine.publish(features, generation: generation)
         }
-        onsets?.process(data, frameCount: frameCount, sampleRate: Double(sampleRate), bufferStart: captureStart)
         if let buffer {
             AudioAnalysisEngine.fanOut(buffer, sampleRate: sampleRate)
         }
@@ -150,21 +153,27 @@ struct AudioPCMSink: Sendable {
         buffer: AVAudioPCMBuffer?
     ) {
         guard isCurrent else { return }
-        if let features = extractor.process(
+        // Heard-time stamps: the beat grid is predicted ahead anyway, so a
+        // hop that plays out later simply lands its beats in the future.
+        onsets?.process(mono, frameCount: frameCount, sampleRate: Double(sampleRate),
+                        bufferStart: presentationTime)
+        if var features = extractor.process(
             data: mono,
             frameCount: frameCount,
             sampleRate: sampleRate,
             hostTime: presentationTime
         ) {
+            stampDrums(&features)
             AudioAnalysisEngine.publish(features, generation: generation)
         }
-        // Heard-time stamps: the beat grid is predicted ahead anyway, so a
-        // hop that plays out later simply lands its beats in the future.
-        onsets?.process(mono, frameCount: frameCount, sampleRate: Double(sampleRate),
-                        bufferStart: presentationTime)
         if let buffer {
             AudioAnalysisEngine.fanOut(buffer, sampleRate: sampleRate)
         }
+    }
+
+    /// Kick, snare and hi-hat as the onset frames heard them (build 915).
+    private func stampDrums(_ features: inout AudioFeatures) {
+        if let onsets { features.adopt(onsets.drumHits()) }
     }
 
     /// The source went quiet (paused, disconnected, stalled): show silence

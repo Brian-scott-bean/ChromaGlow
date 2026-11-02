@@ -255,7 +255,7 @@ enum Composer2Engine {
             let drive: Double
             if mod.isActive {
                 let raw = mod.rawDrive(features: audio, beat: beat, hostNow: hostNow)
-                if (mod.source == .beat || mod.source == .onset) && raw > ls.smoothedDrive {
+                if (mod.source == .beat || mod.isHit) && raw > ls.smoothedDrive {
                     // A beat or a hit lands at once; smoothing shapes only
                     // its fall. Smoothing the rise too put a default
                     // punch's peak at about half strength, ~200 ms late.
@@ -320,9 +320,10 @@ enum Composer2Engine {
                             ls.lastTriggerBeatIndex = q
                         }
                     }
-                case .onset:
-                    if audio.lastOnsetAt > ls.lastOnsetSeen {
-                        ls.lastOnsetSeen = audio.lastOnsetAt
+                case .onset, .kick, .snare, .hat:
+                    let hitAt = mod.lastHitTime(audio)
+                    if hitAt > ls.lastOnsetSeen {
+                        ls.lastOnsetSeen = hitAt
                         ls.paletteStepPhase = Composer2Math.frac(ls.paletteStepPhase + mod.paletteStep)
                     }
                 default:
@@ -348,9 +349,10 @@ enum Composer2Engine {
                                                             startTime: time, timingVariation: timing)
                 }
                 var force = false
-                if mod.triggerEventsOnOnset, mod.isActive, audio.lastOnsetAt > 0, audio.lastOnsetAt > ls.lastEventOnsetSeen {
+                let hitAt = mod.lastHitTime(audio)
+                if mod.triggerEventsOnOnset, mod.isActive, hitAt > 0, hitAt > ls.lastEventOnsetSeen {
                     force = true
-                    ls.lastEventOnsetSeen = audio.lastOnsetAt
+                    ls.lastEventOnsetSeen = hitAt
                 }
                 // Play Along: an opportunity every `beatSync` beats, on the
                 // predicted beat (the frame is rendered for when it is shown).
@@ -392,11 +394,12 @@ enum Composer2Engine {
                 var firstIsReference = true
                 if mod.source == .beat, hostNow > 0 {
                     hits = Composer2Hits.beatHits(travel, beat: beat, at: hostNow, groups: hitPlan.groups, fade: fade)
-                } else if mod.source == .onset, hostNow > 0, audio.lastOnsetAt > 0 {
+                } else if mod.isHit, hostNow > 0, mod.lastHitTime(audio) > 0 {
                     // A heard hit starts a wave once the last one is far
                     // enough behind it (the same spacing as on the grid).
-                    if audio.lastOnsetAt > (ls.hitWaves.last?.time ?? 0),
-                       let wave = Composer2Hits.heardWave(travel, at: audio.lastOnsetAt, after: ls.hitWaves.last,
+                    let hitAt = mod.lastHitTime(audio)
+                    if hitAt > (ls.hitWaves.last?.time ?? 0),
+                       let wave = Composer2Hits.heardWave(travel, at: hitAt, after: ls.hitWaves.last,
                                                           number: ls.hitWaveCount &+ 1, groups: hitPlan.groups,
                                                           beatInterval: beat.beatInterval) {
                         ls.hitWaves.append(wave)
