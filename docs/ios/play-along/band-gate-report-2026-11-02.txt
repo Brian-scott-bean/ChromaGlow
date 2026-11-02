@@ -1,0 +1,105 @@
+Band gate report — build 918 (2026-11-02). Composer2BandTests.testBandLooksNeverMakeTheWireStutter: every built-in
+look, Play Along Hit + The room is the band, 6 lights (2 low, 2 middle, 2 high), heard drums (kick 1/3, snare 2/4,
+hats on eighths; at 150 BPM a kick on EVERY eighth), through Composer2LiveOutput on the 20 ms grid, then an
+independent copy of the wire gate. shaped = share of frames the flash shaper slowed; holds = frames the gate held.
+
+Haunted House 120 BPM split=yes shaped=0.000 holds=0
+Jack-o'-Lantern 120 BPM split=yes shaped=0.000 holds=0
+Witch's Brew 120 BPM split=yes shaped=0.000 holds=0
+Graveyard Fog 120 BPM split=yes shaped=0.000 holds=0
+Poltergeist 120 BPM split=yes shaped=0.000 holds=0
+Blood Moon 120 BPM split=yes shaped=0.000 holds=0
+Mad Scientist 120 BPM split=yes shaped=0.000 holds=0
+Trick or Treat 120 BPM split=yes shaped=0.000 holds=0
+Christmas Chase 120 BPM split=yes shaped=0.000 holds=0
+Classic C9 String 120 BPM split=yes shaped=0.000 holds=0
+Theater Chase 120 BPM split=yes shaped=0.000 holds=0
+Candy Cane 120 BPM split=yes shaped=0.000 holds=0
+Fairy Lights 120 BPM split=yes shaped=0.000 holds=0
+Silent Night 120 BPM split=yes shaped=0.000 holds=0
+Snowfall 120 BPM split=yes shaped=0.000 holds=0
+Golden Ornaments 120 BPM split=yes shaped=0.013 holds=0
+Fourth of July 120 BPM split=yes shaped=0.005 holds=0
+New Year's Eve 120 BPM split=yes shaped=0.010 holds=0
+Valentine's Glow 120 BPM split=yes shaped=0.043 holds=0
+St. Patrick's 120 BPM split=yes shaped=0.000 holds=0
+Festival of Lights 120 BPM split=yes shaped=0.000 holds=0
+Diwali 120 BPM split=yes shaped=0.040 holds=0
+Spring Pastels 120 BPM split=yes shaped=0.000 holds=0
+Thunderstorm 120 BPM split=yes shaped=0.000 holds=0
+Supercell 120 BPM split=yes shaped=0.020 holds=0
+Heat Lightning 120 BPM split=yes shaped=0.000 holds=0
+Passing Storm 120 BPM split=yes shaped=0.000 holds=0
+Rainy Night 120 BPM split=yes shaped=0.000 holds=0
+Aurora Drift 120 BPM split=yes shaped=0.000 holds=0
+Ocean Waves 120 BPM split=yes shaped=0.000 holds=0
+Fireflies 120 BPM split=yes shaped=0.003 holds=0
+Starry Night 120 BPM split=yes shaped=0.000 holds=0
+Underwater 120 BPM split=yes shaped=0.000 holds=0
+Enchanted Forest 120 BPM split=yes shaped=0.000 holds=0
+Golden Hour 120 BPM split=yes shaped=0.000 holds=0
+Sunset Glow 120 BPM split=yes shaped=0.000 holds=0
+Fireplace 120 BPM split=yes shaped=0.000 holds=0
+Candlelight 120 BPM split=yes shaped=0.000 holds=0
+Campfire 120 BPM split=yes shaped=0.048 holds=0
+Lava Lamp 120 BPM split=yes shaped=0.000 holds=0
+Disco Fever 120 BPM split=yes shaped=0.000 holds=0
+Neon Nights 120 BPM split=yes shaped=0.040 holds=0
+Rainbow Wave 120 BPM split=yes shaped=0.000 holds=0
+Beat Drop 120 BPM split=no shaped=0.000 holds=0
+Club Pulse 120 BPM split=no shaped=0.000 holds=0
+Breathing Calm 120 BPM split=no shaped=0.000 holds=0
+Cloud Drift 120 BPM split=no shaped=0.000 holds=0
+Cozy Evening 120 BPM split=no shaped=0.000 holds=0
+Deep Focus 120 BPM split=no shaped=0.000 holds=0
+MEAN 120 BPM split 43 of 49 looks, shaped=0.0045, holds total 0
+Haunted House 150 BPM (eighth kicks) split=yes shaped=0.000 holds=0
+Jack-o'-Lantern 150 BPM (eighth kicks) split=yes shaped=0.000 holds=0
+Witch's Brew 150 BPM (eighth kicks) split=yes shaped=0.005 holds=0
+Graveyard Fog 150 BPM (eighth kicks) split=yes shaped=0.000 holds=0
+Poltergeist 150 BPM (eighth kicks) split=yes shaped=0.000 holds=0
+Blood Moon 150 BPM (eighth kicks) split=yes shaped=0.000 holds=0
+Mad Scientist 150 BPM (eighth kicks) split=yes shaped=0.040 holds=0
+Trick or Treat 150 BPM (eighth kicks) split=yes shaped=0.000 holds=0
+Christmas Chase 150 BPM (eighth kicks) split=yes shaped=0.062 holds=0
+Classic C9 String 150 BPM (eighth kicks) split=yes shaped=0.005 holds=0
+Theater Chase 150 BPM (eighth kicks) split=yes shaped=0.000 holds=0
+Candy Cane 150 BPM (eighth kicks) split=yes shaped=0.247 holds=0
+Fairy Lights 150 BPM (eighth kicks) split=yes shaped=0.000 holds=0
+Silent Night 150 BPM (eighth kicks) split=yes shaped=0.000 holds=0
+Snowfall 150 BPM (eighth kicks) split=yes shaped=0.000 holds=0
+Golden Ornaments 150 BPM (eighth kicks) split=yes shaped=0.003 holds=0
+Fourth of July 150 BPM (eighth kicks) split=yes shaped=0.020 holds=0
+New Year's Eve 150 BPM (eighth kicks) split=yes shaped=0.043 holds=0
+Valentine's Glow 150 BPM (eighth kicks) split=yes shaped=0.010 holds=0
+St. Patrick's 150 BPM (eighth kicks) split=yes shaped=0.000 holds=0
+Festival of Lights 150 BPM (eighth kicks) split=yes shaped=0.000 holds=0
+Diwali 150 BPM (eighth kicks) split=yes shaped=0.025 holds=0
+Spring Pastels 150 BPM (eighth kicks) split=yes shaped=0.000 holds=0
+Thunderstorm 150 BPM (eighth kicks) split=yes shaped=0.010 holds=0
+Supercell 150 BPM (eighth kicks) split=yes shaped=0.000 holds=0
+Heat Lightning 150 BPM (eighth kicks) split=yes shaped=0.000 holds=0
+Passing Storm 150 BPM (eighth kicks) split=yes shaped=0.000 holds=0
+Rainy Night 150 BPM (eighth kicks) split=yes shaped=0.000 holds=0
+Aurora Drift 150 BPM (eighth kicks) split=yes shaped=0.000 holds=0
+Ocean Waves 150 BPM (eighth kicks) split=yes shaped=0.000 holds=0
+Fireflies 150 BPM (eighth kicks) split=yes shaped=0.000 holds=0
+Starry Night 150 BPM (eighth kicks) split=yes shaped=0.000 holds=0
+Underwater 150 BPM (eighth kicks) split=yes shaped=0.000 holds=0
+Enchanted Forest 150 BPM (eighth kicks) split=yes shaped=0.000 holds=0
+Golden Hour 150 BPM (eighth kicks) split=yes shaped=0.000 holds=0
+Sunset Glow 150 BPM (eighth kicks) split=yes shaped=0.000 holds=0
+Fireplace 150 BPM (eighth kicks) split=yes shaped=0.000 holds=0
+Candlelight 150 BPM (eighth kicks) split=yes shaped=0.000 holds=0
+Campfire 150 BPM (eighth kicks) split=yes shaped=0.015 holds=0
+Lava Lamp 150 BPM (eighth kicks) split=yes shaped=0.000 holds=0
+Disco Fever 150 BPM (eighth kicks) split=yes shaped=0.000 holds=0
+Neon Nights 150 BPM (eighth kicks) split=yes shaped=0.003 holds=0
+Rainbow Wave 150 BPM (eighth kicks) split=yes shaped=0.000 holds=0
+Beat Drop 150 BPM (eighth kicks) split=no shaped=0.000 holds=0
+Club Pulse 150 BPM (eighth kicks) split=no shaped=0.000 holds=0
+Breathing Calm 150 BPM (eighth kicks) split=no shaped=0.000 holds=0
+Cloud Drift 150 BPM (eighth kicks) split=no shaped=0.000 holds=0
+Cozy Evening 150 BPM (eighth kicks) split=no shaped=0.000 holds=0
+Deep Focus 150 BPM (eighth kicks) split=no shaped=0.000 holds=0
+MEAN 150 BPM (eighth kicks) split 43 of 49 looks, shaped=0.0099, holds total 0

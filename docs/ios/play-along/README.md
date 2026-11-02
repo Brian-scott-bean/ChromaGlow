@@ -1266,3 +1266,54 @@ weights (and inverted), unknown heights = whole room, encoding, and a running lo
 Device check for build 917: Play Along → long-press → **Light heights**. Your lights should be listed with sensible
 guesses (floor lamps low, ceiling lights high; if you placed heights in the Hue app's Entertainment area, "From
 your Hue Bridge"). Change one, close the sheet, open it again: it should read "Set by you".
+
+## 24. The room is the band (2026-11-02, build 918)
+
+Step 4 of "the room is the band" (research doc §3.4 step 4): the band transform and one shared flash budget. Same
+branch; rollback tag `checkpoint/pre-build-918-band` (= `fa598a7`).
+
+**What the user does:** long-press Play Along → turn on **The room is the band** (with Feel on Groove or Hit). The
+look's base layer is split across the room's heights (§23):
+
+| Lights | What they play |
+|---|---|
+| Low (floor lamps) | A punch on every **kick** (915's lane, predicted on the grid by 916's groove map) |
+| Middle (eye height) | The look itself, swelling gently with the music — a held wash |
+| High (ceiling) | A punch on every **snare**, plus a **hi-hat shimmer** that adds at most 0.08 — under the 0.10 rise a flash is counted from, so never a flash on every hat |
+
+Accent layers keep their cycles locked to the bars but stop punching on the beat (the drums are the punches now);
+events keep the feel's timing. Calm looks stay calm; Glide adds no punches. A look whose base layer already has its
+own mask, events or sound (Beat Drop, Club Pulse) plays as the feel made it. A room without a low and a high light
+doesn't split; the switch then says "Set a low and a high light in Light heights". Room mode never splits (it can't
+land a punch on the beat).
+
+**One shared flash budget** (`Composer2Band.admit`, run by the engine before any layer plays): every band drum punch —
+kick or snare, on whichever lights — claims the room's budget, and two are never closer than the flash gate's own
+0.34 s (so never more than 3 a second). A kick wins a tie with a snare. The engine thins the drums musically
+instead of the gate cutting frames; Dim Flashing Lights, the flash shaper and the wire gate stay the authority after
+it. (Each light belongs to one role, so the old per-layer refractory now holds per light across the band's layers.)
+
+**Measured** (`Composer2BandTests`: every built-in look, Hit + band, 6 lights — 2 low, 2 middle, 2 high — heard
+drums, through `Composer2LiveOutput` on the 20 ms grid and an independent wire gate; full report
+`band-gate-report-2026-11-02.txt`):
+
+| Case | Looks split | Frames the shaper slowed (mean) | Frames the gate held |
+|---|---|---|---|
+| 120 BPM, kick on 1 and 3 | 43 of 49 | 0.45 % | **0** |
+| 150 BPM, a kick on every eighth | 43 of 49 | 0.99 % | **0** |
+
+The six that don't split: Beat Drop and Club Pulse (they listen already) and the four Calm looks. **Worst case:**
+Candy Cane at 150 BPM with a kick on every eighth — the shaper slows 24.7 % of its frames (its marching stripes plus
+the drums); 0 held. Christmas Chase 6.2 %, Campfire 4.8 % at 120 BPM. Busy drums (a kick every 0.2 s plus snares):
+no two band flashes within 0.34 s (test).
+
+Tests: `Composer2BandTests` (8): the split (masks, sources, the shimmer under the flash size, stable ids, encoding),
+looks it can't split, accents that stop punching, the budget, kick low / snare high in the live output, a room
+without heights waits, busy drums sharing one budget, and the per-look gate report. Full suite 2653 + 1 expected
+failure. Simulator only. **Not verified on hardware** — and this is the one to see in a real room.
+
+Device check for build 918 (after §23's Light heights):
+1. Play Along on, Feel **Hit**, **The room is the band** on, a song with a clear kick and snare: the floor lamps
+   should thump on the kick, the ceiling lights snap on the snare, the middle lights hold the look.
+2. A busy dance track: drums should thin out evenly (never a strobe), and Dim Flashing Lights should still soften them.
+3. Turn the band off: the look goes back to the plain Feel on the next frame.

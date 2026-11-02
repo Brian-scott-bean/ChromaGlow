@@ -11,6 +11,11 @@
 - Live shared handoff: append-only entries in this `DEVLOG.md`. Git is the shared memory between tools.
 
 ### iOS — where we are RIGHT NOW
+- **BUILD 918 ON `experiment/play-along` — THE ROOM IS THE BAND, NOT MERGED (2026-11-02).** Play Along → The room
+  is the band (Groove/Hit): kick on the low lights, the look held at eye height, snare + a sub-flash hi-hat shimmer
+  up high; every band drum flash shares one room-wide budget (≥ 0.34 s apart). All 49 looks: 0 held frames.
+  Builds 915–918 are one stack: tracker fix + drum lanes → groove map → light heights → band. Rollback tag
+  `checkpoint/pre-build-918-band`. README §24. Simulator only — **hardware NOT verified.**
 - **BUILD 917 ON `experiment/play-along` — WHICH LIGHTS ARE LOW, MIDDLE AND HIGH, NOT MERGED (2026-11-02).** Light
   roles from your answer (Play Along → Light heights) > the bridge's z (when the area has heights) > the product
   type; a `.role` layer mask. Heights are NOT written back to the bridge (needs a real-bridge test). Rollback tag
@@ -14365,3 +14370,34 @@ Brian asked to continue in another session ("Marshall" on the CNVS canvas). Stat
   (generic iOS, Release, unsigned) OK, CFBundleVersion 917: no probe strings, MusicUnderstanding not linked.
 - Not verified on hardware: all of it. Device check: README §23 (do your lights' guesses look right?).
 - Next: 918 the band transform + one shared flash budget.
+
+## 2026-11-02 — [Claude] Build 918: the room is the band, on `experiment/play-along` (not merged)
+
+- Step 4 of "the room is the band" (research doc §3.4 step 4). Rollback tag `checkpoint/pre-build-918-band`
+  (= `fa598a7`). Nothing on `main` changed; nothing pushed.
+- Commits:
+  - `0a0fc41` **The band transform + one shared flash budget.** `Core/Composer2/Composer2Band.swift`: with the
+    band on (Groove/Hit, not Calm, not Room mode, the room has a low and a high light), the base layer becomes
+    middle (the look + swell), low (kick punch), high (snare punch) and a hi-hat shimmer on high (≤ 0.08,
+    `addLighten`); accents keep locked cycles but stop punching. The engine admits band drum punches
+    (`sharesFlashBudget`) through one ledger before any layer plays: ≥ 0.34 s apart room-wide, kick wins a tie.
+    `Composer2PlayAlongSettings.band` (`playAlong.band`), the sheet's "The room is the band" switch (its footnote
+    asks for Light heights when the room can't split), `Composer2LiveOutput.playAlongBand` / `bandIsPlaying`.
+  - `f7ff6cf` build 918 (24 entries).
+- Measured (`docs/ios/play-along/band-gate-report-2026-11-02.txt`): all 49 looks, Hit + band, 6 lights, heard drums,
+  LiveOutput + an independent wire gate: 43 split; **0 held frames** at 120 BPM and at 150 BPM with a kick on every
+  eighth; mean shaped 0.45 % / 0.99 %; worst Candy Cane 24.7 % (150 BPM eighth kicks).
+- Fixed on the way: the first run split nothing — a steady test look counts as "slow", which clamps to Glide; the
+  band now follows the feel the user chose (Calm and Glide still don't split).
+- Tests (iOS 27.0 simulator): `Composer2BandTests` 8. Full suite **2653 passed + 1 expected failure** (= 2645 + 8;
+  `/Volumes/Dev/DerivedData/play-along-full-918.xcresult`), serial. Guards green. Device build (generic iOS,
+  Release, unsigned) OK, CFBundleVersion 918: no probe strings, MusicUnderstanding not linked.
+- Not verified on hardware: all of it. Device check: README §24 (after §23's Light heights).
+- **Next (not started):**
+  - **919 slow lanes:** bass and drum activity can be measured on BabySlakh's per-instrument stems. A vocal lane has
+    no licence-clean vocal test set in the corpus (Slakh is MIDI-rendered; GuitarSet has no voice), so vocals wait
+    for Brian's AIST/RWC decision (research doc §6.4).
+  - **"It knows what's coming"** (research doc §4.2): steps 1–3 (song position + phrases, energy states and
+    build/drop, the Conductor) need no new permission. Step 4's first-listen in-memory buffer needs Brian's privacy
+    OK (§6.2) before it is built.
+- Owed by Brian: phone runs of 911–918; the decisions above; whether heights should ever be written to the bridge.
