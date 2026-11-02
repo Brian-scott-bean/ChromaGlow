@@ -11,6 +11,10 @@
 - Live shared handoff: append-only entries in this `DEVLOG.md`. Git is the shared memory between tools.
 
 ### iOS — where we are RIGHT NOW
+- **BUILD 916 ON `experiment/play-along` — DRUM HITS ON TIME (THE GROOVE MAP), NOT MERGED (2026-11-02).** Kick /
+  Snare / Hi-hat looks now fire predicted on the beat grid once a pattern repeats: kick light hits on time (±50 ms)
+  on mixes 0.07 → 0.44, median error +135 → +20 ms; cost ≈ +0.6 soft extra flashes per kick. Rollback tag
+  `checkpoint/pre-build-916-groove-map`. README §22. Simulator only — **hardware NOT verified.**
 - **BUILD 915 ON `experiment/play-along` — THE LIGHTS TRUST REAL MUSIC, AND HEAR EACH DRUM, NOT MERGED (2026-11-02).**
   The tracker fix 914 found: beats the lights play on the 762-track corpus, line 0.13 → 0.50 (rooms 0.11 → 0.44).
   New kick / snare / hi-hat lanes and **Kick**, **Snare**, **Hi-hat** sound sources (kick F 0.90 drum takes, 0.76
@@ -14311,3 +14315,28 @@ Brian asked to continue in another session ("Marshall" on the CNVS canvas). Stat
 - Not verified on hardware: all of it. Device check: README §21.
 - Next: 916 groove map (drums predicted on the grid), then light roles, band transform + shared flash budget, slow
   lanes; "knows what's coming" after. The first-listen buffer needs Brian's privacy OK (research doc §6).
+
+## 2026-11-02 — [Claude] Build 916: drum hits on time — the groove map, on `experiment/play-along` (not merged)
+
+- Step 2 of "the room is the band" (research doc §3.3 problem 1 / §3.4 step 2). Rollback tag
+  `checkpoint/pre-build-916-groove-map` (= `11dea43`). Nothing on `main` changed; nothing pushed.
+- Commits:
+  - `4435f89` **The groove map.** `Core/Audio/GrooveMap.swift`: per tracker pass, each finished bar of the drum
+    lanes' hits folds into a 16-slot pattern per drum on the clock's grid (weight ~3 bars, timing offset,
+    strength). Live once the grid is trusted (phase ≥ 0.5), 2 bars learned, ≥ 60 % of predicted slots played;
+    slots with weight ≥ 0.55 fire at their predicted time; two strong misses suspend; a new grid starts over. A
+    heard hit within 60 ms of a slot reports the slot's time (one identity, live or not). Uncertain slots flash at
+    0.5–1× by weight. Published via a lock-guarded mirror, stamped on `AudioFeatures.groove`; Kick/Snare/Hi-hat read
+    it at the engine's four hit reads (`lastHitTime(_:beat:hostNow:)`).
+  - `544d115` **Lab `run.sh -groove`** — the live chain run causally (lights rendered for when they are shown).
+  - `444cc07` build 916 (24 entries).
+- Measured (`beatlab/results-2026-11-02-groove.txt`, 80 tracks), kick light hits within ±50 ms, F heard → groove:
+  drum takes 0.05 → 0.33 (room 0.05 → 0.21); full mixes 0.07 → 0.44 (room 0.04 → 0.32). Median kick error on
+  mixes +135 → +20 ms. Snare 0.27 → 0.39 (takes), 0.05 → 0.31 (mixes). Cost: light hits per kick on mixes 1.20 →
+  1.78 — predicted slots not played that bar (the soft ones); stricter settings lost more on-time hits than they
+  saved; the merge window changed nothing (not double fires).
+- Tests (iOS 27.0 simulator): `GrooveMapTests` 9. Full suite **2636 passed + 1 expected failure** (= 2628 + 9;
+  `/Volumes/Dev/DerivedData/play-along-full-916.xcresult`), serial. Guards green. Device build (generic iOS, Release,
+  unsigned) OK, CFBundleVersion 916: no probe strings, MusicUnderstanding not linked. Not archived, not installed.
+- Not verified on hardware: all of it. Device check: README §22.
+- Next: 917 light roles (low/middle/high).

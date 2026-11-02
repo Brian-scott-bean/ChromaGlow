@@ -1163,3 +1163,64 @@ Device check for build 915:
    **Hi-hat**: a fast shimmer on the hats. Try a song with a busy bass line: the Kick layer may also punch on bass
    notes when the drums drop out (the known limit above).
 3. A phone speaker or small Bluetooth speaker in the room: expect Kick to miss many kicks (no bass reaches the mic).
+
+## 22. Drum hits on time: the groove map (2026-11-02, build 916)
+
+Step 2 of "the room is the band" (research doc §3.3 problem 1, §3.4 step 2). Same branch; rollback tag
+`checkpoint/pre-build-916-groove-map` (= `11dea43`).
+
+**The problem.** A drum the lanes hear is "now". The frame that shows it is rendered for 0.1 s ahead (the render
+lead that puts beat punches on the beat) and the hop takes ~20 ms more, so a reactive Kick look lights about
+**135 ms after the kick** — every time. The beat punch never had this problem: it is predicted on the grid.
+
+**The fix** (`Core/Audio/GrooveMap.swift`). On every tracker pass (~2 Hz), the groove map folds each finished bar
+of the lanes' hits into a pattern on the clock's grid: 16 slots per 4/4 bar per drum, each with a weight (how
+often it was played lately, ~3 bars of memory), a timing offset (swing, pushed beats) and a typical strength. Once
+the grid is trusted (phase confidence ≥ 0.5, as Play Along), at least 2 bars are learned and at least 60 % of a
+drum's predicted slots were played, that drum is **live**: its slots with weight ≥ 0.55 fire at their predicted
+time, exactly as the beat punch does. The lanes confirm or cancel: two strong predicted slots missed in a row
+suspend the drum until a played hit lands on the pattern again (a fill, a break, a new song). A new tempo, metre or
+bar line starts the pattern over.
+
+| Piece | What it does |
+|---|---|
+| `GroovePattern` | The published value: weights/offsets/strengths per drum × slot, `live` per drum, the grid it was learned on. `lastPredicted(_:at:beat:)` = the latest predicted hit at or before a frame's time; `latestHit` merges in the heard hit |
+| One identity per hit | A heard hit within 60 ms of a pattern slot is reported at that slot's predicted time, whether or not the drum is live — so a predicted kick and the same kick heard 130 ms later are one hit (one flash, one palette step, one wave), even if the prediction switches off in between |
+| Softer when unsure | A predicted hit's strength = the slot's typical strength × 0.5…1 by its weight: a slot played in every recent bar flashes fully, one played in just over half of them at half strength |
+| Plumbing | `AudioAnalysisEngine.trackerPass` updates it from the same frames after the clock ingest and publishes it (lock-guarded mirror); the sink stamps it on every `AudioFeatures` (`groove`), so every render loop has it with no new parameters. Stop and restart publish `.none` |
+| Sources | Kick, Snare and Hi-hat (915) read `lastHitTime(_:beat:hostNow:)` / the merged strength in the engine's four hit reads (drive, palette steps, events, moving-hit waves). Hits, beat and band sources are unchanged |
+
+**Measured** (beat lab, `run.sh -groove`: the whole live chain run causally on 80 annotated tracks, lights rendered
+every 20 ms for when they are shown; `beatlab/results-2026-11-02-groove.txt`). Light hits within ±50 ms of the
+stroke, F:
+
+| | Kick heard (915) | Kick groove (916) | Snare heard | Snare groove |
+|---|---|---|---|---|
+| Drum takes, line | 0.05 | **0.33** | 0.27 | **0.39** |
+| Drum takes, room | 0.05 | **0.21** | 0.21 | **0.31** |
+| Full mixes, line | 0.07 | **0.44** | 0.05 | **0.31** |
+| Full mixes, room | 0.04 | **0.32** | 0.03 | **0.20** |
+
+Median kick error on mixes: **+135 ms → +20 ms**. Predictions cover 59 % of frames on line mixes and 27–44 % on the
+human drum takes (the rest falls back to heard hits, still late).
+
+**Costs, honestly:** predicted slots the drummer didn't play this bar are extra flashes — light hits per kick on
+line mixes 1.20 → 1.78, precision regardless of timing 0.57 → 0.47. They are the soft ones (uncertain slots). A sweep
+of stricter settings traded on-time hits for fewer extras at a worse F everywhere; the merge window changed nothing
+(the extras are not double fires). The groove map inherits the lanes' known limit: during a drum break with the
+bass going on, the kick lane reads bass notes as kicks after about a second, and the map follows them. With
+everything but the chords stopped, it suspends after two missed kicks (test).
+
+Tests: `GrooveMapTests` (9): the pattern learned at 96/120/140 BPM, predicted kicks within 15 ms (25/25, 23/23,
+21/21, 0 stray), a break, one
+identity per hit, other grids, softer uncertain slots, a new tempo, a kick look lighting on the predicted kick
+before the lanes hear it, one palette step per kick. Full suite 2636 + 1 expected failure. Simulator only. **Not
+verified on hardware.**
+
+Device check for build 916:
+1. A look with a layer on **Kick** (look editor → Sound → Kick), Play Along locked on a song with a steady beat:
+   after a few bars the kick flashes should land ON the kick, not just after it (film the lights and the speaker
+   in slow motion, as for Sync Check).
+2. A drum fill or a breakdown: the flashes should fall back to following what is heard within a beat or two, and
+   come back on time a few bars after the beat returns.
+3. Skip to another song: no kick flashes on the old pattern once the new song's grid takes over.
