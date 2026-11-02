@@ -24,6 +24,7 @@ final class Composer2PlayAlongSettings {
     static let onTheOneKey = "playAlong.onTheOne"
     static let songColorsKey = "playAlong.songColors"
     static let bandKey = "playAlong.band"
+    static let conductorKey = "playAlong.conductor"
     static let consentKey = "playAlong.consentShown"
 
     @ObservationIgnored private let defaults: UserDefaults
@@ -52,6 +53,12 @@ final class Composer2PlayAlongSettings {
     var band: Bool {
         didSet { defaults.set(band, forKey: Self.bandKey); onChange?() }
     }
+    /// Follow the song (build 922): builds tighten toward a staged drop; the
+    /// room dims just before it only when sure. Off until it has been seen
+    /// on real music.
+    var conductor: Bool {
+        didSet { defaults.set(conductor, forKey: Self.conductorKey); onChange?() }
+    }
 
     var consentShown: Bool {
         get { defaults.bool(forKey: Self.consentKey) }
@@ -72,6 +79,7 @@ final class Composer2PlayAlongSettings {
         onTheOne = defaults.object(forKey: Self.onTheOneKey) as? Bool ?? true
         songColors = defaults.object(forKey: Self.songColorsKey) as? Bool ?? true
         band = defaults.bool(forKey: Self.bandKey)
+        conductor = defaults.bool(forKey: Self.conductorKey)
     }
 }
 
@@ -270,6 +278,17 @@ struct Composer2PlayAlongSheet: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("The room is the band").font(.headline).foregroundStyle(LuminousPalette.ink)
                         Text(bandFootnote)
+                            .font(.footnote).foregroundStyle(LuminousPalette.inkSecondary)
+                    }
+                }
+                .tint(LuminousPalette.cyan)
+
+                Toggle(isOn: Binding(get: { settings.conductor }, set: { settings.conductor = $0 })) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Follow the song").font(.headline).foregroundStyle(LuminousPalette.ink)
+                        Text(settings.feel == .glide
+                             ? "Plays with Groove or Hit"
+                             : "Hits tighten as a build climbs and land on the drop. Dims just before it only when sure.")
                             .font(.footnote).foregroundStyle(LuminousPalette.inkSecondary)
                     }
                 }

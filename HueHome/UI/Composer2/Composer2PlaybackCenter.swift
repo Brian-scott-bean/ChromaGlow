@@ -122,6 +122,9 @@ final class Composer2PlaybackCenter {
         // The room is the band needs each light's own punch on the beat —
         // Entertainment streaming only.
         output.playAlongBand = !roomMode && settings.band
+        // Follow the song (build 922): the Conductor lands punches on a staged
+        // drop — Entertainment streaming only, like the band.
+        output.playAlongConductor = !roomMode && settings.conductor
         // Song colors (P6): while Play Along is on, the playing track's album
         // art paints the look; a new track's colours land on the one.
         let swatches = settings.isOn && settings.songColors ? MusicSessionCoordinator.shared.artworkSwatches : nil
