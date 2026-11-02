@@ -482,7 +482,13 @@ final class BeatClock {
             if barKnown, !barSetByUser { barConfidence = max(barConfidence, Self.rememberedBarConfidence) }
         }
         let trusted = serviceOffsetTrusted
-        let target = candidateEpoch + (trusted ? (serviceBeatOffset ?? 0) : 0)
+        // Where the grid goes when the drive moves it: the track's offset as
+        // the mic learned it, trusted or not yet (audit B7, build 923). An
+        // untrusted offset used to count as none, so 2 s after the mic went
+        // quiet the grid snapped back to the "first beat at t=0" guess —
+        // which songs rarely match — and threw away the lock the mic had
+        // just made. With no offset at all, t=0 is still all there is.
+        let target = candidateEpoch + (serviceBeatOffset ?? 0)
 
         if source != .service || bpm == 0 {
             // The microphone already hears this song's beat and the track's

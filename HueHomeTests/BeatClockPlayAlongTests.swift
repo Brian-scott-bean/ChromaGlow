@@ -119,6 +119,39 @@ final class BeatClockPlayAlongTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(BeatClock.snapshot().phaseConfidence, 0.5)
     }
 
+    /// Audit B7: the mic has put the grid on the real beat but hasn't agreed
+    /// often enough for the offset to be trusted, and then goes quiet. The
+    /// drive used to snap back to the t=0 guess (130 ms off here) after 2 s;
+    /// it keeps the offset the mic learned instead.
+    func testAnUntrustedOffsetSurvivesTheMicGoingQuiet() {
+        let interval = 0.5, leadIn = 0.37, t0 = 100.0
+        func trueBeat(nearest t: Double) -> Double {
+            t0 + leadIn + ((t - t0 - leadIn) / interval).rounded(.down) * interval
+        }
+        func drive(_ t: Double) {
+            clock.driveFromTrack(bpm: 120, position: PlaybackPosition(positionMs: Int((t - t0) * 1000),
+                                                                       capturedAt: t, isPlaying: true), now: t)
+        }
+        var t = t0
+        drive(t)
+        // Three seconds of the mic: enough to move the grid, too few agreeing
+        // passes (six) to trust the offset.
+        while t < t0 + 3 {
+            if Int((t - t0) * 10) % 10 == 0 { drive(t) }
+            clock.ingest(observation: observation(lastBeat: trueBeat(nearest: t)))
+            t += 0.5
+        }
+        XCTAssertLessThan(abs(phaseErrorMs(at: trueBeat(nearest: t) + interval)), 15, "the mic moved the grid")
+        XCTAssertNotNil(clock.serviceBeatOffset)
+        // The mic goes quiet; the service keeps driving.
+        while t < t0 + 15 {
+            drive(t)
+            t += 1
+        }
+        XCTAssertLessThan(abs(phaseErrorMs(at: trueBeat(nearest: t) + interval)), 15,
+                          "still where the mic put it, not back on the t=0 guess")
+    }
+
     func testATrackChangeForgetsTheOffsetAndTheUsersOne() {
         clock.driveFromTrack(bpm: 120, position: PlaybackPosition(positionMs: 0, capturedAt: 100, isPlaying: true),
                              beatOffset: 0.37, now: 100)
