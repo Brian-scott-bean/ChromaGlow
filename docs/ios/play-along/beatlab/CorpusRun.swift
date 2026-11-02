@@ -50,6 +50,9 @@ struct TrackScore {
     var condition: Condition
     var seconds: Double
     var f: Double
+    /// The grid's own accuracy whenever it has a tempo, trusted or not: low
+    /// F with a high grid F means the beat was right but never trusted.
+    var gridF: Double
     var continuity: Metrics.Continuity
     var downbeatF: Double?
     var lock: Double?
@@ -106,15 +109,16 @@ func corpusReport(_ args: [String]) {
             let s = TrackScore(
                 id: track.id, set: track.set, condition: condition, seconds: Double(audio.count) / fs,
                 f: Metrics.beatF(ref: refBeats, est: played.beats),
+                gridF: Metrics.beatF(ref: refBeats, est: playedBeats(snaps, usableConfidence: 0).beats),
                 continuity: Metrics.continuity(ref: refBeats, est: played.beats),
                 downbeatF: hasBars ? Metrics.beatF(ref: refDown, est: played.downbeats) : nil,
                 lock: Metrics.lockTime(ref: refBeats, est: played.beats, from: refBeats.first ?? 0),
                 tempoRatio: Metrics.tempoRatio(ref: refBeats, est: played.beats))
             scores.append(s)
             if verbose {
-                print(String(format: "  %@ %@ %5.0fs  F %.2f  CMLt %.2f  AMLt %.2f  downbeat %@  lock %@  tempo ×%@",
+                print(String(format: "  %@ %@ %5.0fs  F %.2f  grid F %.2f  CMLt %.2f  AMLt %.2f  downbeat %@  lock %@  tempo ×%@",
                              pad(String(track.id.suffix(60)), 60) as NSString, pad(condition.rawValue, 7) as NSString,
-                             s.seconds, s.f,
+                             s.seconds, s.f, s.gridF,
                              s.continuity.cmlT, s.continuity.amlT,
                              (s.downbeatF.map { String(format: "%.2f", $0) } ?? "  — ") as NSString,
                              (s.lock.map { String(format: "%4.1fs", $0) } ?? "never") as NSString,
@@ -129,7 +133,7 @@ func corpusReport(_ args: [String]) {
 func printSummary(_ scores: [TrackScore]) {
     let groups = Dictionary(grouping: scores) { "\($0.set)|\($0.condition.rawValue)" }
     print("")
-    print("set          cond     tracks  beat F  CMLt  AMLt  downbeat F  lock med  never  right tempo  ×2 (half time)  ×½ (double)")
+    print("set          cond     tracks  beat F  grid F  CMLt  AMLt  downbeat F  lock med  never  right tempo  ×2 (half time)  ×½ (double)")
     for key in groups.keys.sorted() {
         let g = groups[key]!
         let parts = key.split(separator: "|")
@@ -137,9 +141,9 @@ func printSummary(_ scores: [TrackScore]) {
         let ratios = g.compactMap(\.tempoRatio)
         func share(_ p: (Double) -> Bool) -> Double { ratios.isEmpty ? 0 : Double(ratios.filter(p).count) / Double(g.count) * 100 }
         let db = g.compactMap(\.downbeatF)
-        print(String(format: "%@ %@ %6d  %6.3f %5.3f %5.3f  %@  %@  %5d  %10.0f%%  %13.0f%%  %10.0f%%",
+        print(String(format: "%@ %@ %6d  %6.3f  %6.3f %5.3f %5.3f  %@  %@  %5d  %10.0f%%  %13.0f%%  %10.0f%%",
                      pad(String(parts[0]), 12) as NSString, pad(String(parts[1]), 8) as NSString, g.count,
-                     Metrics.mean(g.map(\.f)) ?? 0,
+                     Metrics.mean(g.map(\.f)) ?? 0, Metrics.mean(g.map(\.gridF)) ?? 0,
                      Metrics.mean(g.map(\.continuity.cmlT)) ?? 0,
                      Metrics.mean(g.map(\.continuity.amlT)) ?? 0,
                      (db.isEmpty ? "         —" : String(format: "%10.3f", Metrics.mean(db)!)) as NSString,
