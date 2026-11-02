@@ -73,3 +73,15 @@ Scripts/__pycache__/
 # Local Spotify PCM experiment (Rust build products; see docs/ios/local-spotify-pcm-experiment.md)
 Experimental/SpotifyReceiver/target/
 Experimental/SpotifyReceiver/build/
+
+# Audio never enters this public repo (README §8; docs/ios/play-along/beatlab/Corpus.swift).
+# The beat lab's recordings live on the Dev drive. Add a real app sound with `git add -f`.
+*.wav
+*.mp3
+*.flac
+*.aif
+*.aiff
+*.m4a
+*.caf
+*.ogg
+*.opus

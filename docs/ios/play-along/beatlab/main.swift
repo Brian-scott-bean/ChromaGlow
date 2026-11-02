@@ -241,6 +241,35 @@ let cases: [Case] = [
 let args = CommandLine.arguments
 let verbose = args.contains("-v")
 if args.contains("-service") { serviceReport(); exit(0) }
+if args.contains("-import") { importCorpus(args); exit(0) }
+if args.contains("-selftest") {
+    // The room's FFT convolution against a direct sum, on random signals.
+    var rng = SplitMix(s: 11)
+    var worst: Float = 0
+    for (n, m) in [(1000, 37), (50_000, 4_800), (200_000, 30_000), (300_000, 47_945), (400_000, 72_000)] {
+        let x = (0..<n).map { _ in Float(rng.gauss()) }, h = (0..<m).map { _ in Float(rng.gauss()) * 0.05 }
+        let fast = RoomSim.convolve(x, h)
+        for k in stride(from: 0, to: n, by: max(1, n / 997)) {
+            var direct: Float = 0
+            for j in 0...min(k, m - 1) { direct += x[k - j] * h[j] }
+            worst = max(worst, abs(direct - fast[k]))
+        }
+    }
+    print(String(format: "convolution: worst |FFT − direct| %.2e", worst))
+    exit(worst < 1e-3 ? 0 : 1)
+}
+if let i = args.firstIndex(of: "-metrics"), i + 2 < args.count {
+    // Cross-check against mir_eval: two files of beat times → F CMLc CMLt AMLc AMLt.
+    func times(_ p: String) -> [Double] {
+        ((try? String(contentsOfFile: p, encoding: .utf8)) ?? "").split(whereSeparator: \.isWhitespace).compactMap { Double($0) }
+    }
+    let ref = times(args[i + 1]), est = times(args[i + 2])
+    let c = Metrics.continuity(ref: ref, est: est)
+    print(String(format: "%.6f %.6f %.6f %.6f %.6f", Metrics.beatF(ref: ref, est: est), c.cmlC, c.cmlT, c.amlC, c.amlT))
+    exit(0)
+}
+if args.contains("-corpus") { MainActor.assumeIsolated { corpusReport(args) }; exit(0) }
+if args.contains("-drums") { drumReport(args, detectors: [("today's hit", legacyOnsets)]); exit(0) }
 if args.contains("-onset") { onsetLatencyReport(); exit(0) }
 if args.contains("-cpu") {
     let r = Synth.render([Segment(bpm: 124, leadIn: 0.3, bars: 60)], seed: 3)

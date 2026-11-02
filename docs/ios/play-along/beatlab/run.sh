@@ -8,6 +8,12 @@
 #   docs/ios/play-along/beatlab/run.sh -bar       # downbeat cue debug
 #   docs/ios/play-along/beatlab/run.sh -cpu       # CPU per second of audio
 #   docs/ios/play-along/beatlab/run.sh -onset     # how late a sound punch starts (tap vs hops)
+#
+# Real recordings (build 914; audio on the Dev drive, never in the repo — Corpus.swift):
+#   docs/ios/play-along/beatlab/run.sh -import    # annotations + manifest from raw/<set>/
+#   docs/ios/play-along/beatlab/run.sh -corpus    # the shipping tracker on real songs, clean and in rooms
+#   docs/ios/play-along/beatlab/run.sh -drums     # kick/snare/hi-hat recall and precision
+#   docs/ios/play-along/beatlab/run.sh -selftest  # the room convolution against a direct sum
 set -euo pipefail
 HERE=${0:a:h}
 REPO=${HERE:h:h:h:h}
