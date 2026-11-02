@@ -53,12 +53,19 @@ struct Composer2LayerState: Equatable {
     /// next one goes).
     var hitWaves: [Composer2Hits.Hit] = []
     var hitWaveCount: Int = 0
+    /// The band (build 918): the last drum hit this layer saw, and the last
+    /// one the shared flash budget let through (with its strength).
+    var bandSeen: Double = 0
+    var bandAdmitted: Double = 0
+    var bandAdmittedStrength: Float = 0
 }
 
 struct Composer2EngineState: Equatable {
     var layerIDs: [UUID] = []
     var layers: [Composer2LayerState] = []
     var lastTime: Double? = nil
+    /// The band's shared flash budget: the drum flashes it let through.
+    var bandLedger: [Double] = []
 
     /// Keep state for layers that still exist (by id), start fresh for new ones.
     mutating func realign(to composition: Composer2Composition) {
@@ -81,6 +88,7 @@ struct Composer2EngineState: Equatable {
         layerIDs = []
         layers = []
         lastTime = nil
+        bandLedger = []
     }
 }
 
@@ -237,8 +245,41 @@ enum Composer2Engine {
         // a look turned up to Dances.
         let soundAmount = composition.master.sanitizedSoundAmount
 
+        // The band (build 918): its drums claim one room-wide flash budget,
+        // kicks first, before any layer plays.
+        var bandHits: [Int: (time: Double, strength: Float)] = [:]
+        if hostNow > 0, composition.layers.contains(where: { $0.audio.sharesFlashBudget }) {
+            let order = composition.layers.indices.filter {
+                composition.layers[$0].contributes && composition.layers[$0].audio.sharesFlashBudget
+                    && composition.layers[$0].audio.isHit
+            }.sorted { (composition.layers[$0].audio.source == .kick ? 0 : 1) < (composition.layers[$1].audio.source == .kick ? 0 : 1) }
+            var fresh: [(li: Int, time: Double, strength: Float, kick: Bool)] = []
+            for li in order {
+                let mod = composition.layers[li].audio.scaled(by: soundAmount)
+                guard let hit = mod.drumHit(audio, beat: beat, hostNow: hostNow), hit.time > 0 else { continue }
+                if hit.time > state.layers[li].bandSeen {
+                    state.layers[li].bandSeen = hit.time
+                    fresh.append((li, hit.time, hit.strength, mod.source == .kick))
+                }
+            }
+            // In time order; a kick wins a tie with a snare.
+            fresh.sort {
+                let a = ($0.time / 0.02).rounded(), b = ($1.time / 0.02).rounded()
+                if a != b { return a < b }
+                if $0.kick != $1.kick { return $0.kick }
+                return $0.time < $1.time
+            }
+            for h in fresh where Composer2Band.admit(h.time, ledger: &state.bandLedger) {
+                state.layers[h.li].bandAdmitted = h.time
+                state.layers[h.li].bandAdmittedStrength = h.strength
+            }
+            for li in order { bandHits[li] = (state.layers[li].bandAdmitted, state.layers[li].bandAdmittedStrength) }
+        }
+
         for li in 0..<composition.layers.count {
             let layer = composition.layers[li]
+            // A band drum sees only the hits the budget let through.
+            let audio = bandHits[li].map { Composer2Band.features(audio, admitted: $0, source: layer.audio.source) } ?? audio
             if !plans[li].matches(layer: layer, composition: composition, geometry: geometry) {
                 plans[li] = Composer2LayerPlan.build(layer: layer, composition: composition, geometry: geometry)
             }

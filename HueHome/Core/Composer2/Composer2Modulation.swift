@@ -106,6 +106,10 @@ struct Composer2AudioModulation: Codable, Equatable {
     /// How a beat or hit punch moves through the room. nil = not chosen: the
     /// whole room at once, and Play Along may choose for it.
     var travel: Travel? = nil
+    /// The band's drums (build 918, Composer2Band): this layer's punches share
+    /// one room-wide flash budget with the other band drums. Encoded only
+    /// when set (Play Along's derived look is never saved).
+    var sharesFlashBudget: Bool = false
 
     init(source: Source = .off, brightnessMode: BrightnessMode = .punch, sensitivity: Double = 0.7,
          threshold: Double = 0.1, smoothing: Double = 0.3,
@@ -129,6 +133,7 @@ struct Composer2AudioModulation: Codable, Equatable {
     enum CodingKeys: String, CodingKey {
         case source, brightnessMode, sensitivity, threshold, smoothing, intensity, targets, quantizeBeats, paletteStep, punchDecay, triggerEventsOnOnset
         case travel
+        case sharesFlashBudget
     }
 
     init(from decoder: Decoder) throws {
@@ -150,6 +155,7 @@ struct Composer2AudioModulation: Codable, Equatable {
         punchDecay = (try? c.decode(Double.self, forKey: .punchDecay)) ?? d.punchDecay
         triggerEventsOnOnset = (try? c.decode(Bool.self, forKey: .triggerEventsOnOnset)) ?? d.triggerEventsOnOnset
         travel = try? c.decode(Travel.self, forKey: .travel)
+        sharesFlashBudget = (try? c.decode(Bool.self, forKey: .sharesFlashBudget)) ?? false
     }
 
     func encode(to encoder: Encoder) throws {
@@ -168,6 +174,7 @@ struct Composer2AudioModulation: Codable, Equatable {
         // Only when chosen, so a look saved before moving hits existed
         // encodes byte for byte as it did.
         try c.encodeIfPresent(travel, forKey: .travel)
+        if sharesFlashBudget { try c.encode(true, forKey: .sharesFlashBudget) }
     }
 
     var isActive: Bool { source != .off }
@@ -220,7 +227,7 @@ struct Composer2AudioModulation: Codable, Equatable {
         drumHit(features, beat: beat, hostNow: hostNow)?.time ?? lastHitTime(features)
     }
 
-    private func drumHit(_ f: AudioFeatures, beat: BeatSnapshot, hostNow: Double) -> (time: Double, strength: Float)? {
+    func drumHit(_ f: AudioFeatures, beat: BeatSnapshot, hostNow: Double) -> (time: Double, strength: Float)? {
         let kind: DrumLanes.Kind
         let heard: (time: Double, strength: Float)
         switch source {

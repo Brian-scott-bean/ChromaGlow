@@ -23,6 +23,7 @@ final class Composer2PlayAlongSettings {
     static let hitsKey = "playAlong.hits"
     static let onTheOneKey = "playAlong.onTheOne"
     static let songColorsKey = "playAlong.songColors"
+    static let bandKey = "playAlong.band"
     static let consentKey = "playAlong.consentShown"
 
     @ObservationIgnored private let defaults: UserDefaults
@@ -47,6 +48,10 @@ final class Composer2PlayAlongSettings {
     var songColors: Bool {
         didSet { defaults.set(songColors, forKey: Self.songColorsKey); onChange?() }
     }
+    /// The room is the band (build 918): kick low, snare and cymbals high.
+    var band: Bool {
+        didSet { defaults.set(band, forKey: Self.bandKey); onChange?() }
+    }
 
     var consentShown: Bool {
         get { defaults.bool(forKey: Self.consentKey) }
@@ -66,6 +71,7 @@ final class Composer2PlayAlongSettings {
         hits = defaults.string(forKey: Self.hitsKey).flatMap(Composer2AudioModulation.Travel.init(rawValue:)) ?? .roll
         onTheOne = defaults.object(forKey: Self.onTheOneKey) as? Bool ?? true
         songColors = defaults.object(forKey: Self.songColorsKey) as? Bool ?? true
+        band = defaults.bool(forKey: Self.bandKey)
     }
 }
 
@@ -260,6 +266,15 @@ struct Composer2PlayAlongSheet: View {
                         .foregroundStyle(LuminousPalette.inkSecondary)
                 }
 
+                Toggle(isOn: Binding(get: { settings.band }, set: { settings.band = $0 })) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("The room is the band").font(.headline).foregroundStyle(LuminousPalette.ink)
+                        Text(bandFootnote)
+                            .font(.footnote).foregroundStyle(LuminousPalette.inkSecondary)
+                    }
+                }
+                .tint(LuminousPalette.cyan)
+
                 Button {
                     HapticManager.shared.selection()
                     showHeights = true
@@ -387,6 +402,16 @@ struct Composer2PlayAlongSheet: View {
             .padding(20)
         }
         .background(LuminousPalette.night.ignoresSafeArea())
+    }
+
+    private var bandFootnote: String {
+        guard settings.band else { return "Kick on the low lights, snare and cymbals up high" }
+        if settings.feel == .glide { return "Plays with Groove or Hit" }
+        let roles = Composer2PlaybackCenter.shared.output?.geometry.roles ?? []
+        if !roles.isEmpty, !Composer2LightRoles.canSplit(roles) {
+            return "Set a low and a high light in Light heights"
+        }
+        return "Kick on the low lights, snare and cymbals up high"
     }
 
     private func refreshTiming(_ bridgeID: String) {

@@ -119,6 +119,9 @@ final class Composer2PlaybackCenter {
         // Hits: where the punches land. Room mode reaches each light only
         // about once a second, so a punch there stays whole-room.
         output.playAlongHits = roomMode ? .together : settings.hits
+        // The room is the band needs each light's own punch on the beat —
+        // Entertainment streaming only.
+        output.playAlongBand = !roomMode && settings.band
         // Song colors (P6): while Play Along is on, the playing track's album
         // art paints the look; a new track's colours land on the one.
         let swatches = settings.isOn && settings.songColors ? MusicSessionCoordinator.shared.artworkSwatches : nil

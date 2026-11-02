@@ -115,6 +115,24 @@ final class Composer2LiveOutput: ConcurrentCompositionFrameSource, @unchecked Se
     }
     private var _playAlongHits: Composer2AudioModulation.Travel = .together
 
+    /// The room is the band (build 918): split the look's base layer across
+    /// the room's heights — when the room has a low and a high light.
+    var playAlongBand: Bool {
+        get { locked { _playAlongBand } }
+        set {
+            locked {
+                guard newValue != _playAlongBand else { return }
+                _playAlongBand = newValue
+                derivedDirty = true
+            }
+        }
+    }
+    private var _playAlongBand = false
+    /// True when the band is on and this room can split (it has low and high lights).
+    var bandIsPlaying: Bool { locked { _playAlongBand && Composer2LightRoles.canSplit(_geometry.roles) } }
+    /// Whether the derived look was split (re-derive when the room's heights change that).
+    private var derivedBand = false
+
     /// When the play-along look takes over and lets go.
     var director: Composer2PlayAlongDirector { locked { _director } }
     private var _director = Composer2PlayAlongDirector()
@@ -334,10 +352,12 @@ final class Composer2LiveOutput: ConcurrentCompositionFrameSource, @unchecked Se
                                      into: &frameBuffer)
         }
         if mix.weight > 0 {
-            if _derived == nil || derivedDirty || derivedBPM != mix.bpm {
+            let band = _playAlongBand && Composer2LightRoles.canSplit(_geometry.roles)
+            if _derived == nil || derivedDirty || derivedBPM != mix.bpm || derivedBand != band {
                 _derived = Composer2PlayAlong.apply(look, feel: _playAlongFeel, bpm: mix.bpm,
                                                     category: Composer2ThemeCatalog.entry(id: _composition.id)?.category,
-                                                    hits: _playAlongHits)
+                                                    hits: _playAlongHits, band: band)
+                derivedBand = band
                 derivedBPM = mix.bpm
                 derivedDirty = false
             }

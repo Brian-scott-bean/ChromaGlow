@@ -69,7 +69,8 @@ enum Composer2PlayAlong {
     /// song changed); `category` lets Calm looks keep their own pace.
     static func apply(_ look: Composer2Composition, feel requested: Feel, bpm: Double,
                       category: Composer2LookCategory? = nil,
-                      hits: Composer2AudioModulation.Travel = .together) -> Composer2Composition {
+                      hits: Composer2AudioModulation.Travel = .together,
+                      band: Bool = false) -> Composer2Composition {
         guard bpm.isFinite, bpm >= 20, bpm <= 300 else { return look }
         let calm = category == .calm
         let feel = calm || isSlow(look) ? .glide : requested
@@ -106,6 +107,13 @@ enum Composer2PlayAlong {
                 if !layer.audio.travels { layer.audio.travel = nil }
             }
             out.layers[i] = layer
+        }
+        // The room is the band (build 918): with Groove or Hit chosen — even
+        // for a slow look (the drums are what was asked for); Calm looks keep
+        // breathing, and Glide adds no punches of its own.
+        if band, !calm, requested != .glide,
+           let split = Composer2Band.split(out, authored: look, baseIndex: baseIndex, beat: beat) {
+            return split
         }
         return out
     }
