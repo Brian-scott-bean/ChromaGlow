@@ -14401,3 +14401,92 @@ Brian asked to continue in another session ("Marshall" on the CNVS canvas). Stat
     build/drop, the Conductor) need no new permission. Step 4's first-listen in-memory buffer needs Brian's privacy
     OK (§6.2) before it is built.
 - Owed by Brian: phone runs of 911–918; the decisions above; whether heights should ever be written to the bridge.
+
+## 2026-11-02 — [Claude] HANDOFF: builds 915–918 committed; next slice = 919 slow lanes, then "knows what's coming" 1–3 (to Chase)
+
+Brian asked Marshall (CNVS) to hand the next slice back to Chase. Nothing is uncommitted. State and plan:
+
+**Where**
+- Worktree `/Volumes/Dev/Developer/huehome-pro-v0.3.0/.claude/worktrees/play-along`, branch `experiment/play-along`,
+  HEAD = this entry's commit (on top of `f4aae6d`). First check `/Volumes/Dev` exists. `main` untouched (`9e0de1f`);
+  nothing pushed, nothing installed. `CURRENT_PROJECT_VERSION` = 918 in all 24 entries.
+- Rollback tags: `checkpoint/pre-build-915-drum-lanes` (0e4a7df), `-916-groove-map` (11dea43), `-917-light-roles`
+  (9244a13), `-918-band` (fa598a7). Make `checkpoint/pre-build-919-slow-lanes` = HEAD before starting.
+
+**What exists now (read README §21–§24 for the full design; entries above for numbers)**
+- 915 `9937c11` tracker (`BeatTrackerTuning.standard`: 9-frame Hann smoothing, floor 0.16); `23c7722` `DrumLanes`
+  (Core/Audio): kick/snare/hat per 10 ms frame, kick-vs-bass = level gate 2.0, snare veto 50 ms + 1-frame hold.
+  Held hits are marked back on their onset frame → ring readers wait `DrumLanes.settleSeconds` (0.15 s).
+  `AudioFeatures.lastKickAt/kickStrength/lastSnareAt/…/lastHatAt`; sources `.kick/.snare/.hat`.
+- 916 `4435f89` `GrooveMap` (Core/Audio): updated in `AudioAnalysisEngine.trackerPass` (main actor, ~2 Hz) from the
+  same `OnsetFrames`, published via a lock-guarded mirror, stamped on `AudioFeatures.groove` in
+  `AudioPCMSink.stampDrums`. Drum sources read `lastHitTime(_:beat:hostNow:)` / `drumHit(...)` (heard OR predicted,
+  one identity per hit). Lab `run.sh -groove` (causal, lights rendered 0.1 s ahead).
+- 917 `459a385` `Composer2LightRoles` (Core/Composer2/Composer2Roles.swift): role = answer > bridge z thirds
+  (streaming slots, spread ≥ 0.05) > archetype > middle; `Composer2SlotGeometry.roles`; mask `.role`;
+  Play Along sheet → Light heights (`UI/Composer2/Composer2LightHeightsView.swift`). z NOT written to the bridge.
+- 918 `0a0fc41` `Composer2Band` (Core/Composer2/Composer2Band.swift): base layer → middle (look + swell) / low
+  (kick) / high (snare) / high hat shimmer ≤ 0.08 (`addLighten`); engine pre-pass admits band drum punches
+  (`Composer2AudioModulation.sharesFlashBudget`) through `Composer2EngineState.bandLedger`, ≥ 0.34 s apart room-wide.
+  Settings key `playAlong.band`; `Composer2LiveOutput.playAlongBand` / `bandIsPlaying`; Room mode never splits.
+  Per-look gate report `docs/ios/play-along/band-gate-report-2026-11-02.txt` (0 held frames; worst Candy Cane 24.7 %).
+- Full suite at 918: **2653 passed + 1 expected failure** (`DrumLanesTests.testABassLineWithNoDrumsIsAKnownLimit`,
+  deliberate `XCTExpectFailure` — a drumless bass line reads as kicks; do not "fix" by deleting it). Expect 2654 + new.
+
+**Next slice A — build 919 "slow lanes" (research doc §3.4 step 5).** Bass and drum ACTIVITY (0.5–1 s decisions,
+for washes, not hits) from our own DSP, every iOS version. Suggested shape (decide on data):
+- New `Core/Audio/ActivityLanes.swift` fed per frame from `OnsetFrameAnalyzer` (like DrumLanes): bass activity from the
+  low bands' (0…3, 30–281 Hz) level against the frame's whole level, smoothed ~1 s; drum activity from the lanes'
+  hit density over ~1 s. Publish `AudioFeatures.bassActivity/drumActivity` (0…1) via the sink, and sources
+  `.bassActivity`? (or reuse `.bass` semantics — check `Composer2AudioModulation.Source` decode tolerance: unknown
+  sources decode as `.off`, tested in DrumLanesTests).
+- Ground truth: BabySlakh stems — `/Volumes/Dev/Datasets/chromaglow-beat-corpus/raw/babyslakh/babyslakh_16k/
+  TrackNNNNN/{mix.wav, stems/SNN.wav, metadata.yaml}` (20 tracks, 16 kHz). `metadata.yaml` lists stems with
+  `inst_class: Bass` / `is_drum: true`. **`audio_rendered` reads false everywhere and doesn't match the files —
+  key on `stems/SNN.wav` existing** (Track00001: 11 entries, 10 wavs). Truth = stem RMS above a threshold per 1 s
+  window. Add a lab mode (`run.sh -activity`) in `beatlab/` scoring per-window accuracy/F, line and room conditions
+  (reuse `RoomSim.apply`, `recordLevels` pattern from DrumRun.swift). Loader: `Corpus.loadAudio`.
+- Band use (optional, measure first): research mapping says bass → floor lamps' colour/level (slow). A low-light
+  swell on bass activity under the kick punch must stay out of the flash budget (a slow rise is not a flash; keep
+  rises < 0.10 per 20 ms frame) and must pass `Composer2BandTests.testBandLooksNeverMakeTheWireStutter`.
+- **Vocals are OUT of 919:** the licence-clean corpus has no vocal recordings (Slakh = MIDI-rendered, GuitarSet =
+  guitar). A vocal lane waits for Brian's AIST/RWC decision (research doc §6 item 4). Say so in README §25.
+- Music Understanding windows (iOS 27) are NOT part of 919 unless Brian's 914 probe results (still owed) show the
+  iPhone can do it.
+
+**Next slice B — "it knows what's coming" steps 1–3 (research doc §4.2), no new permission needed:**
+song position + `PhraseTracker` + `SongStructureSnapshot` (kept apart from `BeatSnapshot`; raw energy, not the
+auto-levelled `level`) → energy states + build/drop with drop prediction on the phrase grid and ease-back →
+`Composer2Conductor` (pure; runs before the flash shaper; quantizer gains "land at time T").
+**STOP before step 4** (song maps' first-listen in-memory buffer + Music Understanding pass): it needs Brian's
+privacy OK and new wording (§6 item 2). Ask him; don't build it.
+
+**How to work here (learned the hard way this session)**
+- Build: `xcodebuild build-for-testing -project HueHome.xcodeproj -scheme "HueHome 1" -destination
+  "platform=iOS Simulator,id=C10C70A7-A702-40A9-8810-A6F13B98C57B" -derivedDataPath /Volumes/Dev/DerivedData/play-along
+  ONLY_ACTIVE_ARCH=YES`, then `test-without-building … -parallel-testing-enabled NO -resultBundlePath <new>.xcresult`
+  (targeted: `-only-testing:HueHomeTests/<Class>`). Totals: `xcrun xcresulttool get test-results summary --path …`.
+- **Before every full suite: `simctl shutdown` + `boot` + `bootstatus -b` the simulator.** After many targeted runs the
+  full run dies with "test runner timed out" (it did once this session). Full suite ≈ 15–20 min; run in background.
+- Register new Swift files with `ruby add_play_along_files.rb` (add them to its lists first; CORE_C2/UI_C2/AUDIO/TESTS).
+- `Composer2LabGuardTests`: Core/Composer2 may not use `Date()`, `CACurrentMediaTime`, `ProcessInfo`, `hashValue`,
+  `Hasher(`, `.random(`; UI/Composer2 string literals may not contain `REST`, `DTLS`, `mirek`, `channel`, `gamut`,
+  `"Onset"`; no `print(` in Composer2 dirs. Also run `./Scripts/hardening_guards.sh`.
+- `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` is set only for the watch target; the app target is not.
+- Device build per build (no install): `xcodebuild build … -configuration Release -destination "generic/platform=iOS"
+  -derivedDataPath /Volumes/Dev/DerivedData/play-along-device CODE_SIGNING_ALLOWED=NO`, then check CFBundleVersion,
+  `strings … | grep -c -i 'Music analysis probe'` = 0 and `otool -L … | grep -c -i MusicUnderstanding` = 0.
+  **Don't edit app sources while that build compiles** (it reads the worktree).
+- Lab: `docs/ios/play-along/beatlab/run.sh -<mode>` (compiles in ~30 s; add new Core files to its swiftc list).
+  For iteration, compile a scratchpad harness with swiftc against the worktree's Core/Audio files — seconds instead of
+  10-minute xcodebuild runs. Corpus runs: one process per set, in parallel.
+- Shell pitfalls: `grep -v "a\|^ *^"`-style filters can match every line (empty output); a build script ending in
+  `| grep error` exits 1 on success; foreground `sleep` is blocked — wait with `until …; do sleep 5; done`.
+- Brian's rules: checkpoint tag per build, one commit per fix (feature / lab / `chore: build N` bump of all 24 entries /
+  docs), Co-Authored-By: Claude Opus 5.5 trailer, never touch or push main, never install on his phone, never commit
+  audio (`.gitignore` refuses it), report PASS/FAIL + SHAs + counts + what's unverified. DEVLOG: snapshot line at the
+  top + a dated entry at the end; README gets the next § (§25).
+
+**Owed by Brian (none block slice A):** phone runs of 911–918 (Sync Check, moving hits, Sound dial, the Music analysis
+probe's Copy results, drum looks, Light heights, the band); the first-listen privacy OK; AIST/RWC for vocal test
+music; whether light heights should ever be written to the bridge.
