@@ -274,6 +274,7 @@ if args.contains("-drums") {
 }
 if args.contains("-drumtune") { drumTune(args); exit(0) }
 if args.contains("-kickbass") { kickBass(args); exit(0) }
+if args.contains("-groove") { MainActor.assumeIsolated { grooveReport(args) }; exit(0) }
 if args.contains("-tracktune") { MainActor.assumeIsolated { trackTune(args) }; exit(0) }
 if args.contains("-onset") { onsetLatencyReport(); exit(0) }
 if args.contains("-cpu") {

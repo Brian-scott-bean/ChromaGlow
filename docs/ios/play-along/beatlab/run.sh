@@ -17,6 +17,7 @@
 #   docs/ios/play-along/beatlab/run.sh -drumtune  # build 915: search the drum lanes' settings
 #   docs/ios/play-along/beatlab/run.sh -kickbass  # build 915: kick vs bass — level gate, decay confirmation, snare veto/hold
 #   docs/ios/play-along/beatlab/run.sh -tracktune # build 915: search the tracker's smoothing and confidence
+#   docs/ios/play-along/beatlab/run.sh -groove    # build 916: do drum looks light ON the drum (heard vs groove map)
 set -euo pipefail
 HERE=${0:a:h}
 REPO=${HERE:h:h:h:h}
@@ -29,6 +30,7 @@ xcrun swiftc -O -swift-version 5 -o "$OUT/beatlab" "$HERE"/*.swift \
   "$REPO/HueHome/Core/Audio/BeatClock.swift" \
   "$REPO/HueHome/Core/Audio/OnsetFrameAnalyzer.swift" \
   "$REPO/HueHome/Core/Audio/DrumLanes.swift" \
+  "$REPO/HueHome/Core/Audio/GrooveMap.swift" \
   "$REPO/HueHome/Core/Audio/BeatTracker.swift" \
   "$REPO/HueHome/Core/Music/MusicSource.swift"
 "$OUT/beatlab" "$@"

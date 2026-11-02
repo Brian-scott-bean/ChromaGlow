@@ -1,0 +1,78 @@
+Groove map — build 916 (2026-11-02). Do drum looks light ON the drum?
+
+run.sh -groove -n 60: every n-th Groove MIDI take (60) and every BabySlakh mix (20), line and a measured home-like
+room. The whole live chain runs causally: OnsetFrameAnalyzer (+ DrumLanes), the BeatTracker → BeatClock pass every
+0.5 s, the GrooveMap fed from the same frames on the clock's grid; lights rendered every 20 ms for when they are SHOWN
+(render lead 0.1 s). A light hit "starts" on the first rendered frame that carries it.
+
+  heard   = build 915: what the drum lanes hear (reactive).
+  groove  = build 916: the same, plus the groove map's predicted hits (GroovePattern.latestHit).
+  on-time = a light hit within ±50 ms of an annotated stroke (≥ velocity 40); P against every stroke of the drum.
+  median error = over strokes with a light hit within ±150 ms. any-time P = light hits within −10…+150 ms of a
+  played stroke (late or not). per stroke = light hits per annotated stroke.
+
+What it shows: reactive drum hits land ~+135 ms late (the 0.1 s lead plus the analysis hop), so almost none are on
+time. Predicted hits land on the stroke (median +16…+24 ms on the mixes) wherever the clock is trusted and the
+pattern repeats — 59 % of frames on line mixes, 27–44 % on the human Groove MIDI takes. The cost: predicted slots
+the drummer didn't play this bar are extra (softer — certainty-scaled) flashes: light hits per kick 1.20 → 1.78 on
+line mixes, and any-time precision 0.57 → 0.47. A sweep (-sweep: stricter slot weight, agreement, faster
+suspension, wider merge window) traded on-time hits for fewer extras at a worse F everywhere, and the merge window
+changed nothing (the extras are not double fires); the standard tuning stays.
+
+groove: 80 tracks × line, room in 71 s; lead 100 ms, frames every 20 ms
+set    cond  drum   mode          on-time R   P      F   median error  any-time P  per stroke  (strokes, light hits)  kick predicted
+gmd    line  kick   groove           0.40   0.28   0.33       +44 ms       0.60        1.94    (5954, 11527)   44 % of frames
+gmd    line  kick   heard            0.04   0.05   0.05      +132 ms       0.80        1.41    (5954, 8408)   
+gmd    line  snare  groove           0.38   0.41   0.39       +17 ms       0.54        1.37    (10564, 14501)   
+gmd    line  snare  heard            0.23   0.33   0.27       +69 ms       0.62        1.07    (10564, 11326)   
+gmd    room  kick   groove           0.23   0.20   0.21      +123 ms       0.57        1.42    (5954, 8456)   27 % of frames
+gmd    room  kick   heard            0.04   0.06   0.05      +136 ms       0.68        1.10    (5954, 6566)   
+gmd    room  snare  groove           0.27   0.38   0.31       +27 ms       0.55        1.05    (10564, 11126)   
+gmd    room  snare  heard            0.16   0.30   0.21      +117 ms       0.61        0.84    (10564, 8894)   
+slakh  line  kick   groove           0.61   0.35   0.44       +20 ms       0.47        1.78    (5576, 9906)   59 % of frames
+slakh  line  kick   heard            0.08   0.06   0.07      +135 ms       0.57        1.20    (5576, 6678)   
+slakh  line  snare  groove           0.35   0.27   0.31       +16 ms       0.38        1.31    (4013, 5257)   
+slakh  line  snare  heard            0.05   0.06   0.05      +139 ms       0.39        0.84    (4013, 3371)   
+slakh  room  kick   groove           0.37   0.29   0.32       +24 ms       0.42        1.26    (5576, 7044)   39 % of frames
+slakh  room  kick   heard            0.04   0.05   0.04      +138 ms       0.41        0.86    (5576, 4809)   
+slakh  room  snare  groove           0.19   0.21   0.20       +21 ms       0.37        0.88    (4013, 3547)   
+slakh  room  snare  heard            0.02   0.04   0.03      +140 ms       0.35        0.58    (4013, 2327)   
+
+Sweep (-n 30 -sweep, two runs; superseded variants, kick rows):
+set    cond  drum   mode          on-time R   P      F   median error  any-time P  per stroke  (strokes, light hits)  kick predicted
+gmd    line  kick   g_agr.8          0.24   0.25   0.25      +124 ms       0.64        2.35    (3519, 8284)   
+gmd    line  kick   g_miss1          0.36   0.32   0.34      +103 ms       0.62        2.43    (3519, 8558)   
+gmd    line  kick   g_w.70           0.28   0.28   0.28      +124 ms       0.66        2.26    (3519, 7968)   
+gmd    line  kick   g_w.70_agr.8     0.19   0.20   0.20      +128 ms       0.69        2.21    (3519, 7766)   
+gmd    line  kick   g_w.70_m1        0.26   0.27   0.27      +125 ms       0.67        2.23    (3519, 7859)   
+gmd    line  kick   g_w.85           0.15   0.14   0.14      +131 ms       0.75        1.99    (3519, 6993)   
+gmd    room  kick   g_agr.8          0.18   0.18   0.18      +128 ms       0.62        1.95    (3519, 6859)   
+gmd    room  kick   g_miss1          0.26   0.24   0.25      +119 ms       0.61        2.02    (3519, 7116)   
+gmd    room  kick   g_w.70           0.21   0.21   0.21      +127 ms       0.64        1.87    (3519, 6591)   
+gmd    room  kick   g_w.70_agr.8     0.16   0.15   0.15      +130 ms       0.64        1.83    (3519, 6438)   
+gmd    room  kick   g_w.70_m1        0.19   0.20   0.19      +129 ms       0.64        1.85    (3519, 6509)   
+gmd    room  kick   g_w.85           0.13   0.12   0.12      +133 ms       0.67        1.70    (3519, 5979)   
+slakh  line  kick   g_agr.8          0.46   0.27   0.34       +20 ms       0.46        1.70    (5576, 9459)   
+slakh  line  kick   g_miss1          0.59   0.34   0.43       +20 ms       0.47        1.75    (5576, 9750)   
+slakh  line  kick   g_w.70           0.53   0.32   0.40       +20 ms       0.49        1.64    (5576, 9123)   
+slakh  line  kick   g_w.70_agr.8     0.43   0.27   0.33       +20 ms       0.48        1.60    (5576, 8919)   
+slakh  line  kick   g_w.70_m1        0.51   0.32   0.39       +20 ms       0.49        1.61    (5576, 8989)   
+slakh  line  kick   g_w.85           0.37   0.25   0.30       +23 ms       0.51        1.47    (5576, 8194)   
+slakh  room  kick   g_agr.8          0.26   0.21   0.23       +25 ms       0.39        1.20    (5576, 6702)   
+slakh  room  kick   g_miss1          0.35   0.28   0.31       +24 ms       0.42        1.24    (5576, 6919)   
+slakh  room  kick   g_w.70           0.29   0.25   0.27       +25 ms       0.42        1.15    (5576, 6420)   
+slakh  room  kick   g_w.70_agr.8     0.21   0.19   0.20       +28 ms       0.39        1.11    (5576, 6182)   
+slakh  room  kick   g_w.70_m1        0.27   0.24   0.25       +26 ms       0.42        1.13    (5576, 6294)   
+slakh  room  kick   g_w.85           0.16   0.16   0.16       +41 ms       0.41        1.01    (5576, 5614)   
+gmd    line  kick   g_w.62           0.30   0.29   0.30      +122 ms       0.65        2.32    (3519, 8154)   
+gmd    line  kick   g_win.08         0.39   0.33   0.36       +64 ms       0.61        2.47    (3519, 8698)   
+gmd    line  kick   g_win.10         0.38   0.33   0.36       +64 ms       0.61        2.47    (3519, 8704)   
+gmd    room  kick   g_w.62           0.22   0.22   0.22      +126 ms       0.63        1.92    (3519, 6752)   
+gmd    room  kick   g_win.08         0.27   0.25   0.26      +110 ms       0.61        2.05    (3519, 7219)   
+gmd    room  kick   g_win.10         0.27   0.25   0.26      +110 ms       0.61        2.05    (3519, 7219)   
+slakh  line  kick   g_w.62           0.56   0.33   0.42       +20 ms       0.48        1.68    (5576, 9356)   
+slakh  line  kick   g_win.08         0.61   0.35   0.44       +20 ms       0.47        1.78    (5576, 9911)   
+slakh  line  kick   g_win.10         0.61   0.35   0.44       +20 ms       0.47        1.78    (5576, 9915)   
+slakh  room  kick   g_w.62           0.31   0.26   0.29       +25 ms       0.42        1.19    (5576, 6648)   
+slakh  room  kick   g_win.08         0.37   0.29   0.32       +24 ms       0.42        1.26    (5576, 7045)   
+slakh  room  kick   g_win.10         0.37   0.29   0.32       +24 ms       0.42        1.26    (5576, 7046)   
