@@ -1,0 +1,20 @@
+BabySlakh changes on the best 4-bar grid in hindsight (per song): 0.41 of 311
+BabySlakh changes on the best 8-bar grid in hindsight (per song): 0.25 of 311
+Synthetic hall: the clock's bar lines on a true downbeat 0.87 (of 557)
+Synthetic line: the clock's bar lines on a true downbeat 0.82 (of 586)
+Synthetic room: the clock's bar lines on a true downbeat 0.81 (of 600)
+Synthetic speaker: the clock's bar lines on a true downbeat 0.81 (of 595)
+BabySlakh hall: the clock's tempo right 0.72 of passes; its bar lines on a true downbeat 0.43, on any beat 0.70 (of 886)
+BabySlakh line: the clock's tempo right 0.71 of passes; its bar lines on a true downbeat 0.40, on any beat 0.65 (of 1640)
+BabySlakh room: the clock's tempo right 0.71 of passes; its bar lines on a true downbeat 0.40, on any beat 0.64 (of 1511)
+BabySlakh speaker: the clock's tempo right 0.70 of passes; its bar lines on a true downbeat 0.38, on any beat 0.63 (of 1530)
+phrase: 8 synthetic arrangements + BabySlakh (≤ 20), line/room/speaker/hall, 238 s
+set/cond        section starts  called ahead  (sure ≥0.3)   grid right   passed phrase starts on a change   lock (bars in)
+slakh hall         134         0.06         0.01          0.12            0.20 (5)             4.8
+slakh line         229         0.06         0.01          0.13            0.09 (35)             4.0
+slakh room         220         0.06         0.01          0.12            0.09 (33)             3.8
+slakh speaker      220         0.05         0.01          0.10            0.06 (31)             2.6
+synth hall          28         0.50         0.39          0.47            0.38 (24)             5.4
+synth line          32         0.53         0.47          0.53            0.33 (43)             2.4
+synth room          29         0.69         0.52          0.60            0.45 (33)             2.0
+synth speaker       29         0.72         0.59          0.61            0.46 (37)             2.6
