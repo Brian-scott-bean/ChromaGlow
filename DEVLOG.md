@@ -11,6 +11,11 @@
 - Live shared handoff: append-only entries in this `DEVLOG.md`. Git is the shared memory between tools.
 
 ### iOS — where we are RIGHT NOW
+- **BUILD 921 ON `experiment/play-along` — WHERE THE SONG'S ENERGY IS GOING (BUILD AND DROP), NOT MERGED (2026-11-02).**
+  States per bar (calm/groove/build/peak/breakdown) and a staged drop with a confidence on the phrase grid. Weak on
+  synthetic dance songs (drops called ahead 2–29 %, confident false calls up to 1.3 per song), 0 false calls on 74 min of
+  real non-dance music. Nothing visible yet. Full suite 2675 + 1 expected failure. Rollback tag
+  `checkpoint/pre-build-921-build-drop`. README §27. Simulator only.
 - **BUILD 920 ON `experiment/play-along` — WHERE WE ARE IN THE SONG (BARS, BEATS, PHRASES), NOT MERGED (2026-11-02).**
   "It knows what's coming" step 1: a song position that only moves forward, 64 bars of raw per-bar features, and the
   phrase grid found in beats (the clock's one is right only ~40 % of the time on real songs). Synthetic dance songs:
@@ -14562,3 +14567,28 @@ No licence-clean dance music with section labels exists in the corpus (EDM-drop 
 **Validation:** SongStructureTests 7/7 + the audio/band/guard classes (64) PASS on the simulator. **Full suite: 2669 passed + 1 expected failure, 0 failed** (rebooted simulator, run alone).
 Device build (Release, generic iOS, no signing): CFBundleVersion 920, probe strings 0, MusicUnderstanding links 0.
 Nothing installed, nothing pushed, `main` untouched. **Not verified on hardware** (nothing visible yet).
+
+## 2026-11-02 — [Claude] Build 921: where the song's energy is going — build and drop (experiment/play-along)
+
+"It knows what's coming" step 2 (research doc §4.2). Rollback tag `checkpoint/pre-build-921-build-drop` (= `ba767aa`).
+README §27. Nothing on the lights changes in this build.
+
+**Commits:** `1fb10e7` feat(audio) SongEnergyTracker (calm/groove/build/peak/breakdown, the staged drop + confidence,
+`SongBar.loudness`/`sub`) + 6 tests · `05c5732` feat(beatlab) `run.sh -drop` (+ `-debug`, `-v`), ArrangementSynth bass
+layer + mix, `results-2026-11-02-drop.txt` · `85fee8c` chore build 921 · this entry's commit (README §27, DEVLOG,
+`results-2026-11-02-phrase-921synth.txt`).
+
+**Measured, honestly weak:** synthetic dance songs (42 drops × 4 conditions) — drops called a beat ahead at ≥ 0.5:
+0.02 / 0.29 / 0.07 / 0.05 (hall/line/room/speaker), recognised 0.05–0.24, confident (≥ 0.8) false calls 0.04–1.33 per
+song. Real music without drops (74 min): **0** false calls. No licence-clean dance music with drop labels exists here.
+Found on the way: the mean log band level isn't loudness (a riser out-measured the drop); **the 919 bass-line lane
+can't hear a pure sub-bass** (below its 141–375 Hz band) and hears a swelling pad as a bass line — drops are confirmed
+on the sub-bass/kick instead. Several tuning variants were tried and measured; the kept one is the best balance
+(details in README §27); one regression on the way was a stray assignment that dropped the gap's correction.
+
+**Validation:** SongEnergyTests 6/6 + SongStructureTests 7/7. **Full suite: 2675 passed + 1 expected failure** — the
+full run reported 2674 + 1 failure in `Composer2LabGuardTests.testEveryLabFileIsRegisteredInTheProject`, caused by the
+next build's work-in-progress `Composer2Conductor.swift` sitting unregistered in the source folder (the guard scans the
+folder); with it moved aside the guard class passed 9/9 against the same 921 build. Device build (Release, generic iOS,
+no signing): CFBundleVersion 921, probe strings 0, MusicUnderstanding links 0. Nothing installed or pushed; `main`
+untouched. **Not verified on hardware.**

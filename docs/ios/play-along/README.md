@@ -1445,3 +1445,56 @@ Tests: `SongStructureTests` (7): the count only moves forward through nudges and
 new song, a lost grid ends it (after ~4 s, not at once), phrases land where the music changes, a song from silence
 starts a phrase, the per-bar features, the snapshot's arithmetic. Simulator only. **Not verified on hardware** (and
 there is nothing to see on the lights yet).
+
+## 27. Where the song's energy is going: build and drop (2026-11-02, build 921)
+
+Step 2 of "it knows what's coming" (research doc §4.2). Same branch; rollback tag
+`checkpoint/pre-build-921-build-drop` (= `ba767aa`). Nothing on the lights changes in this build; the Conductor (§28)
+is what uses it.
+
+**What it is** (`Core/Audio/SongEnergy.swift`, run by the song tracker once a bar and every beat): a state per bar —
+calm, groove, **build**, peak, breakdown — and, in a build, a **staged drop** with a confidence, on
+`SongStructure.energy`:
+
+| Piece | Rule |
+|---|---|
+| Level | The bar's **loudness** (log of the summed band energy, new on `SongBar`) in the song's own range (the last 32 bars). Not the mean log band level (§26's `energy`): that rewards a *full* spectrum, so a snare roll and a noise riser out-measured the drop |
+| A build | Four cues against the bars before it (frozen when the build starts, so a long build doesn't become its own reference): loudness climbing, the low end gone (the bass line, or the new `SongBar.sub` — 30–141 Hz), hits denser (a snare roll doubling), the top end turning to noise. Two bars of it, or one unmistakable one |
+| The drop | Staged on the next phrase line (§26); when the phrase grid is unsure, snapped to the clock's bar line if that is within a beat; with no grid at all, 4/8/16 bars from the build's start. The build holds until then. **Confirmed** when the drums and the kick/sub-bass come back near the song's loudest within a bar; otherwise it **eases back** (no drop recorded) |
+| Confidence | Build evidence × the phrase grid's confidence × how *late* the build sounds (its hits against the bars before it — a 16-bar build's midpoint is a phrase line too). A one-beat gap before a line raises it |
+
+**Measured** (beat lab, `run.sh -drop`, `beatlab/results-2026-11-02-drop.txt`): eight synthetic dance arrangements
+at three tempos each (42 drops, 3 builds that lead nowhere) in four conditions; and real music with no drops at all.
+
+| | hall | line | room | speaker |
+|---|---|---|---|---|
+| Drops called a beat ahead (±1 beat), confidence ≥ 0.5 | 0.02 | 0.29 | 0.07 | 0.05 |
+| …at ≥ 0.8 | 0 | 0.24 | 0.02 | 0 |
+| Drops recognised (within a bar) | 0.05 | 0.24 | 0.21 | 0.19 |
+| Confident (≥ 0.8) false calls per song | 0.04 | 1.33 | 0.54 | 0.25 |
+| Bars whose state matches the section | 0.29 | 0.54 | 0.44 | 0.46 |
+
+Real music with no drops (BabySlakh 30 min, Groove MIDI 11, GuitarSet 4, Candombe 29; line and a room): **0** staged
+drops per minute, at either confidence.
+
+**Honestly: this is weak.** It is conservative on music that isn't dance music (no false calls in 74 minutes), but on
+the synthetic dance songs it calls only about a quarter of drops ahead on a clean line, and few through a room; a
+build is often recognised late, and a staged drop is often 1–3 beats off. The literature has nothing better to
+compare with live (the only drop detector, Yadati 2014, is offline: F 0.61 within ±3 s). The synthetic songs are
+the only drop truth there is (no licence-clean dance music with drop labels), and they are a crude stand-in for
+real productions. **What it means for the lights:** the Conductor (§28) is built so that this weakness costs
+little — off by default, the build shaping only at ≥ 0.5, and the dim before a drop only at ≥ 0.9.
+
+**Found on the way** (`run.sh -drop -debug <song>` dumps every bar): (1) the mean log band level is not loudness (a
+riser out-measured the drop) → `SongBar.loudness`; (2) **the bass-line lane (§25) can't hear a pure sub-bass** — a
+dance drop's sub sits below its 141–375 Hz band — and it hears a swelling pad as a bass line, so the drop is
+confirmed on the sub-bass and kick (`SongBar.sub`) instead; (3) the synthetic songs' bass got a saw layer an octave
+up (real dance basses have one) and their mix was rebalanced so the drop, not the build, is the loudest part; the
+phrase numbers re-measured on them (`results-2026-11-02-phrase-921synth.txt`): section starts called a bar ahead
+0.66 / 0.69 / 0.55 / 0.50 (line / room / speaker / hall), as before.
+
+**Not done:** no section names, no song memory (step 4 — Brian's privacy OK first), no Music Understanding.
+
+Tests: `SongEnergyTests` (6): a build staged on the phrase line and the drop confirmed, a build that leads nowhere
+easing back, drums dropping out as a breakdown, an unsure phrase grid staging on the build's own bars (less sure),
+the gap raising the call, the snapshot. Simulator only. **Not verified on hardware.**

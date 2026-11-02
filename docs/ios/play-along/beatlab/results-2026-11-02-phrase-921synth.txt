@@ -1,0 +1,10 @@
+Synthetic hall: the clock's bar lines on a true downbeat 0.87 (of 542)
+Synthetic line: the clock's bar lines on a true downbeat 0.80 (of 590)
+Synthetic room: the clock's bar lines on a true downbeat 0.81 (of 589)
+Synthetic speaker: the clock's bar lines on a true downbeat 0.81 (of 590)
+phrase: 8 synthetic arrangements + BabySlakh (≤ 20), line/room/speaker/hall, 20 s
+set/cond        section starts  called ahead  (sure ≥0.3)   grid right   passed phrase starts on a change   lock (bars in)
+synth hall          26         0.50         0.46          0.47            0.38 (24)             5.7
+synth line          32         0.66         0.53          0.62            0.42 (36)             2.4
+synth room          29         0.69         0.62          0.61            0.47 (38)             2.4
+synth speaker       29         0.55         0.48          0.47            0.44 (32)             3.9
