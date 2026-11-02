@@ -133,6 +133,26 @@ final class Composer2LiveOutput: ConcurrentCompositionFrameSource, @unchecked Se
     /// Whether the derived look was split (re-derive when the room's heights change that).
     private var derivedBand = false
 
+    /// Follow the song (build 922): the Conductor shapes a build toward a
+    /// staged drop — punches tightening onto the drop, a dim before it only
+    /// at high confidence (Composer2Conductor).
+    var playAlongConductor: Bool {
+        get { locked { _playAlongConductor } }
+        set {
+            locked {
+                guard newValue != _playAlongConductor else { return }
+                _playAlongConductor = newValue
+                derivedDirty = true
+            }
+        }
+    }
+    private var _playAlongConductor = false
+    /// The cue the derived look was shaped by (re-derive when it changes).
+    private var derivedCueKey: [Int] = []
+    /// The Conductor's latest cue (for tests and diagnostics).
+    var conductorCue: Composer2ConductorCue { locked { _conductorCue } }
+    private var _conductorCue = Composer2ConductorCue.off
+
     /// When the play-along look takes over and lets go.
     var director: Composer2PlayAlongDirector { locked { _director } }
     private var _director = Composer2PlayAlongDirector()
@@ -353,10 +373,16 @@ final class Composer2LiveOutput: ConcurrentCompositionFrameSource, @unchecked Se
         }
         if mix.weight > 0 {
             let band = _playAlongBand && Composer2LightRoles.canSplit(_geometry.roles)
-            if _derived == nil || derivedDirty || derivedBPM != mix.bpm || derivedBand != band {
-                _derived = Composer2PlayAlong.apply(look, feel: _playAlongFeel, bpm: mix.bpm,
-                                                    category: Composer2ThemeCatalog.entry(id: _composition.id)?.category,
-                                                    hits: _playAlongHits, band: band)
+            let cue = _playAlongConductor ? Composer2Conductor.cue(features.structure, beat: beat, at: hostNow) : .off
+            _conductorCue = cue
+            if _derived == nil || derivedDirty || derivedBPM != mix.bpm || derivedBand != band
+                || derivedCueKey != cue.lookKey {
+                let played = Composer2PlayAlong.apply(look, feel: _playAlongFeel, bpm: mix.bpm,
+                                                      category: Composer2ThemeCatalog.entry(id: _composition.id)?.category,
+                                                      hits: _playAlongHits, band: band)
+                _derived = Composer2Conductor.apply(cue, to: played)
+                if derivedCueKey != cue.lookKey { derivedPlans = [] }
+                derivedCueKey = cue.lookKey
                 derivedBand = band
                 derivedBPM = mix.bpm
                 derivedDirty = false
@@ -365,6 +391,13 @@ final class Composer2LiveOutput: ConcurrentCompositionFrameSource, @unchecked Se
                 Composer2Engine.evaluate(derived, time: time, geometry: _geometry, plans: &derivedPlans,
                                          state: &derivedState, audio: features, beat: beat, hostNow: hostNow,
                                          eventCap: _eventCap, into: &derivedBuffer)
+                // The Conductor's dim before a sure drop: a fall, before the shaper.
+                if cue.dim < 1 {
+                    for i in derivedBuffer.indices {
+                        let f = derivedBuffer[i]
+                        derivedBuffer[i] = Composer2Frame(slot: f.slot, x: f.x, y: f.y, brightness: f.brightness * cue.dim)
+                    }
+                }
                 if mix.weight >= 1 || frameBuffer.count != derivedBuffer.count {
                     swap(&frameBuffer, &derivedBuffer)
                 } else {

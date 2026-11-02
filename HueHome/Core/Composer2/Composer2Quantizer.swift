@@ -67,6 +67,15 @@ enum Composer2Quantizer {
         return (next, grid)
     }
 
+    /// "Land at time T" (build 922): the beat line of the clock's grid
+    /// nearest `t` — a staged drop, measured on the tracker's pass, played on
+    /// the grid the frames are rendered with. nil = no usable grid.
+    static func landing(at t: Double, beat: BeatSnapshot) -> Double? {
+        guard t.isFinite, t > 0, grid(for: beat) != nil else { return nil }
+        let k = ((t - beat.beatEpoch) / beat.beatInterval).rounded()
+        return beat.beatEpoch + k * beat.beatInterval
+    }
+
     /// 0 → 1 crossfade weight at `t` for a change landing at `landing`.
     static func weight(at t: Double, landing: Double, preroll: Double) -> Double {
         guard preroll > 0 else { return t >= landing ? 1 : 0 }

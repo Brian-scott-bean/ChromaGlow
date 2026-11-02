@@ -114,6 +114,12 @@ struct Composer2AudioModulation: Codable, Equatable {
     /// one room-wide flash budget with the other band drums. Encoded only
     /// when set (Play Along's derived look is never saved).
     var sharesFlashBudget: Bool = false
+    /// The Conductor (build 922): a beat source punches only on every
+    /// `beatEvery`-th beat, counted so beat `beatAnchor` (an index on the
+    /// clock's grid — the staged drop) is one of them. 1 = every beat.
+    /// Encoded only when not 1 (Play Along's derived look is never saved).
+    var beatEvery: Int = 1
+    var beatAnchor: Int = 0
 
     init(source: Source = .off, brightnessMode: BrightnessMode = .punch, sensitivity: Double = 0.7,
          threshold: Double = 0.1, smoothing: Double = 0.3,
@@ -138,6 +144,7 @@ struct Composer2AudioModulation: Codable, Equatable {
         case source, brightnessMode, sensitivity, threshold, smoothing, intensity, targets, quantizeBeats, paletteStep, punchDecay, triggerEventsOnOnset
         case travel
         case sharesFlashBudget
+        case beatEvery, beatAnchor
     }
 
     init(from decoder: Decoder) throws {
@@ -160,6 +167,8 @@ struct Composer2AudioModulation: Codable, Equatable {
         triggerEventsOnOnset = (try? c.decode(Bool.self, forKey: .triggerEventsOnOnset)) ?? d.triggerEventsOnOnset
         travel = try? c.decode(Travel.self, forKey: .travel)
         sharesFlashBudget = (try? c.decode(Bool.self, forKey: .sharesFlashBudget)) ?? false
+        beatEvery = max(1, (try? c.decode(Int.self, forKey: .beatEvery)) ?? 1)
+        beatAnchor = (try? c.decode(Int.self, forKey: .beatAnchor)) ?? 0
     }
 
     func encode(to encoder: Encoder) throws {
@@ -179,6 +188,10 @@ struct Composer2AudioModulation: Codable, Equatable {
         // encodes byte for byte as it did.
         try c.encodeIfPresent(travel, forKey: .travel)
         if sharesFlashBudget { try c.encode(true, forKey: .sharesFlashBudget) }
+        if beatEvery != 1 {
+            try c.encode(beatEvery, forKey: .beatEvery)
+            try c.encode(beatAnchor, forKey: .beatAnchor)
+        }
     }
 
     var isActive: Bool { source != .off }
@@ -255,6 +268,16 @@ struct Composer2AudioModulation: Codable, Equatable {
         }
     }
 
+    /// Seconds since the latest beat this source punches on: every beat, or
+    /// (the Conductor) every `beatEvery`-th one counted from `beatAnchor`.
+    func timeSincePunchedBeat(_ beat: BeatSnapshot, at t: Double) -> Double {
+        let since = beat.timeSinceBeat(at: t)
+        guard beatEvery > 1, beat.bpm > 0 else { return since }
+        let index = beat.beatIndex(at: t)
+        let back = ((index - beatAnchor) % beatEvery + beatEvery) % beatEvery
+        return since + Double(back) * beat.beatInterval
+    }
+
     var punchDecayTau: Double { 0.08 + Composer2Math.clamp01(punchDecay) * 0.52 }
     var smoothingTau: Double { Composer2Math.clamp01(smoothing) * 0.5 }
 
@@ -277,7 +300,7 @@ struct Composer2AudioModulation: Codable, Equatable {
             return shaped(Double(features.drumActivity))
         case .beat:
             guard beat.bpm > 0, hostNow > 0 else { return 0 }
-            return Composer2Math.clamp01(exp(-beat.timeSinceBeat(at: hostNow) / punchDecayTau))
+            return Composer2Math.clamp01(exp(-timeSincePunchedBeat(beat, at: hostNow) / punchDecayTau))
         case .onset:
             if hostNow > 0, features.lastOnsetAt > 0 {
                 return Composer2Math.clamp01(exp(-(hostNow - features.lastOnsetAt) / punchDecayTau))
