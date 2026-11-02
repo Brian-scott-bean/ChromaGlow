@@ -11,6 +11,12 @@
 - Live shared handoff: append-only entries in this `DEVLOG.md`. Git is the shared memory between tools.
 
 ### iOS — where we are RIGHT NOW
+- **BUILD 914 ON `experiment/play-along` — REAL SONGS FOR THE BEAT LAB + MUSIC UNDERSTANDING PROBE, NOT MERGED
+  (2026-11-02).** The beat lab reads real recordings (Groove MIDI, BabySlakh, GuitarSet, Candombe; 2,325 measured
+  rooms) on the Dev drive and scores the shipping tracker like mir_eval. Found: the lights play along on very little
+  real music (beats played F 0.06–0.56 clean) — the tracker hears the tempo but never trusts it (human timing);
+  build 915 fixes it. Debug-only probe: Settings → Advanced → Music analysis probe (needs Brian's phone run). Rollback
+  tag `checkpoint/pre-build-914-real-song-lab`. README §20.
 - **BUILD 913 ON `experiment/play-along` — A SOUND DIAL IN TUNE, NOT MERGED (2026-11-02).** Tune → Feel → Sound:
   Still · Lightly · As authored · Dances, saved with the look (`master.soundAmount`, 0…2, encoded only when not 1).
   One scale in the engine covers a look's own sound and Play Along's alike; Still turns the reaction off and lets go
@@ -14200,3 +14206,30 @@ pick Spotify → Start → no crash".
 - Not verified on hardware: all of it. Device check: README §19.
 - Still open: phone checks for 911–913; then the real-song lab (+ the Music Understanding iPhone probe), the room is
   the band, it knows what's coming; decisions owed (research doc §6).
+
+## 2026-11-02 — [Claude] Build 914: real songs for the beat lab + Music Understanding probe on `experiment/play-along` (not merged)
+
+- Brian: "ok build them all if you can if you have to start with only one 914 is fine" (the beyond-any-app list,
+  research doc §8). Rollback tag `checkpoint/pre-build-914-real-song-lab` (= `2496fb1`). Nothing on `main` changed;
+  nothing pushed.
+- Corpus (a research agent downloaded and verified licences; nothing downloaded was executed): Groove MIDI, BabySlakh,
+  GuitarSet, Candombe (CC BY 4.0), BUT ReverbDB rooms — `/Volumes/Dev/Datasets/chromaglow-beat-corpus` (~26 GB with
+  the original archives; deletable). EDM drop set skipped: per-track licences not recorded.
+- Commits:
+  - `987fdee` **The lab hears real recordings.** Corpus/Importers/Metrics/RoomSim/CorpusRun/DrumRun; `.gitignore`
+    refuses audio files. Metrics identical to mir_eval 0.8.2 (200 random cases, worst 4.9e-7); convolution checked
+    against a direct sum.
+  - `a4fff71` **Music analysis probe** (Debug only): Settings → Advanced. Tests: `MusicAnalysisProbeTests` (3).
+  - build 914 (24 entries); docs (README §20, results file).
+- Findings (`beatlab/results-2026-11-02-corpus.txt`): beats the lights would play, F clean: BabySlakh 0.56, Groove
+  MIDI 0.18, Candombe 0.17, GuitarSet 0.06 — the tracker reaches the right tempo (e.g. 138 BPM in 6 s) but its
+  confidence stays 0 on human-timed music, so the clock never adopts it. Room score follows clarity (C50 corr 0.79).
+  Today's "hit" fires ~7×/s on drum takes (kick F 0.38).
+- Found on the way: my first room import picked 3 responses per room and scored F 0.00 in the room condition — the
+  measured rooms are mostly halls; they are now sorted by measured C50/RT60. A loader bug (eofErr −39 at the end of
+  a file) had skipped every BabySlakh mix and every room response in the first run; fixed before any number was kept.
+- Tests (iOS 27.0 simulator `C10C70A7-A702-40A9-8810-A6F13B98C57B`): full suite **2621/2621** (= 2618 + 3;
+  `/Volumes/Dev/DerivedData/play-along-full-914.xcresult`), serial. Guards green. Device builds (generic iOS,
+  unsigned): Release OK — no probe strings, MusicUnderstanding not linked; Debug (an export of the 914 commit) OK —
+  MusicUnderstanding weak-linked.
+- Not verified on hardware: the probe (Brian runs it; README §20 phone check).

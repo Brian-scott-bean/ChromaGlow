@@ -1038,3 +1038,50 @@ Device check for build 913:
    place, and turning it on should switch the row to the Sound slider.
 4. Save a look at Lightly, close it and reopen it: Sound should still read Lightly.
 5. Dim Flashing Lights on: Dances should still be gentle.
+
+## 20. Real songs for the beat lab, and the Music Understanding probe (2026-11-02, build 914)
+
+The second piece of §18 (research doc §2). Same branch; rollback tag `checkpoint/pre-build-914-real-song-lab`
+(= `2496fb1`). The app changes only in Debug builds (the probe); the rest is the lab.
+
+**The lab now hears real recordings** (`docs/ios/play-along/beatlab`, Mac only, never in the app):
+
+| Mode | What it does |
+|---|---|
+| `run.sh -import` | Builds the corpus manifest and plain-text annotations from the downloaded sets on the Dev drive (`/Volumes/Dev/Datasets/chromaglow-beat-corpus`). Audio never enters the repo (`.gitignore` now refuses audio files) |
+| `run.sh -corpus` | The shipping tracker on every track, clean and through rooms, scored the standard way (beat F ±70 ms, CMLt/AMLt, downbeat F, lock time, tempo ratio) — identical to mir_eval |
+| `run.sh -drums` | Kick / snare / hi-hat recall and precision for any detector |
+| `run.sh -selftest` | The room convolution against a direct sum |
+
+- **Corpus:** Groove MIDI (347 drum performances), BabySlakh (20 full mixes), GuitarSet (360 guitar excerpts), Candombe
+  (35 hand-annotated drum recordings) — all commercial-use licences, each with a `SOURCE.txt`. The EDM drop set was
+  left out: its per-track licences aren't recorded.
+- **Rooms:** 2,325 measured room responses (BUT ReverbDB), each measured and sorted into **home-like** (clear, short
+  echo: a phone across a living room) and **halls** (long or dominant echo). Conditions: `line`, `room`, `speaker`
+  (a small speaker in a home-like room) and `hall`.
+- **Not built:** the Debug room recorder (§6 decision 1 — it would contradict "never recorded"). RWC (needs AIST).
+
+**What it found** (full tables: `beatlab/results-2026-11-02-corpus.txt`):
+1. **The lights play along on very little real music.** Beats the lights would play, F: clean BabySlakh mixes 0.56
+   (7 of 20 never lock), clean drum performances 0.18 (237 of 347 never lock), solo guitar 0.06, Candombe 0.17.
+   The tracker usually *hears* the right tempo but never *trusts* it: its confidence reads the onset autocorrelation
+   at the exact beat lag, and human timing spreads 10 ms onset spikes a frame or two apart. The synthetic lab songs
+   are machine-timed, so this never showed. **Build 915 fixes it** (§21).
+2. **Rooms:** the score follows the room's clarity (C50, correlation 0.79 over 27 measured positions). It holds in
+   home-like rooms and collapses in halls or far from the speaker. Synthetic echo was far kinder than measured rooms.
+3. **Today's one "hit"** fires about 7 times a second on a drum take — on everything. As a kick detector its F is
+   0.38 (clean drums), 0.29 (full mixes). Build 915's drum lanes are measured against it.
+
+**The Music Understanding probe** (Debug builds only: Settings → Advanced → Music analysis probe). Makes a 2¼-minute
+128 BPM test song in memory (intro, two builds and drops, a breakdown) and times Apple's iOS 27 analysis on it: the
+whole song with every analysis (twice), rhythm alone, structure alone, and instrument activity on 4 s and 2 s
+windows; scores the beats and sections it finds; reports device, iOS, thermal state, low power and whether the app
+was in the background. **Copy results** puts it on the clipboard. No microphone, nothing saved or sent. Release builds
+contain none of it (checked: no probe strings, framework not linked); Debug weak-links the framework.
+
+Tests: `MusicAnalysisProbeTests` (3). On the iOS 27 simulator a 30 s slice gives 64 beats, F 1.00, 128.0 BPM, in
+1.5 s. Full suite 2621/2621.
+
+**Phone check for build 914:** Settings → Advanced → **Music analysis probe** → Start; plug in, screen on (about a
+minute). Then run it once more and leave the app straight away (background). **Copy results** and paste them to
+Claude — these numbers decide whether "Remembers" (§18) can analyse a song on the phone.

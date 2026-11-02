@@ -1,0 +1,134 @@
+Beat lab on real recordings — build 914 baseline (2026-11-02)
+==============================================================
+
+What ships today (OnsetFrameAnalyzer + BeatTracker + BeatClock, `runProd`), on the licence-clean corpus at
+/Volumes/Dev/Datasets/chromaglow-beat-corpus (audio never in this repo). Reproduce:
+
+  docs/ios/play-along/beatlab/run.sh -import
+  docs/ios/play-along/beatlab/run.sh -corpus -set <set> -v
+  docs/ios/play-along/beatlab/run.sh -drums
+
+Corpus (all allow commercial use; raw/<set>/SOURCE.txt):
+  gmd        Groove MIDI Dataset — 347 drum performances in 4/4 ("beat" takes with audio), beats from the click
+  slakh      BabySlakh — 20 full multi-instrument mixes rendered from MIDI (bass, keys, drums…)
+  guitarset  GuitarSet — 360 solo acoustic guitar excerpts (click grid; no drums)
+  candombe   Candombe — 35 Afro-Uruguayan drum recordings, beats and downbeats marked by hand
+  rooms      BUT ReverbDB — 2,325 measured room responses: 527 home-like (C50 ≥ 5 dB, RT60 ≤ 0.8 s) in 5 rooms
+             → 40 used; 1,798 halls / far from the speaker in 9 rooms → 27 used. Recorded at 16 kHz: the direct
+             sound's top octave is added back (RoomSim.withAir) rather than losing every hi-hat.
+Conditions: line (the file), room (home-like room + phone mic band + noise −30 dB), speaker (small speaker in a
+home-like room, noise −24 dB), hall (long or dominant echo).
+
+Scores: identical to mir_eval 0.8.2 (`-metrics` cross-check, 200 random cases incl. double/half/off-beat: worst
+difference 4.9e-7). "beat F" = the beats the LIGHTS would play — the clock's grid between tracker passes, only while
+Play Along trusts it (phase confidence ≥ 0.5). "grid F" = the grid whenever the clock holds a tempo, trusted or not.
+
+1. Beat tracking
+----------------
+set          cond     tracks  beat F  grid F  CMLt  AMLt  downbeat F  lock med  never  right tempo  ×2 (half time)  ×½ (double)
+candombe     hall         35   0.051   0.166 0.029 0.032       0.017     17.0s     33          60%              0%           0%
+candombe     line         35   0.169   0.305 0.103 0.113       0.045     17.5s     21          97%              0%           0%
+candombe     room         35   0.113   0.287 0.065 0.074       0.037     18.6s     28          83%              3%           0%
+candombe     speaker      35   0.113   0.288 0.067 0.073       0.032     18.9s     27          91%              0%           0%
+set          cond     tracks  beat F  grid F  CMLt  AMLt  downbeat F  lock med  never  right tempo  ×2 (half time)  ×½ (double)
+gmd          hall        347   0.117   0.215 0.070 0.094       0.041     10.6s    286          34%              5%           3%
+gmd          line        347   0.178   0.329 0.101 0.137       0.056     11.2s    237          50%              3%          10%
+gmd          room        347   0.145   0.272 0.086 0.112       0.044     10.2s    268          44%              4%           5%
+gmd          speaker     347   0.132   0.244 0.077 0.104       0.039     10.6s    276          39%              5%           5%
+set          cond     tracks  beat F  grid F  CMLt  AMLt  downbeat F  lock med  never  right tempo  ×2 (half time)  ×½ (double)
+guitarset    hall        360   0.034   0.056 0.016 0.027       0.008     16.0s    332          11%              2%           1%
+guitarset    line        360   0.064   0.103 0.031 0.051       0.027     13.1s    326          16%              2%           1%
+guitarset    room        360   0.067   0.112 0.034 0.051       0.028     12.7s    321          19%              2%           1%
+guitarset    speaker     360   0.063   0.109 0.031 0.048       0.024     14.9s    320          18%              2%           1%
+set          cond     tracks  beat F  grid F  CMLt  AMLt  downbeat F  lock med  never  right tempo  ×2 (half time)  ×½ (double)
+slakh        hall         20   0.115   0.274 0.075 0.075       0.048     15.3s     15          45%              0%           0%
+slakh        line         20   0.562   0.676 0.454 0.475       0.364     11.4s      7          80%              0%           5%
+slakh        room         20   0.382   0.572 0.290 0.316       0.238     12.4s      9          80%              0%           5%
+slakh        speaker      20   0.366   0.574 0.276 0.302       0.205     13.0s     10          80%              0%           5%
+
+
+Reading it:
+  • The lights play along on very little real music. Clean BabySlakh mixes: F 0.56 (7 of 20 never lock); clean
+    drum performances: 0.18 (237 of 347 never lock); solo guitar: 0.06.
+  • The tracker usually HEARS the right tempo — it never trusts it. Traced on Groove MIDI "funk-groove1 138": the
+    tempo is 138–139 BPM within 6 s, the tempo confidence 0.00 for the whole take, so the clock never adopts it.
+    The confidence reads the onset autocorrelation at the EXACT beat lag; human timing spreads one-frame (10 ms)
+    onset spikes a frame or two apart, and the threshold was calibrated on the lab's machine-timed synthetic songs.
+    Fix (build 915): smooth the onset signal before the tempo and phase combs — see results-2026-11-02-tracker.txt.
+  • A room costs about a third of what's left (Slakh 0.56 → 0.38); a hall nearly all of it.
+
+2. Rooms: the score follows clarity
+-----------------------------------
+One BabySlakh track (F 0.89 clean) through each of 27 measured responses (3 per room, different mics):
+
+   F   DRR dB  C50 dB  RT60 s  room / mic   (BabySlakh Track00001; the first import's 3 responses per room)
+ 0.00   -14.8    -0.1    1.92  Hotel_SkalskyDvur_ConferenceRoom2 / mic 21
+ 0.00   -13.6    -5.2    2.05  VUT_FIT_L227 / mic 21
+ 0.00   -12.3    -2.1    1.97  VUT_FIT_L227 / mic 21
+ 0.00   -12.2    -0.3    1.26  VUT_FIT_C236 / mic 11
+ 0.00    -9.6     0.4    1.02  VUT_FIT_D105 / mic 21
+ 0.00    -7.7     1.2    1.14  VUT_FIT_C236 / mic 21
+ 0.00    -5.4     3.5    1.64  VUT_FIT_L227 / mic 01
+ 0.03    -9.3     2.3    1.52  Hotel_SkalskyDvur_ConferenceRoom2 / mic 01
+ 0.05    -8.9     3.3    1.10  VUT_FIT_E112 / mic 10
+ 0.06    -8.4     3.5    0.62  VUT_FIT_Q301 / mic 10
+ 0.08    -0.4     4.5    1.40  Hotel_SkalskyDvur_ConferenceRoom2 / mic 11
+ 0.13    -5.3     2.1    1.05  VUT_FIT_D105 / mic 15
+ 0.20    -4.1     3.8    1.09  VUT_FIT_E112 / mic 21
+ 0.21    -9.1     4.8    0.53  VUT_FIT_L207 / mic 01
+ 0.21    -0.9     4.9    1.09  VUT_FIT_D105 / mic 01
+ 0.33    -6.1     6.3    0.60  VUT_FIT_Q301 / mic 18
+ 0.45    -5.5     7.4    0.50  Hotel_SkalskyDvur_Room112 / mic 21
+ 0.50    -3.4     7.7    0.54  Hotel_SkalskyDvur_Room112 / mic 10
+ 0.56    -6.9     3.2    0.57  VUT_FIT_L207 / mic 01
+ 0.60    -4.2     5.0    0.70  VUT_FIT_L212 / mic 16
+ 0.72    -1.1    10.5    0.42  Hotel_SkalskyDvur_Room112 / mic 01
+ 0.73    -2.0     6.5    0.66  VUT_FIT_L212 / mic 01
+ 0.73     4.8     8.7    0.94  VUT_FIT_C236 / mic 01
+ 0.79    -3.5     5.1    0.68  VUT_FIT_L212 / mic 01
+ 0.82     1.3     9.1    0.52  VUT_FIT_L207 / mic 01
+ 0.88    12.3    22.0    0.22  VUT_FIT_Q301 / mic 01
+ 0.89     9.0    14.0    0.61  VUT_FIT_E112 / mic 01
+ corr(F, DRR) = 0.78   corr(F, C50) = 0.79
+
+Synthetic rooms (exponential noise tails, flat spectrum) were far kinder: RT60 0.4 s +6 dB → 0.89, 0.8 s 0 dB →
+0.88, 1.2 s −4 dB → 0.68. Measured rooms ring longer in the bass, where the kick lives. A phone across a living room
+(C50 ~5–15 dB) is the "room" condition; a lecture hall or the far end of a big room is "hall".
+
+3. Drums: today's single "hit"
+------------------------------
+AudioFeatureExtractor's onset (the Hits source), scored as if it were each drum (±50 ms; recall on strokes of
+velocity ≥ 40; precision = firings landing on that drum's family — hi-hat lane: hat, pedal, ride, crash).
+It fires about 7 times a second on a drum take — on everything — so each drum's precision is ~0.1–0.3:
+
+set          cond     detector        kind    recall  precision     F   (hits / annotated, firings)
+gmd          hall     today's hit     hat     0.739      0.187  0.298   (32580 / 44112, 209340)
+gmd          hall     today's hit     kick    0.908      0.221  0.355   (38006 / 41853, 240118)
+gmd          hall     today's hit     snare   0.831      0.253  0.388   (48208 / 58018, 240222)
+gmd          line     today's hit     hat     0.968      0.236  0.379   (42695 / 44112, 219809)
+gmd          line     today's hit     kick    0.988      0.234  0.378   (41334 / 41853, 251401)
+gmd          line     today's hit     snare   0.905      0.269  0.415   (52515 / 58018, 251516)
+gmd          room     today's hit     hat     0.822      0.206  0.330   (36255 / 44112, 206765)
+gmd          room     today's hit     kick    0.958      0.236  0.378   (40102 / 41853, 237587)
+gmd          room     today's hit     snare   0.871      0.268  0.410   (50555 / 58018, 237700)
+gmd          speaker  today's hit     hat     0.826      0.212  0.338   (36439 / 44112, 200516)
+gmd          speaker  today's hit     kick    0.914      0.226  0.362   (38256 / 41853, 230208)
+gmd          speaker  today's hit     snare   0.866      0.271  0.413   (50226 / 58018, 230317)
+slakh        hall     today's hit     hat     0.701      0.248  0.366   (6759 / 9642, 30270)
+slakh        hall     today's hit     kick    0.806      0.136  0.233   (4496 / 5576, 33081)
+slakh        hall     today's hit     snare   0.795      0.098  0.174   (3191 / 4013, 33081)
+slakh        line     today's hit     hat     0.887      0.315  0.465   (8556 / 9642, 29958)
+slakh        line     today's hit     kick    0.987      0.169  0.288   (5506 / 5576, 32691)
+slakh        line     today's hit     snare   0.907      0.113  0.201   (3641 / 4013, 32691)
+slakh        room     today's hit     hat     0.830      0.290  0.430   (7999 / 9642, 30506)
+slakh        room     today's hit     kick    0.934      0.157  0.269   (5208 / 5576, 33308)
+slakh        room     today's hit     snare   0.884      0.108  0.193   (3547 / 4013, 33308)
+slakh        speaker  today's hit     hat     0.822      0.292  0.431   (7930 / 9642, 30026)
+slakh        speaker  today's hit     kick    0.906      0.155  0.264   (5054 / 5576, 32778)
+slakh        speaker  today's hit     snare   0.889      0.110  0.196   (3567 / 4013, 32778)
+(520 s)
+
+4. Music Understanding (iOS 27) on the simulator
+------------------------------------------------
+MusicAnalysisProbeTests: a 30 s slice of the probe's 128 BPM test song → 64 beats, F 1.00 vs truth, 128.0 BPM, 1.52 s
+(iOS 27.0 simulator on an M4 Pro). The iPhone numbers come from the Debug probe (Settings → Advanced).
