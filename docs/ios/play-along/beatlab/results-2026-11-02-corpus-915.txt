@@ -1,0 +1,71 @@
+Beat lab on real recordings — build 915 tracker (2026-11-02)
+============================================================
+
+The shipping chain (OnsetFrameAnalyzer + BeatTracker + BeatClock, `runProd`) with build 915's tracker
+(BeatTrackerTuning.standard: Hann smoothing over 9 frames, confidence floor 0.16), on the same corpus and
+conditions as the 914 baseline (results-2026-11-02-corpus.txt). Reproduce:
+
+  docs/ios/play-along/beatlab/run.sh -corpus -set <set> -v      (one process per set)
+
+"beat F" = the beats the LIGHTS would play (only while Play Along trusts the clock, phase confidence ≥ 0.5).
+
+1. Before and after (914 → 915)
+-------------------------------
+set        cond     tracks  beat F          grid F          downbeat F      lock median     never locked  right tempo
+candombe   hall         35  0.051 → 0.246   0.166 → 0.324   0.017 → 0.099   17.0s → 14.7s    33 →  19     60% →  80%
+candombe   line         35  0.169 → 0.328   0.305 → 0.353   0.045 → 0.102   17.5s → 15.9s    21 →  15     97% → 100%
+candombe   room         35  0.113 → 0.291   0.287 → 0.324   0.037 → 0.102   18.6s → 14.5s    28 →  19     83% →  94%
+candombe   speaker      35  0.113 → 0.273   0.288 → 0.308   0.032 → 0.089   18.9s → 14.5s    27 →  17     91% →  94%
+gmd        hall        347  0.117 → 0.482   0.215 → 0.574   0.041 → 0.195   10.6s →  7.5s   286 → 147     34% →  67%
+gmd        line        347  0.178 → 0.641   0.329 → 0.678   0.056 → 0.298   11.2s →  7.2s   237 →  78     50% →  76%
+gmd        room        347  0.145 → 0.546   0.272 → 0.609   0.044 → 0.231   10.2s →  7.2s   268 → 115     44% →  71%
+gmd        speaker     347  0.132 → 0.522   0.244 → 0.595   0.039 → 0.199   10.6s →  7.2s   276 → 124     39% →  70%
+guitarset  hall        360  0.034 → 0.275   0.056 → 0.358   0.008 → 0.089   16.0s → 12.5s   332 → 218     11% →  50%
+guitarset  line        360  0.064 → 0.379   0.103 → 0.442   0.027 → 0.141   13.1s → 10.4s   326 → 178     16% →  57%
+guitarset  room        360  0.067 → 0.342   0.112 → 0.418   0.028 → 0.119   12.7s → 12.0s   321 → 199     19% →  54%
+guitarset  speaker     360  0.063 → 0.334   0.109 → 0.415   0.024 → 0.122   14.9s → 12.3s   320 → 195     18% →  52%
+slakh      hall         20  0.115 → 0.446   0.274 → 0.655   0.048 → 0.242   15.3s → 15.0s    15 →  10     45% →  75%
+slakh      line         20  0.562 → 0.665   0.676 → 0.685   0.364 → 0.391   11.4s → 12.4s     7 →   5     80% →  75%
+slakh      room         20  0.382 → 0.614   0.572 → 0.661   0.238 → 0.367   12.4s → 12.3s     9 →   6     80% →  75%
+slakh      speaker      20  0.366 → 0.611   0.574 → 0.673   0.205 → 0.344   13.0s → 14.8s    10 →   6     80% →  75%
+
+all 762 tracks, line     beat F 0.134 → 0.503
+all 762 tracks, room     beat F 0.113 → 0.440
+all 762 tracks, speaker  beat F 0.105 → 0.424
+all 762 tracks, hall     beat F 0.075 → 0.372
+
+Costs, honestly: BabySlakh's right-tempo share fell 80 % → 75 % (one of 20 mixes now locks at double time);
+Groove MIDI's half-time share rose 3 % → 7 % while its double-time share fell 10 % → 8 % (more tracks lock, a
+few of them at the wrong metre); BabySlakh locks a second later in two conditions. Synthetic lab songs:
+0.92 → 0.95 (results-2026-11-02-tracker.txt).
+
+2. Build 915 tables as printed
+------------------------------
+
+set          cond     tracks  beat F  grid F  CMLt  AMLt  downbeat F  lock med  never  right tempo  ×2 (half time)  ×½ (double)
+candombe     hall         35   0.246   0.324 0.178 0.189       0.099     14.7s     19          80%              0%           0%
+candombe     line         35   0.328   0.353 0.265 0.282       0.102     15.9s     15         100%              0%           0%
+candombe     room         35   0.291   0.324 0.222 0.259       0.102     14.5s     19          94%              3%           0%
+candombe     speaker      35   0.273   0.308 0.211 0.237       0.089     14.5s     17          94%              3%           0%
+(250 s)
+
+set          cond     tracks  beat F  grid F  CMLt  AMLt  downbeat F  lock med  never  right tempo  ×2 (half time)  ×½ (double)
+gmd          hall        347   0.482   0.574 0.350 0.452       0.195      7.5s    147          67%             10%           5%
+gmd          line        347   0.641   0.678 0.498 0.635       0.298      7.2s     78          76%              7%           8%
+gmd          room        347   0.546   0.609 0.409 0.527       0.231      7.2s    115          71%              9%           6%
+gmd          speaker     347   0.522   0.595 0.384 0.500       0.199      7.2s    124          70%              9%           6%
+(570 s)
+
+set          cond     tracks  beat F  grid F  CMLt  AMLt  downbeat F  lock med  never  right tempo  ×2 (half time)  ×½ (double)
+guitarset    hall        360   0.275   0.358 0.162 0.235       0.089     12.5s    218          50%              7%           2%
+guitarset    line        360   0.379   0.442 0.226 0.330       0.141     10.4s    178          57%              9%           3%
+guitarset    room        360   0.342   0.418 0.203 0.295       0.119     12.0s    199          54%              8%           2%
+guitarset    speaker     360   0.334   0.415 0.194 0.284       0.122     12.3s    195          52%              8%           2%
+(225 s)
+
+set          cond     tracks  beat F  grid F  CMLt  AMLt  downbeat F  lock med  never  right tempo  ×2 (half time)  ×½ (double)
+slakh        hall         20   0.446   0.655 0.333 0.344       0.242     15.0s     10          75%             10%           5%
+slakh        line         20   0.665   0.685 0.523 0.606       0.391     12.4s      5          75%              0%          10%
+slakh        room         20   0.614   0.661 0.465 0.520       0.367     12.3s      6          75%              5%          10%
+slakh        speaker      20   0.611   0.673 0.469 0.522       0.344     14.8s      6          75%              0%          10%
+(64 s)

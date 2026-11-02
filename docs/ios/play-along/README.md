@@ -1085,3 +1085,81 @@ Tests: `MusicAnalysisProbeTests` (3). On the iOS 27 simulator a 30 s slice gives
 **Phone check for build 914:** Settings → Advanced → **Music analysis probe** → Start; plug in, screen on (about a
 minute). Then run it once more and leave the app straight away (background). **Copy results** and paste them to
 Claude — these numbers decide whether "Remembers" (§18) can analyse a song on the phone.
+
+## 21. The lights trust real music, and hear each drum (2026-11-02, build 915)
+
+The third piece of §18: the tracker fix §20 found, and step 1 of "the room is the band" (research doc §3.4). Same
+branch; rollback tag `checkpoint/pre-build-915-drum-lanes` (= `0e4a7df`). Started by one session and finished by
+another (DEVLOG "HANDOFF" entry).
+
+**1. The tracker trusts the tempo it hears** (`BeatTracker.swift`, `BeatTrackerTuning`). Human timing spreads a
+beat's 10 ms onset spikes a frame or two apart, so the autocorrelation at the exact beat lag stayed low and the
+confidence never rose. The flux is now Hann-smoothed over 9 frames (~90 ms) before the tempo and phase combs, and
+the confidence floor is 0.16 (was 0.20). `.raw` keeps the old tracker for the lab. Whole corpus (762 tracks;
+`beatlab/results-2026-11-02-corpus-915.txt`), beats the lights play, F:
+
+| Condition | 914 | 915 |
+|---|---|---|
+| line (the file) | 0.13 | **0.50** |
+| home-like room | 0.11 | **0.44** |
+| small speaker in a room | 0.11 | **0.42** |
+| hall | 0.08 | **0.37** |
+
+Groove MIDI takes that never lock: 237 → 78 of 347; median lock 11 s → 7 s. Synthetic lab songs 0.92 → 0.95; false
+locks on non-music 10.9 % → 8.3 %. **Costs:** BabySlakh's right-tempo share 80 % → 75 % (one of 20 mixes now locks
+at double time) and two of its conditions lock a second later; Groove MIDI half-time locks 3 % → 7 % (double-time
+10 % → 8 %).
+
+**2. Kick, snare and hi-hat, each heard on its own** (`DrumLanes.swift`, run by `OnsetFrameAnalyzer` on every 10 ms
+frame). Kick = the three lowest bands rising (30–188 Hz); snare = its body (188–469 Hz) and its noise (2–7 kHz)
+rising together; hi-hat (and ride/crash) = 5–16 kHz. Each lane fires against its own recent level and spread, with
+a minimum gap. The latest hit of each reaches every look on `AudioFeatures` (`lastKickAt`/`kickStrength`…), and three
+new sound sources use them: **Kick**, **Snare**, **Hi-hat** (Sound editor chips). They punch like Hits — instant
+rise, palette steps, events, moving hits — on their own drum only. All 367 annotated drum tracks
+(`beatlab/results-2026-11-02-drums.txt`), F:
+
+| | kick | snare | hi-hat |
+|---|---|---|---|
+| Drum takes, line / room | 0.90 / 0.82 | 0.65 / 0.63 | 0.83 / 0.78 |
+| Full mixes, line / room | 0.76 / 0.67 | 0.60 / 0.52 | 0.80 / 0.70 |
+| Today's one "hit" as that drum (mixes, line) | 0.29 | 0.22 | 0.56 |
+
+Published state of the art on mixes without look-ahead: kick ≈ 0.75–0.85, snare and hi-hat ≈ 0.6–0.7. Weak spots:
+a small speaker loses the kick (mixes 0.55: it has no bass), and halls lose the snare (mixes 0.20).
+
+**Kick vs bass — the decision** (`beatlab/results-2026-11-02-kickbass.txt`). Each kick band is one 47 Hz FFT bin,
+so a bass note that starts from silence rises exactly like a kick; the handover's lanes fired on every bass note of
+the test song. Measured on the tuning set:
+
+| Way | Kick precision, mixes | Kick F (mean) | Delay |
+|---|---|---|---|
+| As handed over | 0.62 | 0.759 | 0 |
+| Wait for the decay (a kick dies away, a bass note holds), 12 frames | 0.70 | 0.774 | **+120 ms** |
+| **Level gate** (a kick must bring the low end within 2 log units of the loudest it has been lately) | **0.70** | **0.779** | **0** |
+
+Chosen: the level gate, plus a snare veto (no snare on a kick's frame or in the 50 ms after it) and a one-frame
+snare hold (dropped if a kick follows: the beater's click reaches the snare's noise bands a frame before the low end
+clears the kick lane). Snare precision on mixes 0.45 → 0.67 (recall 0.72 → 0.55 — fewer false flashes, some missed
+snares); snares are published 10 ms late, with their onset time. A held hit is marked back on its onset frame in
+the analyzer's ring, so readers wait `DrumLanes.settleSeconds` (0.15 s) before reading a frame as final.
+
+**Known limit, recorded, not hidden:** a bass line in a song with *no drums at all* still reads as kicks — with no
+kick, its notes are the loudest low end there is. The "lately" memory fades with a 4 s time constant (about a fifth
+per second), so about a second into a drum break with the bass going on, bass notes pass the gate again. Waiting
+for the decay would fix the drumless case but costs 80–120 ms on every kick and scored no better on real mixes.
+`DrumLanesTests.testABassLineWithNoDrumsIsAKnownLimit` keeps the original assertion inside `XCTExpectFailure`: if it
+ever passes, the test fails and asks to be tightened.
+
+**Not changed:** Play Along, Hits and every built-in look (no look uses the new sources yet; the band transform will,
+§3.4 step 4). The drum lanes run for every microphone and music-service source that feeds the onset analyzer.
+
+Tests: `DrumLanesTests` (7, one expected failure), and the tracker suites with the new defaults (BeatTracker,
+OnsetFrameAnalyzer, BeatClock, BeatMath, Composer2LabPlayAlong). Simulator only. **Not verified on hardware.**
+
+Device check for build 915:
+1. Play Along on, a song with a clear beat through the room: the lights should lock sooner and on more songs than
+   914 — especially live drums, acoustic songs and anything not machine-timed.
+2. In the look editor, a layer's **Sound** section → **Kick**: the layer should punch on the kick drum and not on the snare; then
+   **Hi-hat**: a fast shimmer on the hats. Try a song with a busy bass line: the Kick layer may also punch on bass
+   notes when the drums drop out (the known limit above).
+3. A phone speaker or small Bluetooth speaker in the room: expect Kick to miss many kicks (no bass reaches the mic).

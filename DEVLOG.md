@@ -11,6 +11,12 @@
 - Live shared handoff: append-only entries in this `DEVLOG.md`. Git is the shared memory between tools.
 
 ### iOS — where we are RIGHT NOW
+- **BUILD 915 ON `experiment/play-along` — THE LIGHTS TRUST REAL MUSIC, AND HEAR EACH DRUM, NOT MERGED (2026-11-02).**
+  The tracker fix 914 found: beats the lights play on the 762-track corpus, line 0.13 → 0.50 (rooms 0.11 → 0.44).
+  New kick / snare / hi-hat lanes and **Kick**, **Snare**, **Hi-hat** sound sources (kick F 0.90 drum takes, 0.76
+  full mixes). Kick vs bass decided with a no-wait level gate; known limit kept as an expected failure (a drumless
+  bass line reads as kicks). Rollback tag `checkpoint/pre-build-915-drum-lanes`. README §21. Simulator only —
+  **hardware NOT verified.**
 - **BUILD 914 ON `experiment/play-along` — REAL SONGS FOR THE BEAT LAB + MUSIC UNDERSTANDING PROBE, NOT MERGED
   (2026-11-02).** The beat lab reads real recordings (Groove MIDI, BabySlakh, GuitarSet, Candombe; 2,325 measured
   rooms) on the Dev drive and scores the shipping tracker like mir_eval. Found: the lights play along on very little
@@ -14233,3 +14239,75 @@ pick Spotify → Start → no crash".
   unsigned): Release OK — no probe strings, MusicUnderstanding not linked; Debug (an export of the 914 commit) OK —
   MusicUnderstanding weak-linked.
 - Not verified on hardware: the probe (Brian runs it; README §20 phone check).
+
+## 2026-11-02 — [Claude] HANDOFF: build 915 in progress, UNCOMMITTED, on `experiment/play-along` (to Marshall)
+
+Brian asked to continue in another session ("Marshall" on the CNVS canvas). State at handoff:
+
+- **Committed:** 913 (Sound dial, `a999cf3`…`2496fb1`), 914 (real-song lab + Music Understanding probe,
+  `987fdee` `a4fff71` `6e9560b` `3ef7e88` `0e4a7df`). `CURRENT_PROJECT_VERSION` = 914 in all 24 entries.
+  Rollback tag for 915: `checkpoint/pre-build-915-drum-lanes` (= `0e4a7df`).
+- **Uncommitted in the worktree (build 915, two fixes, commit them separately):**
+  1. **Tracker confidence on real music** (`HueHome/Core/Audio/BeatTracker.swift`): `BeatTrackerTuning` (new;
+     `.standard` = smoothFrames 4, confidenceFloor 0.16, span 0.3; `.raw` = the pre-915 tracker), Hann smoothing of
+     the detrended flux, `BeatObservation.periodicity/peakiness`. Measured (`beatlab/results-2026-11-02-tracker.txt`):
+     mean beats-played F on 175 real tracks 0.22 → 0.49, false locks on non-music 10.9 % → 8.3 %, synthetic 0.92 →
+     0.95, median timing +0.9 ms. NOT yet run through the app's own tests with the new defaults (BeatTrackerTests,
+     BeatClockPlayAlongTests, PlayAlongTestSynth users) — do that first; thresholds in those tests may move.
+     Then rerun `run.sh -corpus` per set for the 915 results table (before/after vs results-2026-11-02-corpus.txt).
+  2. **Drum lanes** (`HueHome/Core/Audio/DrumLanes.swift` new; OnsetFrameAnalyzer runs them per 10 ms frame —
+     `OnsetFrames.kick/snare/hat`, `drumHits()`; `AudioFeatures.lastKickAt/kickStrength/…` + `adopt(_:)`;
+     AudioPCMSink stamps them on all three deliver paths; `Composer2AudioModulation.Source.kick/.snare/.hat`,
+     `isHit`, `lastHitTime(_:)`; engine treats them like Hits (instant rise, palette steps, events, moving hits);
+     Sound editor chips Kick / Snare / Hi-hat; theme names). Registered in the project (`add_play_along_files.rb`).
+     Tuning (`beatlab/results-2026-11-02-drums-tuning.txt`): kick F 0.83 clean drums / 0.73 full mixes, hi-hat
+     0.82 / 0.79, snare 0.65 / 0.56 (literature on mixes: kick ~0.75–0.85, snare/hat ~0.6–0.7). Today's single
+     "hit" as a kick detector: 0.38. `DrumLaneTuning` defaults in the file are pass 2's; pass 3 found kick
+     confirmation by decay (kickConfirmFrames 12, kickDecay 2.0, kickK 6) lifts mix precision 0.62 → 0.70 at the
+     cost of publishing kicks ~120 ms late (onset time kept) — decide; hat k 2.0 floor 0.30 is slightly better.
+     **`DrumLanesTests` currently FAIL (2 of 6):** the synthetic song has a bass note on every beat and the kick lane
+     fires on all of them; the snare lane fires on kick+bass beats. That is the real kick-vs-bass weakness (mix
+     precision ~0.62). Either improve discrimination (confirmation helps some) or reframe the test to what is
+     achievable — don't just loosen it silently; record the decision.
+  3. Lab: `run.sh` compiles DrumLanes; `-drums` scores today's hit and the lanes; `-drumtune`, `-tracktune` (new
+     TrackTune.swift). Corpus at `/Volumes/Dev/Datasets/chromaglow-beat-corpus` (manifest + annotations built by
+     `run.sh -import`; raw sets with SOURCE.txt; EDM drop audio NOT downloaded — licences unknown).
+- **Then:** full suite (expect 2621 + DrumLanesTests), guards, bump 915, README §21 + DEVLOG, Release device build
+  (no regressions; probe absent). Next builds per research doc §3.4 / §4.2: 916 groove map, 917 light roles
+  (low/middle/high + z to bridge), 918 band transform + shared flash budget, 919 slow lanes; then "knows what's
+  coming" (phrases → build/drop → Conductor → song maps — the first-listen buffer needs Brian's privacy OK, doc §6).
+- **Owed by Brian:** phone runs of 911–914 (Sync Check, moving hits, Sound dial, the Music analysis probe — paste its
+  Copy results).
+
+## 2026-11-02 — [Claude] Build 915: the lights trust real music, and hear each drum, on `experiment/play-along` (not merged)
+
+- Picked up from the HANDOFF entry above (the session that started 915 ran out of room; this one finished it).
+  Rollback tag `checkpoint/pre-build-915-drum-lanes` (= `0e4a7df`). Nothing on `main` changed; nothing pushed.
+- Commits:
+  - `9937c11` **The tracker trusts the tempo it hears.** `BeatTrackerTuning` (`.standard` = 9-frame Hann smoothing
+    of the detrended flux, confidence floor 0.16; `.raw` = before). App tracker suites with the new defaults
+    89/89 before committing (BeatTracker, OnsetFrameAnalyzer, BeatClock ×2, BeatMath, Composer2LabPlayAlong).
+  - `23c7722` **Kick, snare and hi-hat lanes + Kick/Snare/Hi-hat sources.** The handover's open question decided
+    on real data (`beatlab/results-2026-11-02-kickbass.txt`, new `run.sh -kickbass`): a **level gate** (a kick must
+    bring the low end within 2 log units of the loudest lately) instead of waiting for the decay — the same mix
+    precision 120 ms of confirmation bought (0.62 → 0.70), with no delay and a higher F (0.759 → 0.779); a snare
+    veto (kick frame + 50 ms after) and a one-frame snare hold (snare precision on mixes 0.45 → 0.67, recall 0.72 →
+    0.55); hi-hat k 2.0 / floor 0.30 (pass 3). Held hits are marked back on their onset frame in the analyzer ring
+    (`DrumLanes.settleSeconds` = 0.15 s for readers). **Known limit recorded, not loosened:** a bass line with no
+    drums at all reads as kicks — `testABassLineWithNoDrumsIsAKnownLimit` keeps the assertion in `XCTExpectFailure`.
+  - `72690e7` build 915 (24 entries).
+- Measured (beat lab; audio stays on the Dev drive):
+  - Tracker, whole corpus 762 tracks (`results-2026-11-02-corpus-915.txt`), beats the lights play F: line 0.13 →
+    0.50, room 0.11 → 0.44, small speaker 0.11 → 0.42, hall 0.08 → 0.37. Groove MIDI never-locked 237 → 78 of 347.
+    Costs: BabySlakh right tempo 80 % → 75 % (one mix now at double time); Groove MIDI half-time 3 % → 7 %.
+  - Drum lanes, all 367 annotated drum tracks (`results-2026-11-02-drums.txt`), F line/room: drum takes kick
+    0.90/0.82, snare 0.65/0.63, hat 0.83/0.78; full mixes kick 0.76/0.67, snare 0.60/0.52, hat 0.80/0.70 (today's
+    one "hit" as a kick on mixes: 0.29). Weak: small speaker kick on mixes 0.55; halls snare on mixes 0.20.
+- Tests (iOS 27.0 simulator `C10C70A7-A702-40A9-8810-A6F13B98C57B`): `DrumLanesTests` 7 (one expected failure).
+  Full suite **2627 passed + 1 expected failure** (= 2621 + 7 new; `/Volumes/Dev/DerivedData/play-along-full-915.xcresult`),
+  serial. The first full run hit "test runner timed out" after the targeted runs; simulator rebooted, rerun clean.
+  Guards green. Device build (generic iOS, Release, unsigned) OK, CFBundleVersion 915: no probe strings,
+  MusicUnderstanding not linked. Not archived, not installed.
+- Not verified on hardware: all of it. Device check: README §21.
+- Next: 916 groove map (drums predicted on the grid), then light roles, band transform + shared flash budget, slow
+  lanes; "knows what's coming" after. The first-listen buffer needs Brian's privacy OK (research doc §6).
