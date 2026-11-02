@@ -1,0 +1,16 @@
+drop: 8 synthetic arrangements × 3 tempos, line/room/speaker/hall; real music without drops (≤ 10 per set), line/room; 108 s
+set/cond          drops  called≥.5  called≥.8  lead(med s)  confirmed  false≥.5/song  false≥.8/song  fake builds: called, eased back   states right
+synth hall           42       0.02       0.00          5.0       0.05           0.25           0.04        3: 0, 2                0.29
+synth line           42       0.29       0.24          7.5       0.24           1.54           1.33        3: 3, 0                0.54
+synth room           42       0.07       0.02          1.5       0.21           1.12           0.54        3: 1, 1                0.44
+synth speaker        42       0.05       0.00          6.0       0.19           0.46           0.25        3: 1, 0                0.46
+
+Real music with no drops: false staged drops per minute (≥ 0.5 / ≥ 0.8)
+candombe line     10 songs,  29.4 min: 0.00 / 0.00 per minute
+candombe room     10 songs,  29.4 min: 0.00 / 0.00 per minute
+gmd line          10 songs,  10.7 min: 0.00 / 0.00 per minute
+gmd room          10 songs,  10.7 min: 0.00 / 0.00 per minute
+guitarset line    10 songs,   4.0 min: 0.00 / 0.00 per minute
+guitarset room    10 songs,   4.0 min: 0.00 / 0.00 per minute
+slakh line        10 songs,  29.7 min: 0.00 / 0.00 per minute
+slakh room        10 songs,  29.7 min: 0.00 / 0.00 per minute

@@ -7,8 +7,8 @@
 // arrangements rendered here, deterministically, with the build cues the
 // literature names (research doc §4): the low end taken away, a snare roll
 // doubling in rate, a noise riser climbing in level and pitch, a loudness
-// ramp and a one-beat gap before the drop, where the kick and sub-bass
-// return. Real songs (BabySlakh) are used for what they can say: where the
+// ramp and a one-beat gap before the drop, where the kick and the bass (a
+// pure sub plus a saw an octave up, build 921) return. Real songs (BabySlakh) are used for what they can say: where the
 // instrumentation changes (phrases), and how often a non-dance song is
 // wrongly called a drop.
 
@@ -122,14 +122,16 @@ enum ArrangementSynth {
                         if k % 2 == 1 { Synth.add(&out, snare, at: t, fs: fs, gain: 0.5) }
                         Synth.add(&out, hat, at: t, fs: fs, gain: 0.15)
                         Synth.add(&out, hat, at: t + beat / 2, fs: fs, gain: 0.25)
-                        Synth.addBass(&out, fs: fs, at: t + beat / 2, length: beat / 2 - 0.01, freq: root * 2, amp: 0.22)
+                        Synth.addBass(&out, fs: fs, at: t + beat / 2, length: beat / 2 - 0.01, freq: root * 2, amp: 0.18)
+                        addSaw(&out, fs: fs, at: t + beat / 2, length: beat / 2 - 0.01, freq: root * 2, amp: 0.08)
                     case .build, .fakeBuild:
                         // Kick for the first half, then the low end is gone.
                         if progress < 0.5 { Synth.add(&out, kick, at: t, fs: fs, gain: Float(0.7 * (1 - progress))) }
                         // The snare roll doubles: quarters, eighths, sixteenths, (last bar) thirty-seconds.
                         let perBeat = lastBarOfBuild ? 8 : progress < 0.5 ? 1 : progress < 0.75 ? 2 : 4
                         for r in 0..<perBeat {
-                            let g = Float(0.2 + 0.4 * (progress + Double(k) / 4 / Double(section.bars)))
+                            // Louder through the build, but a faster roll isn't a louder one.
+                            let g = Float((0.15 + 0.3 * (progress + Double(k) / 4 / Double(section.bars))) / Double(perBeat).squareRoot())
                             Synth.add(&out, snare, at: t + Double(r) * beat / Double(perBeat), fs: fs, gain: g)
                         }
                     case .drop:
@@ -137,8 +139,11 @@ enum ArrangementSynth {
                         if k % 2 == 1 { Synth.add(&out, snare, at: t, fs: fs, gain: 0.6) }
                         Synth.add(&out, hat, at: t, fs: fs, gain: 0.2)
                         Synth.add(&out, hat, at: t + beat / 2, fs: fs, gain: 0.3)
+                        // A sub (pure, below 141 Hz) with a saw layer an octave up (its
+                        // harmonics reach the bass-line lane's 141–375 Hz).
                         Synth.addBass(&out, fs: fs, at: t, length: beat / 2 - 0.01, freq: root, amp: 0.35)
                         Synth.addBass(&out, fs: fs, at: t + beat / 2, length: beat / 2 - 0.01, freq: root, amp: 0.35)
+                        addSaw(&out, fs: fs, at: t, length: beat - 0.01, freq: root * 2, amp: 0.18)
                         // A lead stab on the off-beat.
                         Synth.addPad(&out, fs: fs, at: t + beat / 2, length: beat / 3, freqs: chord.map { $0 * 2 }, amp: 0.05)
                     case .breakdown:
@@ -177,11 +182,23 @@ enum ArrangementSynth {
                     let x = Float(rng.gauss())
                     let y = a * (prevY + x - prevX)
                     prevX = x; prevY = y
-                    out[i] += y * Float(0.01 + 0.12 * u * u)
+                    out[i] += y * Float(0.01 + 0.07 * u * u)
                 }
             }
         }
         return ArrRender(samples: out, bpm: song.bpm, firstDownbeat: leadIn, barSeconds: bar,
                          sections: sections, barLines: barLines, duration: duration)
+    }
+
+    /// A band-limited saw (8 harmonics), plucked and released.
+    static func addSaw(_ out: inout [Float], fs: Double, at time: Double, length: Double, freq: Double, amp: Double) {
+        let start = Int(time * fs), len = Int(length * fs)
+        for i in 0..<len where start + i < out.count && start + i >= 0 {
+            let t = Double(i) / fs
+            let env = min(1, t / 0.005) * (t > length - 0.02 ? max(0, (length - t) / 0.02) : 1)
+            var v = 0.0
+            for k in 1...8 { v += sin(2 * .pi * Double(k) * freq * t) / Double(k) }
+            out[start + i] += Float(amp * env * v)
+        }
     }
 }

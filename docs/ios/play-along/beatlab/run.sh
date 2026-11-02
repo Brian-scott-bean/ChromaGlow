@@ -20,6 +20,7 @@
 #   docs/ios/play-along/beatlab/run.sh -groove    # build 916: do drum looks light ON the drum (heard vs groove map)
 #   docs/ios/play-along/beatlab/run.sh -activity  # build 919: is a bass line / are drums playing (BabySlakh stems)
 #   docs/ios/play-along/beatlab/run.sh -phrase    # build 920: song position and phrases (synthetic arrangements, BabySlakh)
+#   docs/ios/play-along/beatlab/run.sh -drop      # build 921: builds and drops (synthetic arrangements; false calls on real music)
 set -euo pipefail
 HERE=${0:a:h}
 REPO=${HERE:h:h:h:h}
@@ -35,6 +36,7 @@ xcrun swiftc -O -swift-version 5 -o "$OUT/beatlab" "$HERE"/*.swift \
   "$REPO/HueHome/Core/Audio/GrooveMap.swift" \
   "$REPO/HueHome/Core/Audio/ActivityLanes.swift" \
   "$REPO/HueHome/Core/Audio/SongStructure.swift" \
+  "$REPO/HueHome/Core/Audio/SongEnergy.swift" \
   "$REPO/HueHome/Core/Audio/BeatTracker.swift" \
   "$REPO/HueHome/Core/Music/MusicSource.swift"
 "$OUT/beatlab" "$@"
