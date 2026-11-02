@@ -1224,3 +1224,45 @@ Device check for build 916:
 2. A drum fill or a breakdown: the flashes should fall back to following what is heard within a beat or two, and
    come back on time a few bars after the beat returns.
 3. Skip to another song: no kick flashes on the old pattern once the new song's grid takes over.
+
+## 23. Which lights are low, middle and high (2026-11-02, build 917)
+
+Step 3 of "the room is the band" (research doc §3.3 problem 2, §3.4 step 3). Same branch; rollback tag
+`checkpoint/pre-build-917-light-roles` (= `9244a13`).
+
+**The problem.** The band needs to know which lights are floor lamps (kick, bass), at eye height (a held wash)
+and up high (snare, cymbals). Hue keeps each Entertainment light's height as z (−1 floor … +1 ceiling), but only
+when someone set it in the Hue app's area editor; ChromaGlow's own area builder writes z = 0 for every light, and
+Composer 2 used z only as a stand-in for depth.
+
+**What 917 does** (`Core/Composer2/Composer2Roles.swift`). Each light gets a role from, in order:
+
+| Source | Rule |
+|---|---|
+| You | Play Along → **Light heights**: Low · Middle · High per light. Kept on this phone, per light |
+| Your Hue Bridge | The area's z, when the area has any height at all (z spread ≥ 0.05): below −⅓ low, above +⅓ high. Entertainment slots only — Room mode's positions are a floor plan, not heights |
+| The light's type | Floor lamps, floor spots, bollards, Bloom: low. Ceiling, pendant, Centris, single/double spots: high. Table and wall lights: middle |
+| Otherwise | Middle ("Guessed") |
+
+- The live geometry (`Composer2SlotGeometry.roles`) resolves roles whenever its slots change or you change an
+  answer (a version counter: one lock read per frame, the answers only on a change), so a running look follows an
+  answer on its next frame. Previews use your answers and product types. Render slots now carry the product type.
+- A new layer mask, **`.role`** (`Composer2LayerMask.role([.low])`): the lights at those heights. While heights are
+  unknown it covers the whole room (never a silent no-op). Roles are encoded only on role masks, so every saved and
+  built-in look encodes exactly as before.
+- **Light heights** sheet: each of the room's lights with its height and where it came from ("Set by you", "From
+  your Hue Bridge", "From the light's type", "Guessed"), and a hint when the room has no low or no high light.
+
+**Deliberately not done:** writing the heights back to the bridge as z (research doc §3.3), so the Hue app and other
+apps see them. It means rewriting the area's positions; it needs a real-bridge test first. The sheet says so ("Your
+Hue Bridge's own light positions aren't changed"). No look uses role masks yet — the band transform will (§3.4
+step 4, build 918).
+
+Tests: `Composer2LightRolesTests` (9): bridge heights in thirds (and over the product type), a flat area falling
+back to product types, Room mode positions ignored, an answer winning and persisting, the split check, role mask
+weights (and inverted), unknown heights = whole room, encoding, and a running look following an answer. Full suite
+2645 + 1 expected failure. Simulator only. **Not verified on hardware.**
+
+Device check for build 917: Play Along → long-press → **Light heights**. Your lights should be listed with sensible
+guesses (floor lamps low, ceiling lights high; if you placed heights in the Hue app's Entertainment area, "From
+your Hue Bridge"). Change one, close the sheet, open it again: it should read "Set by you".

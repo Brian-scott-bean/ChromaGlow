@@ -11,6 +11,10 @@
 - Live shared handoff: append-only entries in this `DEVLOG.md`. Git is the shared memory between tools.
 
 ### iOS — where we are RIGHT NOW
+- **BUILD 917 ON `experiment/play-along` — WHICH LIGHTS ARE LOW, MIDDLE AND HIGH, NOT MERGED (2026-11-02).** Light
+  roles from your answer (Play Along → Light heights) > the bridge's z (when the area has heights) > the product
+  type; a `.role` layer mask. Heights are NOT written back to the bridge (needs a real-bridge test). Rollback tag
+  `checkpoint/pre-build-917-light-roles`. README §23. Simulator only — **hardware NOT verified.**
 - **BUILD 916 ON `experiment/play-along` — DRUM HITS ON TIME (THE GROOVE MAP), NOT MERGED (2026-11-02).** Kick /
   Snare / Hi-hat looks now fire predicted on the beat grid once a pattern repeats: kick light hits on time (±50 ms)
   on mixes 0.07 → 0.44, median error +135 → +20 ms; cost ≈ +0.6 soft extra flashes per kick. Rollback tag
@@ -14340,3 +14344,24 @@ Brian asked to continue in another session ("Marshall" on the CNVS canvas). Stat
   unsigned) OK, CFBundleVersion 916: no probe strings, MusicUnderstanding not linked. Not archived, not installed.
 - Not verified on hardware: all of it. Device check: README §22.
 - Next: 917 light roles (low/middle/high).
+
+## 2026-11-02 — [Claude] Build 917: which lights are low, middle and high, on `experiment/play-along` (not merged)
+
+- Step 3 of "the room is the band" (research doc §3.3 problem 2 / §3.4 step 3). Rollback tag
+  `checkpoint/pre-build-917-light-roles` (= `9244a13`). Nothing on `main` changed; nothing pushed.
+- Commits:
+  - `459a385` **Light roles + a role mask.** `Core/Composer2/Composer2Roles.swift`: role per slot = your answer
+    (UserDefaults `playAlong.lightHeights`, per light id) > bridge z in thirds when the area's z spread ≥ 0.05
+    (streaming slots only) > archetype (floor/bollard/Bloom low; ceiling/pendant/Centris/spots high; table/wall
+    middle) > middle. Render slots carry `archetype`; `Composer2SlotGeometry.roles` (live: re-resolved on a slot
+    change or an answer, via a version counter; previews: answers + product types). `Composer2LayerMask.role`
+    (roles encoded only on role masks; unknown heights → whole room). Play Along sheet → **Light heights**
+    (`UI/Composer2/Composer2LightHeightsView.swift`).
+  - `e5e3e9f` build 917 (24 entries).
+- Decided: heights are NOT written back to the bridge as z (rewrites the area's positions; needs a real-bridge
+  test). The sheet says the bridge isn't changed.
+- Tests (iOS 27.0 simulator): `Composer2LightRolesTests` 9. Full suite **2645 passed + 1 expected failure**
+  (= 2637 + 9; `/Volumes/Dev/DerivedData/play-along-full-917.xcresult`), serial. Guards green. Device build
+  (generic iOS, Release, unsigned) OK, CFBundleVersion 917: no probe strings, MusicUnderstanding not linked.
+- Not verified on hardware: all of it. Device check: README §23 (do your lights' guesses look right?).
+- Next: 918 the band transform + one shared flash budget.
