@@ -2,9 +2,9 @@
 
 **Purpose:** This file is the standalone Claude Code handoff for ChromaGlow. It must contain enough context for Claude Code to reopen the project in a new session and safely continue work without needing the prior ChatGPT conversation or a separate `cloud.md` file.
 
-**Last synthesized:** 2026-06-21
+**Last synthesized:** 2026-09-03
 
-**Current one-line state:** ChromaGlow is a mature native iOS Philips Hue app; the project is now stabilizing repo/process context and preparing a separate native Android Kotlin / Jetpack Compose MVP focused on bridge pairing, dashboard/room/light control, scenes, secure local storage, and internal testing.
+**Current one-line state:** ChromaGlow is a mature native iOS Philips Hue app; the standalone native Android Kotlin / Jetpack Compose app now exists and runs, with bridge discovery, live link-button pairing, pinned TLS, and Keystore-backed credential storage wired end to end — the remaining MVP gap is the live Hue control layer (rooms/lights/scenes still render from demo fixtures only).
 
 ---
 
@@ -76,7 +76,14 @@ Known inconsistency: some docs mention `com.lightshade.app` or `group.com.lights
 
 ## 4. Branch and Repo State Warning
 
-There is an unresolved branch-state ambiguity.
+**The repository has moved.** The canonical repo is now at
+`/Users/brianbean/Developer/huehome-pro-v0.3.0`, not `~/Desktop/`. Git worktrees created before
+the move stored an absolute path in their `.git` file and broke silently — every git command in
+them failed with `fatal: not a git repository`. Seventeen worktrees were repaired on 2026-09-03.
+If a worktree throws that error, check its `.git` pointer and the matching
+`.git/worktrees/<name>/gitdir` back-pointer before assuming anything worse is wrong.
+
+There is also an unresolved branch-state ambiguity.
 
 - Some migration/process docs say `main` is the protected integration branch.
 - A later shared handoff mentioned a merge into `prod`.
@@ -104,19 +111,23 @@ Do not start new code tasks until this is unambiguous.
 
 ## 5. Current Project Phase
 
-The project is at the boundary between:
+Milestones 1 and 2 are substantially complete. The project is now inside:
 
-- **Milestone 0: repo/context/process safety**
-- **Milestone 1: Android foundation**
+- **Milestone 3: Android core control MVP**
 
-Current near-term goal:
+Verified on 2026-09-03 by building and running the app on an emulator:
 
-1. Commit/update root context files such as `CLAUDE.md` and `AGENTS.md` so coding agents can restart safely.
-2. Verify branch/default/protection state.
-3. Confirm iOS build/TestFlight baseline.
-4. Start the first Android foundation PR: a native Kotlin / Jetpack Compose app shell that builds and launches to a placeholder screen.
+- The Android app builds, installs, launches, and passes its tests (212 unit tests, 44 instrumented tests, 0 failures).
+- Setup, dashboard, room detail, scenes, and settings screens all render and navigate.
+- Bridge discovery (mDNS/NSD), manual IP entry, link-button pairing, Hue root-pinned TLS, Android Keystore credential storage, and the non-secret DataStore bridge registry are implemented **and wired into the running app** via `SetupViewModel`.
 
-Do not implement bridge discovery, pairing, TLS pinning, Hue control, Studio, Composer, DTLS entertainment, microphone sync, widgets, Wear OS, Marketplace, web, Google Home, or KMP in the first Android shell PR.
+Current near-term goal — the single biggest gap:
+
+1. Build the Hue CLIP v2 REST client (`M3-01`). It does not exist yet.
+2. Back the dashboard, room detail, and scenes screens with live bridge data instead of `DemoFixtures`.
+3. Add the NUPnP discovery fallback (`M2-03`), which is still inventory-only.
+
+Do not implement Studio, Composer, DTLS entertainment, microphone sync, widgets, Wear OS, Marketplace, web, Google Home, or KMP. Those remain post-MVP.
 
 ---
 
@@ -353,7 +364,7 @@ The repo includes Ruby scripts that mutate or generate Xcode project structure. 
 Build verification command from repo rules:
 
 ```bash
-PROJ=/Users/brianbean/Desktop/huehome-pro-v0.3.0
+PROJ=/Users/brianbean/Developer/huehome-pro-v0.3.0
 xcodebuild -project "$PROJ/HueHome.xcodeproj" -scheme HueHome -destination 'generic/platform=iOS' build 2>&1 | grep -E 'error:|BUILD SUCCEEDED|BUILD FAILED'
 ```
 
@@ -365,7 +376,6 @@ Do not assume the path is valid on another machine. Adapt only the local project
 
 Do not assume these are implemented unless the current repo proves otherwise:
 
-- Native Android app project
 - Backend implementation
 - `.github/workflows` CI/CD workflows
 - Fastlane or formal release automation
@@ -522,8 +532,10 @@ Purpose:
 
 Current status:
 
-- Android has not been confirmed as started in the uploaded repo snapshot.
-- Next code task should be Android app shell and CI lane, after branch state is verified.
+- Android app exists at `android/` and runs; pairing foundation is complete and wired.
+- No live Hue control layer yet: dashboard/room/scene screens are demo-fixture-backed.
+- Next code task is the Hue CLIP v2 REST client and repository layer (`M3-01`/`M3-02`).
+- Still missing: Android CI lane, NUPnP fallback, feature-flag/telemetry interfaces.
 
 ### D. Design System / UI Parity
 
@@ -536,7 +548,8 @@ Purpose:
 Current status:
 
 - iOS tokens/components exist.
-- Android tokens/components have not been confirmed as implemented.
+- Android has a dark Material 3 theme with the amber accent (`ui/theme/`), matching the iOS visual language at MVP fidelity.
+- Deeper parity (glassmorphic cards, shimmer, custom tab bar) is not built.
 - Figma or Figma-like component inventory is likely useful.
 
 ### E. AI Coding Guardrails
@@ -803,32 +816,36 @@ Tasks:
 - M0-05: resolve `main` vs `prod` branch ambiguity
 - M0-06: document current TestFlight/iOS baseline status
 
-### Milestone 1 — Android Foundation
+### Milestone 1 — Android Foundation — MOSTLY DONE
 
 Goal: Android app exists and builds.
 
 Tasks:
 
-- M1-01: Android app shell
-- M1-02: Gradle/Kotlin/Compose baseline
-- M1-03: Android CI build lane
-- M1-04: Android design tokens and placeholder UI shell
-- M1-05: local feature flag interface
-- M1-06: demo mode data model and first screen
+- M1-01: Android app shell — **done**
+- M1-02: Gradle/Kotlin/Compose baseline — **done** (AGP 9.2.1, Kotlin 2.2.10, Gradle 9.4.1, compileSdk 37, minSdk 26)
+- M1-03: Android CI build lane — **not done**
+- M1-04: Android design tokens and placeholder UI shell — **done**
+- M1-05: local feature flag interface — **not done**
+- M1-06: demo mode data model and first screen — **done** (`DemoFixtures`, `DemoModeBoundary`)
 
-### Milestone 2 — Android Hue Pairing Foundation
+### Milestone 2 — Android Hue Pairing Foundation — MOSTLY DONE
 
 Goal: Android can find/pair with a Hue Bridge safely.
 
 Tasks:
 
-- M2-01: local-network permission UX/state model
-- M2-02: mDNS discovery via Android NSD
-- M2-03: NUPnP fallback
-- M2-04: manual IP entry
-- M2-05: pairing flow
-- M2-06: secure credential storage design and implementation
-- M2-07: TLS trust / TOFU design spike before productionizing
+- M2-01: local-network permission UX/state model — **done**
+- M2-02: mDNS discovery via Android NSD — **done** (`AndroidNsdBridgeDiscoveryService`)
+- M2-03: NUPnP fallback — **not done** (inventory doc only; no code)
+- M2-04: manual IP entry — **done** (`ManualBridgeEndpointParser`)
+- M2-05: pairing flow — **done** (`LivePairingWorkflow`, `SetupViewModel`)
+- M2-06: secure credential storage — **done** (`AndroidKeystoreBridgeCredentialStore` for the token; `DataStoreBridgeRegistry` for non-secret records)
+- M2-07: TLS trust — **done and productionized**, not just a spike. Hue root-pinned trust manager plus a SAN-less leaf identity verifier keyed to the authenticated bridge id (`core/hue/pairing/tls/`). No trust-all manager, no blind hostname verifier.
+
+**Pairing has NOT been validated against physical Hue hardware.** All verification to date is unit
+tests, MockWebServer, and Compose tests with fakes. Treat a real-bridge pairing run as an open
+task.
 
 ### Milestone 3 — Android Core Control MVP
 
@@ -872,44 +889,76 @@ Order:
 
 ---
 
-## 24. Immediate Next Steps for Claude Code
+## 24. Android Local Dev Setup
 
-When asked to work now, prefer this sequence:
+Verified working on 2026-09-03 on macOS (Darwin 25.6.0, Apple Silicon).
 
-1. Confirm repo branch/default/protection state.
-2. Commit/update only `CLAUDE.md` and `AGENTS.md` if context handoff is the task.
-3. Do not add `cloud.md`, `CHATGPT_CONTEXT.md`, or other root files unless explicitly requested.
-4. Open a docs-only PR for handoff file updates.
-5. After merge, create Android app shell task branch.
+The Android project lives at `android/` and is a normal Gradle build. The only host requirement
+that is easy to get wrong is the JDK: Gradle's daemon is pinned to **toolchain 21** by
+`android/gradle/gradle-daemon-jvm.properties`, and macOS ships no JDK at all.
 
-Suggested branch for this docs-only task:
+Toolchain in use:
+
+- JDK 21 — Homebrew `openjdk@21` at `/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home`
+  (Homebrew does not symlink it into the system Java path, so `java` is absent from `PATH` until
+  `JAVA_HOME` is set explicitly).
+- Android SDK at `~/Library/Android/sdk` — platforms 36.1 and 37.0, build-tools 37.0.0.
+- Emulator AVD `Pixel_10`, arm64-v8a, `android-37.0` Google APIs Play Store image.
+
+Environment is set in `~/.zshenv` (**not** `~/.zshrc`) so it applies to non-interactive shells —
+scripts, CI, and agent tooling — because zsh skips `.zshrc` for those:
 
 ```bash
-git switch <confirmed-integration-branch>
-git pull
-git switch -c docs/update-agent-context
+export JAVA_HOME="/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home"
+export ANDROID_HOME="$HOME/Library/Android/sdk"
+export ANDROID_SDK_ROOT="$ANDROID_HOME"
+export PATH="$JAVA_HOME/bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
 ```
 
-Suggested commit message:
+Common commands, all run from `android/`:
 
-```text
-docs: update Claude and agent context
+```bash
+./gradlew assembleDebug            # build
+./gradlew testDebugUnitTest        # 212 unit tests
+./gradlew connectedDebugAndroidTest  # 44 instrumented tests, needs a running emulator
+./gradlew installDebug             # install to the running emulator
+
+emulator -avd Pixel_10 &           # boot the emulator
+adb shell monkey -p com.chromaglow.app -c android.intent.category.LAUNCHER 1  # launch
 ```
 
-Suggested PR title:
+Gotchas:
 
-```text
-Update Claude and agent handoff context
-```
+- `INSTALL_FAILED_VERSION_DOWNGRADE` means another worktree installed a higher `versionCode`.
+  All worktrees share one `applicationId` (`com.chromaglow.app`) and the emulator holds one install.
+  Fix with `adb uninstall com.chromaglow.app`, then reinstall.
+- The build uses Gradle's configuration cache; a stale cache surfaces as odd configuration errors.
+  Clear with `./gradlew --stop` and delete `android/.gradle/configuration-cache`.
+- `android/local.properties` is machine-specific and gitignored. It must contain
+  `sdk.dir=/Users/<you>/Library/Android/sdk`.
 
-Acceptance criteria:
+---
 
-- Only `CLAUDE.md` and `AGENTS.md` are changed.
-- Files are standalone and contain current project context.
-- No runtime code changed.
-- No Xcode project files changed.
-- No signing/provisioning changed.
-- A new Claude Code/Codex session can understand current strategy, exclusions, current phase, risks, and next steps by reading root context files.
+## 24b. Immediate Next Steps for Claude Code
+
+Milestone 0 handoff work is done. The next code task is **M3-01: the Hue CLIP v2 REST client**.
+
+Sequence:
+
+1. Confirm repo branch/default/protection state (see section 4 — note the repo relocation).
+2. Read `docs/android/android-mvp-contract-freeze.md` before designing the control layer.
+3. Build the REST client behind an interface, with MockWebServer tests, reusing the existing
+   pinned-TLS stack in `core/hue/pairing/tls/` rather than creating a second OkHttp trust config.
+4. Add `RoomRepository` / `SceneRepository` (`M3-02`) and swap the screens off `DemoFixtures`,
+   keeping demo mode as a selectable path.
+5. Keep demo mode and live mode behind one boundary so screens do not branch on mode ad hoc.
+
+Constraints that still apply:
+
+- Never send `effects` payloads to `grouped_light` endpoints.
+- REST loops must use a latest-wins mailbox pattern; do not queue unlimited bridge writes.
+- Do not put bridge tokens in logs or in any non-Keystore storage.
+- Do not build a God-object equivalent of `UnifiedOrchestrator.swift`.
 
 ---
 

@@ -4,7 +4,7 @@
 
 **Last synthesized:** 2026-06-21
 
-**Current one-line state:** ChromaGlow is a mature native iOS Philips Hue app; the project is now stabilizing repo/process context and preparing a separate native Android Kotlin / Jetpack Compose MVP focused on bridge pairing, dashboard/room/light control, scenes, secure local storage, and internal testing.
+**Current one-line state:** ChromaGlow is a mature native iOS Philips Hue app; the standalone native Android Kotlin / Jetpack Compose app now exists and runs, with bridge discovery, live link-button pairing, pinned TLS, and Keystore-backed credential storage wired end to end — the remaining MVP gap is the live Hue control layer (rooms/lights/scenes still render from demo fixtures only).
 
 ---
 
@@ -76,6 +76,13 @@ Some docs mention old identifiers such as `com.lightshade.app` or `group.com.lig
 
 ## 4. Branch State Warning
 
+**The repository has moved.** The canonical repo is now
+`/Users/brianbean/Developer/huehome-pro-v0.3.0`, not `~/Desktop/`. Worktrees created before the
+move stored an absolute path in their `.git` file and broke silently — every git command in them
+failed with `fatal: not a git repository`. Seventeen were repaired on 2026-09-03. If a worktree
+throws that error, check its `.git` pointer and the matching `.git/worktrees/<name>/gitdir`
+back-pointer first.
+
 Branch state must be verified before code work.
 
 Known ambiguity:
@@ -106,21 +113,29 @@ Do not start new code work until this is clear.
 
 ## 5. Current Phase
 
-The project is between:
+Milestones 1 and 2 are substantially complete. The project is now inside:
 
-- **Milestone 0: repo/context/process safety**
-- **Milestone 1: Android foundation**
+- **Milestone 3: Android core control MVP**
+
+Verified on 2026-09-03 by building and running the app on an emulator: it builds, installs,
+launches, and passes 212 unit tests and 44 instrumented tests with 0 failures. Discovery (mDNS/NSD),
+manual IP entry, link-button pairing, Hue root-pinned TLS, Keystore credential storage, and the
+DataStore bridge registry are implemented and wired into the running app.
 
 Near-term order:
 
-1. Update root agent context files: `CLAUDE.md` and `AGENTS.md`.
-2. Verify branch/default/protection state.
-3. Confirm iOS build/TestFlight baseline.
-4. Start first Android foundation PR.
+1. Build the Hue CLIP v2 REST client (`M3-01`) — it does not exist yet.
+2. Back dashboard/room/scene screens with live bridge data instead of `DemoFixtures`.
+3. Add the NUPnP discovery fallback (`M2-03`), still inventory-only.
 
-The first Android PR should only add a native Kotlin / Jetpack Compose app shell that builds and launches to a placeholder screen.
+Note: `SetupPlaceholderScreen` is a misleading legacy name. It is the real, ViewModel-backed
+live-pairing entry point, not a stub.
 
-It must not include bridge discovery, pairing, TLS pinning, Hue control, Studio, Composer, DTLS entertainment, microphone sync, widgets, Wear OS, Marketplace, web, Google Home, or KMP.
+Do not build Studio, Composer, DTLS entertainment, microphone sync, widgets, Wear OS, Marketplace,
+web, Google Home, or KMP. Those remain post-MVP.
+
+See `CLAUDE.md` section 24 for the Android local dev setup (JDK 21 via `~/.zshenv`, emulator, and
+Gradle commands).
 
 ---
 
@@ -349,7 +364,6 @@ When adding Swift files, update Xcode project references correctly. The repo use
 
 Do not assume these exist unless verified:
 
-- Native Android app project
 - Backend implementation
 - GitHub Actions / `.github/workflows`
 - Fastlane or formal release automation
@@ -483,13 +497,13 @@ iOS had several-second cold launch / tab prewarming work. Android should avoid t
 - Build standalone Android app with Kotlin/Compose.
 - Match MVP user promise.
 - Avoid iOS monolith pattern.
-- Current status: Android not confirmed in uploaded snapshot; first task should be shell/CI only.
+- Current status: Android app exists at `android/` and runs; pairing foundation complete and wired. No live Hue control layer yet. Next task is the CLIP v2 REST client + repositories (`M3-01`/`M3-02`). Still missing: CI lane, NUPnP fallback, feature-flag/telemetry interfaces.
 
 ### D. Design System / UI Parity
 
 - Translate iOS visual language to Android.
 - UI parity, not pixel-perfect sameness.
-- Current status: iOS tokens/components exist; Android tokens not confirmed.
+- Current status: iOS tokens/components exist; Android has a dark Material 3 theme with amber accent (`ui/theme/`). Deeper parity (glassmorphic cards, shimmer, custom tab bar) not built.
 
 ### E. AI Coding Guardrails
 
